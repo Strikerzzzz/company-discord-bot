@@ -14,21 +14,18 @@ export default class ButtonHandler extends Collection<string, Command>
 		this.init();
 	}
 
-	private async init()
+	private init(): void
 	{
 		// Register buttons.
 		this.client.interactions.forEach(interaction =>
 		{
 			if (interaction instanceof Command)
 			{
-				if (interaction.buttonIds)
+				interaction.buttonIds.forEach(buttonId =>
 				{
-					interaction.buttonIds.forEach(buttonId =>
-					{
-						this.set(buttonId, interaction);
-						console.log(`Loaded button "${buttonId}"`);
-					});
-				}
+					this.set(buttonId, interaction);
+					console.log(`Loaded button "${buttonId}"`);
+				});
 			}
 		});
 	}

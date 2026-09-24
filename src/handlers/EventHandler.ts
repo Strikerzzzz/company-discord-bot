@@ -16,7 +16,7 @@ export default class EventHandler extends Collection<string, Event>
 		this.init();
 	}
 
-	private async init()
+	private init(): void
 	{
 		const path = join(__dirname, "..", "events");
 		const files = readdirSync(path);
@@ -30,7 +30,11 @@ export default class EventHandler extends Collection<string, Event>
 
 			this.client[event.once ? "once" : "on"](
 				event.name,
-				(...args: unknown[]) => event.execute(...args),
+				(...args: unknown[]) =>
+				{
+					// EventEmitter bỏ qua Promise mà listener trả về, nên lỗi phải được bắt ở đây (LL-001).
+					event.execute(...args).catch((error: unknown) => console.error(`Lỗi trong event "${event.name}":`, error));
+				},
 			);
 
 			console.log(`Loaded event "${event.name}"`);

@@ -8,15 +8,15 @@ export default class PingCmd extends Command
 	data = new SlashCommandBuilder()
 		.setName("ping")
 		.setDescription("Pong!")
-	global = true;
+	override global = true;
 
 	// The execute function is called when a user enters the slash command.
 	// It gets called by the interactionCreate event.
-	async execute(interaction: ChatInputCommandInteraction)
+	async execute(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const rtt = Math.abs(Date.now() - interaction.createdTimestamp);
 		const websocketHeartbeat = Math.floor(this.client.ws.ping);
 
-		return interaction.reply(`Pong! \n> Websocket Heartbeat: **${websocketHeartbeat}ms**\n> Roundtrip Latency: **${rtt}ms**`);
+		await interaction.reply(`Pong! \n> Websocket Heartbeat: **${websocketHeartbeat}ms**\n> Roundtrip Latency: **${rtt}ms**`);
 	}
 }

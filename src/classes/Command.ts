@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction,
 	ButtonInteraction,
 	AutocompleteInteraction,
 	SlashCommandBuilder,
+	SlashCommandOptionsOnlyBuilder,
 	SlashCommandSubcommandsOnlyBuilder } from "discord.js";
 import DiscordClient from "./DiscordClient";
 
@@ -9,11 +10,11 @@ import DiscordClient from "./DiscordClient";
  * Derive from this class to create a new slash command interaction.
  * https://discordjs.guide/interactions/slash-commands.html
  */
-export default class Command
+export default abstract class Command
 {
 	readonly client: DiscordClient;
 
-	data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | Omit<SlashCommandBuilder, "addSubcommand" | "addSubcommandGroup"> = new SlashCommandBuilder()
+	abstract data: SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 	global = false;
 	buttonIds: string[] = [];
 
@@ -22,16 +23,15 @@ export default class Command
 		this.client = client;
 	}
 
-	execute(interaction: ChatInputCommandInteraction)
+	abstract execute(interaction: ChatInputCommandInteraction): Promise<void>;
+
+	// Chỉ command có gửi button (khai báo trong buttonIds) mới cần override.
+	executeButton(interaction: ButtonInteraction): Promise<void>
 	{
-		throw new Error(`Method not implemented for interaction: ${interaction.commandName}`);
+		return Promise.reject(new Error(`Method not implemented for button: ${interaction.customId}`));
 	}
 
-	executeButton(interaction: ButtonInteraction)
-	{
-		throw new Error(`Method not implemented for button: ${interaction.customId}`);
-	}
-
+	// Chỉ command có option bật autocomplete mới cần override.
 	autocomplete(interaction: AutocompleteInteraction): string[]
 	{
 		throw new Error(`Autocomplete not implemented for interaction: ${interaction.commandName}`);

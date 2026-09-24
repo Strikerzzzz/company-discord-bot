@@ -18,7 +18,7 @@ export default class InteractionHandler extends Collection<string, Command | Con
 		this.init();
 	}
 
-	private async init()
+	private init(): void
 	{
 		// Load slash commands.
 		let path = join(__dirname, "..", "interactions", "commands");
@@ -56,7 +56,7 @@ export default class InteractionHandler extends Collection<string, Command | Con
 		}
 	}
 
-	async deploy()
+	async deploy(): Promise<void>
 	{
 		const rest = new REST({ version: "10" }).setToken(token);
 		const globalCommands: RESTPostAPIApplicationCommandsJSONBody[] = [];
@@ -68,17 +68,28 @@ export default class InteractionHandler extends Collection<string, Command | Con
 			else guildCommands.push(cmd.data.toJSON());
 		});
 
-		guildIds.forEach(async (id) =>
+		// Deploy lỗi ở một guild thì chỉ ghi log, không chặn các guild khác và không chặn bot khởi động.
+		for (const id of guildIds)
 		{
-			console.log(`Deploying interactions on guild "${id}"`);
-			await rest.put(Routes.applicationGuildCommands(clientId, id), { body: guildCommands })
-				.then(() => console.log("Successfully registered interactions on all guilds."))
-				.catch(console.error);
-		});
+			try
+			{
+				await rest.put(Routes.applicationGuildCommands(clientId, id), { body: guildCommands });
+				console.log(`Đã đăng ký ${guildCommands.length} command cho guild "${id}".`);
+			}
+			catch (error)
+			{
+				console.error(`Không đăng ký được command cho guild "${id}":`, error);
+			}
+		}
 
-		console.log("Deploying global interactions...");
-		await rest.put(Routes.applicationCommands(clientId), { body: globalCommands })
-			.then(() => console.log("Successfully registered global interactions."))
-			.catch(console.error);
+		try
+		{
+			await rest.put(Routes.applicationCommands(clientId), { body: globalCommands });
+			console.log(`Đã đăng ký ${globalCommands.length} global command.`);
+		}
+		catch (error)
+		{
+			console.error("Không đăng ký được global command:", error);
+		}
 	}
 }

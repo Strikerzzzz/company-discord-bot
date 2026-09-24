@@ -40,7 +40,7 @@ export default class NoteCmd extends Command
 						.setRequired(true)
 						.setAutocomplete(true)));
 
-	async execute(interaction: ChatInputCommandInteraction)
+	async execute(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const action = interaction.options.getSubcommand(true);
 
@@ -53,7 +53,7 @@ export default class NoteCmd extends Command
 			// https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object
 			const query = Sqlite.prepare("INSERT INTO 'notes' (noteTitle, noteDescription, createdAt) VALUES (?, ?, datetime('now'))");
 			const result = query.run(title, description);
-			return await interaction.reply(`Success! Added ${result.changes} note.`);
+			await interaction.reply(`Success! Added ${result.changes} note.`);
 		}
 		else if (action === "remove")
 		{
@@ -64,8 +64,12 @@ export default class NoteCmd extends Command
 			const query = Sqlite.prepare("DELETE FROM 'notes' WHERE noteTitle=(?)");
 			const result = query.run(title);
 
-			if (result.changes === 0) return interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
-			return await interaction.reply(`Success! Removed ${result.changes} note(s).`);
+			if (result.changes === 0)
+			{
+				await interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
+				return;
+			}
+			await interaction.reply(`Success! Removed ${result.changes} note(s).`);
 		}
 		else if (action === "get")
 		{
@@ -76,14 +80,18 @@ export default class NoteCmd extends Command
 			const query = Sqlite.prepare<[string], Note>("SELECT * FROM 'notes' WHERE noteTitle=(?)");
 			const note = query.get(title);
 
-			if (!note) return interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
-			return interaction.reply(`**${note.noteTitle}**\n>>> ${note.noteDescription}\nCreated At: ${note.createdAt}`);
+			if (!note)
+			{
+				await interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
+				return;
+			}
+			await interaction.reply(`**${note.noteTitle}**\n>>> ${note.noteDescription}\nCreated At: ${note.createdAt}`);
 		}
 	}
 
 	// We will utilize the dynamic ability of Autocomplete to show the user the list of current notes
 	// from the db while they type.
-	autocomplete(interaction: AutocompleteInteraction): string[]
+	override autocomplete(interaction: AutocompleteInteraction): string[]
 	{
 		const focusedOption = interaction.options.getFocused(true);
 		const choices: string[] = [];

@@ -1,9 +1,9 @@
 import DiscordClient from "../classes/DiscordClient";
 
-export default class Event
+export default abstract class Event
 {
 	readonly client: DiscordClient;
-	name = "";
+	abstract name: string;
 	once = false;
 
 	constructor(client: DiscordClient)
@@ -11,8 +11,5 @@ export default class Event
 		this.client = client;
 	}
 
-	execute(..._args: unknown[])
-	{
-		throw new Error(`Method not implemented for event ${this.name} with args ${_args.toString()}.`);
-	}
+	abstract execute(...args: unknown[]): Promise<void>;
 }

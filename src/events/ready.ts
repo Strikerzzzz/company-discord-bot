@@ -6,7 +6,7 @@ import Sqlite from "../classes/Sqlite";
 export default class Ready extends Event
 {
 	name = Events.ClientReady;
-	once = true;
+	override once = true;
 
 	async execute(client: DiscordClient): Promise<void>
 	{

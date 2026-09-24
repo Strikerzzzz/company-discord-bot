@@ -1,9 +1,8 @@
-import { Client, GatewayIntentBits, Partials } from "discord.js";
+import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import ProcessManager from "./ProcessManager";
 import EventHandler from "../handlers/EventHandler";
 import InteractionHandler from "../handlers/InteractionHandler";
 import ButtonHandler from "../handlers/ButtonHandler";
-import { token } from "../config.json";
 
 export default class DiscordClient extends Client
 {
@@ -22,7 +21,9 @@ export default class DiscordClient extends Client
 			],
 		});
 
+		// Nếu không có listener cho "error", EventEmitter sẽ ném lỗi và làm sập process.
+		this.on(Events.Error, (error) => console.error("Lỗi từ discord.js client:", error));
+
 		new ProcessManager(this);
-		this.login(token);
 	}
 }

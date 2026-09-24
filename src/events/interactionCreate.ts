@@ -1,71 +1,87 @@
 import Event from "../classes/Event";
-import { Interaction } from "discord.js";
+import { Events, Interaction, InteractionReplyOptions, MessageFlags } from "discord.js";
 import Command from "../classes/Command";
 import ContextMenu from "../classes/ContextMenu";
 
-export default class interactionCreate extends Event
-{
-	name = "interactionCreate";
+// Discord chỉ nhận tối đa 25 lựa chọn cho một autocomplete.
+const MAX_AUTOCOMPLETE_CHOICES = 25;
 
-	async execute(interaction: Interaction)
+export default class InteractionCreate extends Event
+{
+	name = Events.InteractionCreate;
+
+	// Error boundary cho mọi interaction: lỗi trong command chỉ ảnh hưởng tới interaction đó, không làm sập bot.
+	async execute(interaction: Interaction): Promise<void>
+	{
+		try
+		{
+			await this.dispatch(interaction);
+		}
+		catch (error)
+		{
+			console.error(`Lỗi khi xử lý interaction ${describe(interaction)}:`, error);
+			await replyWithError(interaction);
+		}
+	}
+
+	private async dispatch(interaction: Interaction): Promise<void>
 	{
 		if (interaction.isChatInputCommand())
 		{
-			const command = this.client.interactions.get(interaction.commandName) as Command;
-
+			const command = this.client.interactions.get(interaction.commandName) as Command | undefined;
 			if (!command) return;
 
-			try
-			{
-				command.execute(interaction);
-			}
-			catch (error)
-			{
-				console.error(error);
-				await interaction.reply({ content: `There was an error while executing slash command ${interaction.commandName}`, ephemeral: true });
-			}
+			await command.execute(interaction);
 		}
 		else if (interaction.isButton())
 		{
 			const button = this.client.buttons.get(interaction.customId);
-
 			if (!button) return;
 
-			try
-			{
-				button.executeButton(interaction);
-			}
-			catch (error)
-			{
-				console.error(error);
-				await interaction.reply({ content: `There was an error while executing button ${interaction.customId}`, ephemeral: true });
-			}
+			await button.executeButton(interaction);
 		}
 		else if (interaction.isContextMenuCommand())
 		{
-			const contextMenu = this.client.interactions.get(interaction.commandName) as ContextMenu;
-
+			const contextMenu = this.client.interactions.get(interaction.commandName) as ContextMenu | undefined;
 			if (!contextMenu) return;
 
-			try
-			{
-				contextMenu.execute(interaction);
-			}
-			catch (error)
-			{
-				console.error(error);
-				await interaction.reply({ content: `There was an error while executing context menu command ${interaction.commandName}`, ephemeral: true });
-			}
+			await contextMenu.execute(interaction);
 		}
 		else if (interaction.isAutocomplete())
 		{
-			const command = this.client.interactions.get(interaction.commandName) as Command;
-
+			const command = this.client.interactions.get(interaction.commandName) as Command | undefined;
 			if (!command) return;
 
-			await interaction.respond(
-				command.autocomplete(interaction).map(choice => ({ name: choice, value: choice })),
-			);
+			const choices = command.autocomplete(interaction).slice(0, MAX_AUTOCOMPLETE_CHOICES);
+			await interaction.respond(choices.map(choice => ({ name: choice, value: choice })));
 		}
+	}
+}
+
+function describe(interaction: Interaction): string
+{
+	if (interaction.isCommand() || interaction.isAutocomplete()) return `"${interaction.commandName}"`;
+	if (interaction.isMessageComponent()) return `"${interaction.customId}"`;
+	return `type ${interaction.type}`;
+}
+
+async function replyWithError(interaction: Interaction): Promise<void>
+{
+	// Autocomplete không reply được, chỉ ghi log.
+	if (!interaction.isRepliable()) return;
+
+	const payload: InteractionReplyOptions = {
+		content: "There was an error while executing this interaction.",
+		flags: MessageFlags.Ephemeral,
+	};
+
+	try
+	{
+		if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
+		else await interaction.reply(payload);
+	}
+	catch (replyError)
+	{
+		console.error("Không gửi được thông báo lỗi cho người dùng:", replyError);
 	}
 }

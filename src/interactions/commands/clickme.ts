@@ -7,10 +7,10 @@ export default class ClickMeCmd extends Command
 	data = new SlashCommandBuilder()
 		.setName("clickme")
 		.setDescription("Sends some cool buttons.")
-	global = true;
-	buttonIds = ["clickMeButton", "dontClickMeButton"];
+	override global = true;
+	override buttonIds = ["clickMeButton", "dontClickMeButton"];
 
-	async execute(interaction: ChatInputCommandInteraction)
+	async execute(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const buttons = new ActionRowBuilder<ButtonBuilder>()
 			.addComponents(
@@ -27,15 +27,15 @@ export default class ClickMeCmd extends Command
 		await interaction.reply({ content: "I think you should...", components: [buttons] });
 	}
 
-	async executeButton(interaction: ButtonInteraction)
+	override async executeButton(interaction: ButtonInteraction): Promise<void>
 	{
 		if (interaction.customId === "clickMeButton")
 		{
-			await interaction.reply("Thank you for clicking me :)")
+			await interaction.reply("Thank you for clicking me :)");
 		}
 		else
 		{
-			await interaction.reply("Why did you click me? :(")
+			await interaction.reply("Why did you click me? :(");
 		}
 	}
 }
