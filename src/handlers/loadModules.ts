@@ -31,6 +31,6 @@ export function loadModules<T>(directory: string, baseClass: ModuleClass<T>, cli
 			}
 
 			// Đã kiểm tra ở trên: moduleClass là subclass (không abstract) của baseClass.
-			return new (moduleClass as new (client: DiscordClient) => T)(client);
+			return new (moduleClass as new (owner: DiscordClient) => T)(client);
 		});
 }
