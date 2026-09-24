@@ -3,8 +3,7 @@ import Command from "../classes/Command";
 import ContextMenu from "../classes/ContextMenu";
 import { join } from "path";
 import { readdirSync, existsSync } from "fs";
-import { Collection, REST, RESTPostAPIApplicationCommandsJSONBody, Routes } from "discord.js";
-import { token, clientId, guildIds } from "../config.json";
+import { Collection, RESTPostAPIApplicationCommandsJSONBody } from "discord.js";
 
 export default class InteractionHandler extends Collection<string, Command | ContextMenu>
 {
@@ -56,9 +55,12 @@ export default class InteractionHandler extends Collection<string, Command | Con
 		}
 	}
 
-	async deploy(): Promise<void>
+	// Gọi sau khi client đã login (event clientReady): dùng token và application ID của chính client.
+	async deploy(guildIds: readonly string[]): Promise<void>
 	{
-		const rest = new REST({ version: "10" }).setToken(token);
+		const application = this.client.application;
+		if (!application) throw new Error("Chưa có application: deploy() phải được gọi sau khi client sẵn sàng.");
+
 		const globalCommands: RESTPostAPIApplicationCommandsJSONBody[] = [];
 		const guildCommands: RESTPostAPIApplicationCommandsJSONBody[] = [];
 
@@ -73,7 +75,7 @@ export default class InteractionHandler extends Collection<string, Command | Con
 		{
 			try
 			{
-				await rest.put(Routes.applicationGuildCommands(clientId, id), { body: guildCommands });
+				await application.commands.set(guildCommands, id);
 				console.log(`Đã đăng ký ${guildCommands.length} command cho guild "${id}".`);
 			}
 			catch (error)
@@ -84,7 +86,7 @@ export default class InteractionHandler extends Collection<string, Command | Con
 
 		try
 		{
-			await rest.put(Routes.applicationCommands(clientId), { body: globalCommands });
+			await application.commands.set(globalCommands);
 			console.log(`Đã đăng ký ${globalCommands.length} global command.`);
 		}
 		catch (error)

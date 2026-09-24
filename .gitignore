@@ -1,6 +1,11 @@
 # Config files
 config.json
 
+# Environment (secret). Chỉ commit .env.example.
+.env
+.env.*
+!.env.example
+
 # Builds
 build/
 

@@ -10,7 +10,10 @@ export default class DiscordClient extends Client
 	public interactions = new InteractionHandler(this);
 	public buttons = new ButtonHandler(this);
 
-	constructor()
+	// Các guild được đăng ký slash command.
+	readonly guildIds: readonly string[];
+
+	constructor(guildIds: readonly string[])
 	{
 		super({
 			intents: [
@@ -20,6 +23,8 @@ export default class DiscordClient extends Client
 				Partials.Channel,
 			],
 		});
+
+		this.guildIds = guildIds;
 
 		// Nếu không có listener cho "error", EventEmitter sẽ ném lỗi và làm sập process.
 		this.on(Events.Error, (error) => console.error("Lỗi từ discord.js client:", error));

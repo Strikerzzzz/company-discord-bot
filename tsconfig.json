@@ -8,8 +8,7 @@
 		"noImplicitOverride": true,
 		"noFallthroughCasesInSwitch": true,
 		"esModuleInterop": true,
-		"forceConsistentCasingInFileNames": true,
-		"resolveJsonModule": true
+		"forceConsistentCasingInFileNames": true
 	},
 	"include": ["src"]
 }

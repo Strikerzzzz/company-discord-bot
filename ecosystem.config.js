@@ -4,6 +4,7 @@ module.exports =
 	[{
 		name: "discordjs-bot",
 		script: "./build/index.js",
+		node_args: "--env-file-if-exists=.env",
 		wait_ready: true,
 		shutdown_with_message: true,
 		ignore_watch: ["src", "db", "logs", "node_modules", ".vscode", ".github", ".git"],

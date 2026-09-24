@@ -10,7 +10,7 @@ export default class Ready extends Event
 
 	async execute(client: DiscordClient): Promise<void>
 	{
-		await client.interactions.deploy();
+		await client.interactions.deploy(client.guildIds);
 
 		Sqlite.setup();
 

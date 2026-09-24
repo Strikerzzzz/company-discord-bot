@@ -4,14 +4,14 @@
   "private": true,
   "description": "Discord bot nội bộ công ty: Activity XP và Contribution.",
   "license": "MIT",
-  "main": "src/index.ts",
+  "main": "build/index.js",
   "engines": {
     "node": ">=22.14.0"
   },
   "scripts": {
-    "dev": "ts-node .",
+    "dev": "tsc && node --env-file=.env build/index.js",
     "build": "tsc",
-    "prod": "node ./build/index.js",
+    "prod": "node --env-file-if-exists=.env build/index.js",
     "lint": "eslint .",
     "pm2": "pm2 start ecosystem.config.js"
   },

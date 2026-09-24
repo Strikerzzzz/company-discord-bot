@@ -46,13 +46,14 @@ npm install
 This will install all the required dependencies the bot needs to function.
 
 ## Configuration
-Now that the bot is properly installed we need to configurate it. Go into the `src` directory and copy-paste the `example_config.json` file, then rename it to `config.json`.
+Cấu hình đọc từ biến môi trường. Khi chạy local: sao chép `.env.example` thành `.env` rồi điền giá trị (file `.env` đã được gitignore, không commit).
 
-| Option   | Description                                                                                                                         |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| token    | Your bot's token. If you don't know what this [learn here.](https://discordjs.guide/preparations/setting-up-a-bot-application.html) |
-| clientId | The client ID of your bot client.                                                                                                   |
-| guildIds | An array of Discord server IDs for guild-only commands.                                          |
+| Biến                | Ý nghĩa                                                                   |
+| ------------------- | ------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`     | Token của bot (Discord Developer Portal → Bot)                            |
+| `DISCORD_GUILD_IDS` | ID các server được đăng ký slash command, cách nhau bằng dấu phẩy         |
+
+`npm run dev` build rồi chạy với `.env`; `npm run prod` chạy bản đã build và nạp `.env` nếu có (trên server có thể cấp biến qua môi trường của process).
 
 ## Interactions
 The core bot fully supports slash commands, autocomplete interactions, button interactions and context menus.

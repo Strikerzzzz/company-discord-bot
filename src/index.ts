@@ -1,6 +1,6 @@
 import DiscordClient from "./classes/DiscordClient";
 import Sqlite from "./classes/Sqlite";
-import { token } from "./config.json";
+import { loadConfig } from "./config";
 
 // Lưới an toàn cuối cùng: lỗi async không có ai bắt thì chỉ ghi log, không để process thoát (LL-001).
 process.on("unhandledRejection", (reason) =>
@@ -10,9 +10,10 @@ process.on("unhandledRejection", (reason) =>
 
 async function main(): Promise<void>
 {
-	const client = new DiscordClient();
+	const config = loadConfig();
+	const client = new DiscordClient(config.guildIds);
 	new Sqlite();
-	await client.login(token);
+	await client.login(config.token);
 }
 
 main().catch((error: unknown) =>
