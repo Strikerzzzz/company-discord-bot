@@ -9,25 +9,22 @@ export default class ProcessManager
 		this.client = client;
 
 		// This will allow a graceful restart/reload/stop of the process.
-		process.on("SIGINT", () =>
-		{
-			console.log("RECEIVED A 'SIGINT' SIGNAL - SHUTTING DOWN");
-			client.destroy();
-			process.exit();
-		});
+		process.on("SIGINT", () => this.shutdown("SIGINT"));
 
 		// The same thing but for Windows because it can't receive the other messages
 		if (process.platform === "win32")
 		{
-			process.on("message", async (msg) =>
+			process.on("message", (msg) =>
 			{
-				if (msg === "shutdown")
-				{
-					console.log("RECEIVED A 'SHUTDOWN' SIGNAL - SHUTTING DOWN");
-					client.destroy();
-					process.exit();
-				}
+				if (msg === "shutdown") this.shutdown("SHUTDOWN");
 			});
 		}
+	}
+
+	// destroy() trả về Promise: đợi đóng kết nối Discord xong (hoặc lỗi) rồi mới thoát.
+	private shutdown(signal: string): void
+	{
+		console.log(`RECEIVED A '${signal}' SIGNAL - SHUTTING DOWN`);
+		void this.client.destroy().finally(() => process.exit());
 	}
 }
