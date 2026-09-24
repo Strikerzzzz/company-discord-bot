@@ -9,7 +9,7 @@
 | Phase | Tên | Trạng thái | Phụ thuộc quyết định |
 | --- | --- | --- | --- |
 | 0 | Audit và khởi tạo AI Operating System | **HOÀN THÀNH, đã duyệt** (2026-09-24) | — |
-| 1 | Ổn định nền | Chờ duyệt | PEND-001, 002, 003, 005 |
+| 1 | Ổn định nền | **ĐANG LÀM**: bước 1–5 xong, chờ bước 6 (chạy thật) | Đã duyệt (DEC-014…018) |
 | 2 | Nền database và test | Nháp | PEND-010, 011, 012, 013 |
 | 3 | Phân quyền admin và cấu hình | Nháp | PROP-013 |
 | 4 | Activity XP | Nháp | PEND-006, 008 |
@@ -101,3 +101,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | --- | --- |
 | 2026-09-24 | Tạo bản nháp đầu tiên từ kết quả audit Phase 0 |
 | 2026-09-24 | Phase 0 được duyệt. PROP-006 (git) đã triển khai; phần metadata tách thành PROP-021 và đưa vào Phase 1 |
+| 2026-09-24 | Phase 1 được duyệt và đang làm; bước 1–5 xong. Thêm `.npmrc ignore-scripts` vào Phase 1 (LL-008) |

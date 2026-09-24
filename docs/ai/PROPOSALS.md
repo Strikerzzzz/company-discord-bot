@@ -10,18 +10,18 @@
 
 | Mã | Tên | Ưu tiên | Trạng thái |
 | --- | --- | --- | --- |
-| PROP-001 | Nâng toolchain TypeScript và tsconfig | HIGH (blocker) | APPROVED |
-| PROP-002 | Nâng better-sqlite3 và cố định Node runtime | HIGH (blocker) | APPROVED |
-| PROP-003 | Error boundary và xử lý async đúng | HIGH (blocker) | APPROVED |
-| PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | APPROVED |
-| PROP-005 | Quản lý secret bằng environment variable | HIGH | APPROVED |
+| PROP-001 | Nâng toolchain TypeScript và tsconfig | HIGH (blocker) | IMPLEMENTED |
+| PROP-002 | Nâng better-sqlite3 và cố định Node runtime | HIGH (blocker) | IMPLEMENTED |
+| PROP-003 | Error boundary và xử lý async đúng | HIGH (blocker) | IMPLEMENTED |
+| PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | IMPLEMENTED |
+| PROP-005 | Quản lý secret bằng environment variable | HIGH | IMPLEMENTED |
 | PROP-006 | Tách git khỏi repo upstream public | MEDIUM | IMPLEMENTED (2026-09-24) |
 | PROP-007 | Nền tảng database | HIGH | PROPOSED |
 | PROP-008 | Backup và restore SQLite | MEDIUM | APPROVED |
 | PROP-009 | Chiến lược test không thêm dependency | MEDIUM | PROPOSED |
-| PROP-010 | ESLint dùng thông tin type | MEDIUM | APPROVED |
+| PROP-010 | ESLint dùng thông tin type | MEDIUM | IMPLEMENTED |
 | PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | PROPOSED |
-| PROP-012 | Hardening tầng Discord | MEDIUM | APPROVED |
+| PROP-012 | Hardening tầng Discord | MEDIUM | IMPLEMENTED |
 | PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | PROPOSED |
 | PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | PROPOSED |
 | PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | PROPOSED |
@@ -30,7 +30,9 @@
 | PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | PROPOSED |
 | PROP-019 | Dọn code demo và viết lại README | LOW | PROPOSED |
 | PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
-| PROP-021 | Metadata `package.json` của dự án | MEDIUM | APPROVED |
+| PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
+| PROP-022 | Khai báo `@types/node` tường minh | LOW | PROPOSED |
+| PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | PROPOSED |
 
 ---
 
@@ -70,7 +72,7 @@ HIGH (blocker)
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). TypeScript 5.9.3, target ES2022, include, noImplicitOverride, noFallthroughCasesInSwitch.
 
 ---
 
@@ -109,7 +111,7 @@ Nếu server production không có internet ra ngoài, vẫn phải chuẩn bị
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). better-sqlite3 13.0.3 (kèm sẵn binary N-API 10), engines >=22.14.0; xem LL-008, LL-009.
 
 ---
 
@@ -151,7 +153,7 @@ Thấp. Handler `unhandledRejection` chỉ nên log, không được nuốt lỗ
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). Error boundary trong interactionCreate, EventHandler bắt reject, base class abstract, unhandledRejection chỉ log.
 
 ---
 
@@ -192,7 +194,7 @@ discord.js bản mới có thể đổi một số type hoặc deprecate API; c�
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). discord.js 14.27.0; bỏ @discordjs/rest và discord-api-types; deploy dùng application.commands.set(). npm audit: 0 lỗ hổng.
 
 ---
 
@@ -233,7 +235,7 @@ Cần thống nhất cách cấp `.env` trên production (quyền file chỉ cho
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). src/config.ts đọc DISCORD_TOKEN, DISCORD_GUILD_IDS; .env qua --env-file; không còn cần clientId.
 
 ---
 
@@ -437,7 +439,7 @@ Chuyển sang flat config tốn công. Có thể làm theo từng bước: trư�
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). ESLint 10.11 + typescript-eslint 8.70 recommendedTypeChecked, flat config eslint.config.mjs.
 
 ---
 
@@ -524,7 +526,7 @@ Nếu sau này cần command trong DM thì phải mở lại có chủ đích.
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). Chỉ đăng ký command theo guild (global set rỗng), allowedMentions, loadModules(), tách registry, button namespace, bỏ Partials.Channel.
 
 ---
 
@@ -882,4 +884,78 @@ Không.
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-014)
+IMPLEMENTED (2026-09-24, Phase 1). name company-discord-bot, version 0.1.0, private: true, engines; bỏ metadata upstream.
+
+---
+
+## PROP-022 — Khai báo `@types/node` tường minh
+
+### Vấn đề
+
+Code dùng type của Node (`process`, `NodeJS.ProcessEnv`, `__dirname`), nhưng `@types/node` không được khai báo. Hiện nó chỉ có mặt gián tiếp qua `@types/better-sqlite3` với range `"*"`, nên version thực tế có thể là type của Node 26 trong khi runtime là Node 22/24. Nếu package kia đổi dependency, build có thể hỏng mà không rõ lý do.
+
+### Đề xuất
+
+Thêm `@types/node` vào `devDependencies` với range khớp runtime production (`^24`, theo DEC-016).
+
+### Lý do
+
+Type khớp với runtime thật; build không phụ thuộc vào dependency gián tiếp.
+
+### Tác động
+
+- **Code:** `package.json`, lockfile (package vốn đã có trong `node_modules`).
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** Không.
+- **UX:** Không.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Không đáng kể. Là thêm một devDependency, nên cần duyệt theo luật protected.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-023 — Cố định line ending bằng `.gitattributes`
+
+### Vấn đề
+
+Máy dev (Windows) bật `core.autocrlf=true`, nên file trong working copy là CRLF, còn repo lưu LF và server Linux nhận LF. Trong Phase 1, một script sửa file đã chạy sai vì không tính tới CRLF.
+
+### Đề xuất
+
+Thêm `.gitattributes` với `* text=auto eol=lf`, để mọi máy đều checkout LF.
+
+### Lý do
+
+Hành vi giống nhau giữa Windows và Linux; tránh lỗi âm thầm khi script đọc file hoặc khi so sánh diff.
+
+### Tác động
+
+- **Code:** Một file cấu hình git; có thể phải normalize lại line ending một lần.
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** Không.
+- **UX:** Không.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Commit normalize ban đầu có thể làm diff lớn nếu repo đang lẫn CRLF (hiện repo lưu LF, nên dự kiến diff nhỏ).
+
+### Trạng thái
+
+PROPOSED

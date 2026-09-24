@@ -5,68 +5,87 @@
 
 ## 1. Phase hiện tại
 
-**Phase 0 — Audit và khởi tạo AI Operating System: HOÀN THÀNH, đã được duyệt.**
+**Phase 1 — Ổn định nền: ĐANG LÀM.** Bước 1–5 đã xong và đã kiểm chứng. **Bước 6 (chạy bot thật trên server test) đang chờ** người phụ trách cung cấp bot và server test.
 
-Đang **chờ người phụ trách duyệt** phạm vi Phase 1 và các quyết định trong `DECISIONS.md` → "Đang chờ quyết định". **Chưa được phép bắt đầu Phase 1.**
+- Branch: `phase-1/on-dinh-nen`, chưa merge vào `main`. Theo DEC-018, chỉ merge sau khi người phụ trách duyệt.
+- Phase 0: hoàn thành, đã duyệt, đã merge vào `main`.
 
 ## 2. Snapshot repository
 
 | Mục | Giá trị |
 | --- | --- |
-| Branch | `main` = `cdce792` (commit cuối của upstream, không tracking remote nào). Tài liệu Phase 0 nằm trên branch `phase-0/ai-os-init` |
-| Remote | Chỉ có `upstream` → `https://github.com/Retr0-01/discordjs-core-bot.git` (public, bên thứ ba). Chỉ fetch; push bị vô hiệu hoá (DEC-013) |
-| Remote nội bộ | CHƯA XÁC ĐỊNH. Hiện chỉ làm việc local, chưa publish |
+| `main` | `508abc5`: tài liệu Phase 0 (đã duyệt) |
+| Branch đang làm | `phase-1/on-dinh-nen`: các commit của Phase 1 |
+| Remote | Chỉ có `upstream` → repo public của template (chỉ fetch, push bị vô hiệu hoá, DEC-013) |
+| Remote nội bộ | CHƯA XÁC ĐỊNH. Hiện chỉ làm việc local |
 | License | MIT, © 2022 Retr0-01 |
-| Code đặc thù công ty | Chưa có |
+| Code nghiệp vụ | Chưa có (đúng phạm vi Phase 1) |
 
 ## 3. Tình trạng build và công cụ
 
-Kiểm chứng ngày 2026-09-24 trên Windows 11, Node 22.12.0, npm 10.9.0. Các lệnh chạy trên **bản copy cô lập** (xem mục 6) tại commit `cdce792`, không đụng tới repo.
+Kiểm chứng ngày 2026-09-24 trên **bản copy sạch** (`git archive`) và trong repo. Máy dev: Windows 11, Node **22.23.2** (đã nâng từ 22.12.0, xem LL-009), npm 10.9.8.
 
-| Lệnh | Kết quả | Nguyên nhân |
+| Lệnh | Kết quả |
+| --- | --- |
+| `npm ci` (bản copy sạch) | OK. `.npmrc` tắt install script (LL-008) |
+| `npm run build` | OK, 0 lỗi; `build/` không có file JSON và không chứa secret |
+| `npm run lint` | OK, 0 lỗi (ESLint 10 + typescript-eslint có dùng thông tin type) |
+| `npm audit` | **0 lỗ hổng** (trước Phase 1: 13, trong đó 9 high) |
+| better-sqlite3 | Load được trên Node 22.23.2 và Node 24.21.0 (thử qua npx) |
+| Khởi động khi thiếu hoặc sai config | Báo lỗi rõ ràng, exit 1, không in token |
+| Khởi động với token giả | Discord trả `TokenInvalid`, exit 1, không in token |
+| Test tự động | Chưa có test framework (PROP-009, Phase 2). Phase 1 kiểm chứng bằng script tạm ngoài repo |
+| Chạy bot thật trên Discord | **Chưa**: chờ bước 6 |
+
+## 4. Blocker của Phase 0
+
+| # | Blocker | Trạng thái |
 | --- | --- | --- |
-| `npm ci` | **FAIL** | better-sqlite3 8.7.0 không có binary dựng sẵn cho Node 22; node-gyp không tìm thấy Visual Studio (LL-005) |
-| `npm ci --ignore-scripts` | OK (213 package) | Bỏ qua bước build native, nên **bot vẫn không chạy được** |
-| `npm run build` | **FAIL**, 97 lỗi | TypeScript 4.9.5 không đọc được file type của discord.js 14.18 (LL-004) |
-| `tsc` với TS 5.5 (thử tạm) | FAIL, 5 lỗi | 3 lỗi do `target: ES6` (BigInt), 2 lỗi `unknown` → `Note` ở `note.ts` |
-| `npm run lint` | OK, 0 lỗi | Không đáng tin: lint không dùng thông tin type (LL-006) |
-| Test | Không có | Không có test framework, không có script `test` |
-| `npm audit` | 13 lỗ hổng (4 moderate, 9 high) | 7 trong số đó ở dependency production. Chi tiết: PROP-004 |
-| Chạy bot | Chưa thử | Chưa cài và build được; cũng không có token thật |
+| B1 | Không compile được | **Đã xử lý**: PROP-001 |
+| B2 | Không cài được trên Node 22 nếu thiếu C++ build tools | **Đã xử lý**: PROP-002, `.npmrc` (LL-008) |
+| B3 | Lỗi bất kỳ trong command hay event làm sập process | **Đã xử lý**: PROP-003; lint chặn tái phát (PROP-010) |
 
-## 4. Blocker
+## 5. Phase 1: chi tiết
 
-| # | Blocker | Chi tiết | Hướng xử lý |
+| Bước | Nội dung | Commit | Trạng thái |
 | --- | --- | --- | --- |
-| B1 | Không compile được | LL-004 | PROP-001 |
-| B2 | Không cài được trên Node 22 nếu thiếu C++ build tools | LL-005 | PROP-002 |
-| B3 | Lỗi bất kỳ trong command hay event làm sập process | LL-001 | PROP-003 |
+| 0 | Ghi quyết định mở Phase 1 (DEC-014…018) | `1a70099` | Xong |
+| 1 | TypeScript 5.9, better-sqlite3 13, discord.js 14.27; bỏ 2 dependency; metadata `package.json` | `41ba1fe` | Xong |
+| 2 | Error boundary, async đúng, base class abstract | `b8a6c3a` | Xong |
+| 3 | Secret qua biến môi trường / `.env` | `03f9c9f` | Xong |
+| 4 | Hardening tầng Discord | `f7d03b4`, `5d828a7` | Xong |
+| 5 | ESLint 10 có dùng thông tin type | `b9c3200`, `68cc49f` | Xong |
+| — | `.npmrc ignore-scripts` (phát hiện khi kiểm chứng trên bản copy sạch) | `b9d8218` | Xong |
+| 6 | Chạy bot thật trên server test: login, deploy command, `/ping`, lỗi cố ý không làm sập bot | — | **Chờ bot và server test** |
 
-## 5. Đã hoàn thành
+Ngoài repo: Node của máy dev đã được nâng 22.12.0 → 22.23.2 qua winget, theo chỉ thị "cần thì cập nhật" (DEC-016).
 
-- [x] Audit toàn bộ source, dependency, security, database, TypeScript (2026-09-24).
-- [x] Tạo `CLAUDE.md` và `docs/ai/` (PROJECT_CONTEXT, ARCHITECTURE, DECISIONS, LESSONS_LEARNED, PROPOSALS, CURRENT_STATE, ROADMAP).
-- [x] Ghi 12 quyết định đã chốt (DEC-001…012) từ brief, 13 quyết định đang chờ (PEND-001…013), 7 bài học (LL-001…007), 20 proposal (PROP-001…020).
-- [x] Tách git khỏi upstream public, làm việc local (PROP-006 → IMPLEMENTED, DEC-013). Tách phần metadata thành PROP-021.
-- [x] Commit tài liệu Phase 0 lên branch local `phase-0/ai-os-init`.
+**Điều kiện hoàn thành Phase 1** (theo `ROADMAP.md`):
+- `npm ci`, build, lint pass trên máy sạch: ✅
+- `build/` không chứa secret: ✅
+- Không còn lỗ hổng high trong dependency production: ✅ (0 lỗ hổng)
+- Lỗi cố ý trong command không làm sập process: ✅ (kiểm chứng bằng interaction giả; cần xác nhận lại trên Discord thật ở bước 6)
+- Bot login được trên guild test: ⏳ bước 6
 
 ## 6. Cách kiểm chứng mà không làm bẩn repo
-
-Dùng khi cần chạy `npm ci`, build hoặc audit mà chưa muốn tạo `node_modules` hay sửa gì trong repo:
 
 ```bash
 git archive HEAD | tar -x -C <thư-mục-tạm>
 cd <thư-mục-tạm>
-npm ci --ignore-scripts                  # hoặc npm ci để kiểm tra native build
-cp src/example_config.json src/config.json   # code import file này lúc compile
-npm run build; npm run lint; npm audit
+npm ci
+npm run build && npm run lint && npm audit
 ```
 
-## 7. Việc tiếp theo (sau khi được duyệt)
+Ghi chú khi chạy script trên máy dev (Windows):
+- Git Bash làm mất dấu `\` khi truyền đối số `node -e '...'` sang `node.exe`, nên script có regex hoặc escape phải viết ra file rồi chạy.
+- Working copy dùng CRLF (`core.autocrlf=true`); xem PROP-023.
 
-1. Người phụ trách trả lời các PEND, ưu tiên PEND-001, 002, 003, 005.
-2. Duyệt hoặc từ chối các proposal của Phase 1 (xem `ROADMAP.md`).
-3. Bắt đầu Phase 1 — ổn định nền.
+## 7. Việc tiếp theo
+
+1. Người phụ trách chuẩn bị Discord Application test và server test, rồi tạo `.env` trên máy dev để chạy bước 6.
+2. Người phụ trách review branch `phase-1/on-dinh-nen`, duyệt thì merge vào `main`.
+3. Trả lời các PEND còn mở trước Phase 2: PEND-010, 011, 012, 013 và PEND-005 (máy chủ, process manager).
+4. Duyệt hoặc từ chối PROP-007, 009, 011 (phạm vi Phase 2) và PROP-022, 023.
 
 ## 8. Nhật ký cập nhật
 
@@ -74,3 +93,4 @@ npm run build; npm run lint; npm audit
 | --- | --- |
 | 2026-09-24 | Khởi tạo: audit Phase 0, tạo AI Operating System. Không sửa code. |
 | 2026-09-24 | Phase 0 được duyệt. Remote `origin` → `upstream` (push bị vô hiệu hoá), bỏ tracking của `main`. Commit tài liệu lên `phase-0/ai-os-init`. |
+| 2026-09-24 | Merge Phase 0 vào `main`. Mở Phase 1 (DEC-014…018). Hoàn thành bước 1–5 cùng `.npmrc`; nâng Node máy dev lên 22.23.2. Chờ bước 6. |

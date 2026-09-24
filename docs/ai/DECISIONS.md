@@ -113,7 +113,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Được phép nâng version dependency và bỏ `@discordjs/rest`, `discord-api-types`.
 - **Hệ quả:**
   - Các proposal trên chuyển sang `APPROVED`.
-  - Chọn: TypeScript 5.9.x (bản 7.x chưa được typescript-eslint hỗ trợ); better-sqlite3 13.x (kèm sẵn binary N-API, không tải gì lúc cài); discord.js 14.27.x; ESLint 9.x (ESLint 10 yêu cầu Node ≥ 22.13, máy dev đang là 22.12).
+  - Chọn: TypeScript 5.9.x (bản 7.x chưa được typescript-eslint hỗ trợ); better-sqlite3 13.x (kèm sẵn binary N-API, không tải gì lúc cài); discord.js 14.27.x; ESLint 10.x + typescript-eslint 8.x (ban đầu chọn ESLint 9 vì máy dev chạy Node 22.12; sau khi máy lên 22.23 thì nâng lên 10).
 
 ### DEC-015 — Secret qua environment variable
 
@@ -129,7 +129,8 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 - **Nội dung:**
   - Server production là Linux.
   - Runtime mục tiêu cho production là Node 24 LTS (hỗ trợ tới 04/2028).
-  - Code phải chạy được trên Node ≥ 22.12 để máy dev hiện tại (Windows, Node 22.12) dùng được.
+  - Code phải chạy được trên Node ≥ 22.14 (`engines`), vì better-sqlite3 13 cần N-API 10 (LL-009).
+  - Theo chỉ thị "cần thì cập nhật", máy dev đã nâng Node 22.12.0 → 22.23.2 qua winget (cùng major, không ảnh hưởng ABI của project khác).
 - **Hệ quả:**
   - Process manager và máy chủ cụ thể vẫn đang chờ (PEND-005).
   - Không host trên nền tảng cloud không cần thiết (DEC-002).

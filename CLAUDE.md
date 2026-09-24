@@ -32,36 +32,38 @@ Topology cố định: **1 process Node.js + 1 file SQLite + Discord**. Chi ti�
 ## Lệnh
 
 ```bash
-npm ci           # cài dependency theo lockfile
+npm ci           # cài dependency theo lockfile (.npmrc tắt install script, xem LL-008)
 npm run build    # tsc → build/
-npm run lint     # eslint .
-npm run prod     # node ./build/index.js
-npm run dev      # ts-node .   (ts-node CHƯA được khai báo trong devDependencies)
+npm run lint     # eslint . (flat config, có dùng thông tin type)
+npm run dev      # build rồi chạy với file .env (node --env-file=.env)
+npm run prod     # chạy build/index.js, nạp .env nếu có
 npm run pm2      # pm2 start ecosystem.config.js   (pm2 phải cài global)
 ```
 
+- Node ≥ 22.14 (better-sqlite3 13 cần N-API 10). Production dùng Node 24 LTS (DEC-016).
+- Cấu hình: copy `.env.example` thành `.env` (`DISCORD_TOKEN`, `DISCORD_GUILD_IDS`). Không bao giờ commit `.env`.
 - Chưa có test framework, chưa có script `test`, nên chưa có cách chạy một test đơn lẻ. Khi thêm test framework, cập nhật mục này.
-- Cấu hình hiện tại: copy `src/example_config.json` thành `src/config.json` (`token`, `clientId`, `guildIds`). File `config.json` đã được gitignore.
-- `npm ci` và `npm run build` có thể đang fail. Xem trạng thái và cách kiểm chứng trong `docs/ai/CURRENT_STATE.md` trước khi chạy.
 
 ## Kiến trúc
 
 ### Hiện tại (khung từ template open-source)
 
-- `src/index.ts` → `new DiscordClient()`. Constructor tạo 3 handler dưới dạng class field theo thứ tự `events` → `interactions` → `buttons`, gắn `ProcessManager`, rồi gọi `login()`.
-- **Tự nạp bằng file system**:
-  - `EventHandler` `require` *mọi file* trong `src/events/`, rồi đăng ký `client.on/once(event.name)`.
-  - `InteractionHandler` `require` mọi file trong `src/interactions/commands/` và `src/interactions/contextMenus/`, lưu chung vào **một** `Collection` theo `data.name`.
-  - `ButtonHandler` map từng `customId` trong `Command.buttonIds` về command sở hữu. So khớp chính xác, không hỗ trợ prefix.
-- Thêm command: tạo file `export default class X extends Command` trong `interactions/commands/`. Không cần đăng ký thủ công. Ở lần khởi động sau, event `ready` sẽ deploy:
-  - `global = true` → deploy thành global command.
-  - Ngược lại → PUT lên từng guild trong `guildIds`. Lệnh PUT này ghi đè toàn bộ command của guild.
-- `events/interactionCreate.ts` là dispatcher duy nhất cho slash command, button, context menu và autocomplete. Đây là nơi đặt các xử lý chung (error boundary, kiểm tra quyền).
-- `events/ready.ts` gọi `deploy()` trước, rồi mới `Sqlite.setup()` (chạy `db/setup.sql`).
-- `classes/Sqlite.ts` là static singleton của better-sqlite3, dùng file `<root>/db/data.db`. Code gọi `Sqlite.prepare(sql)`.
+- `src/index.ts`: `loadConfig()` (đọc env) → `new DiscordClient(guildIds)` → `await login()`. Khởi động lỗi thì log rồi `exit(1)`.
+- Constructor của `DiscordClient` tạo 3 handler dưới dạng class field theo thứ tự `events` → `interactions` → `buttons`. Nó cũng gắn listener `error` và `ProcessManager`, và đặt `allowedMentions` mặc định là không ping ai.
+- **Tự nạp bằng file system** qua `handlers/loadModules.ts`:
+  - Chỉ nạp file `.js`/`.ts` trong thư mục.
+  - Mỗi file phải `export default` một class kế thừa `Event`, `Command` hoặc `ContextMenu`; sai thì bot không khởi động được.
+  - `InteractionHandler` có 2 registry riêng: `commands` và `contextMenus`.
+- **Thêm command:** tạo file `export default class X extends Command` trong `interactions/commands/`, không cần đăng ký thủ công. Mỗi lần khởi động, event `clientReady` sẽ:
+  - deploy **toàn bộ** command lên từng guild trong `DISCORD_GUILD_IDS` (ghi đè toàn bộ command của guild);
+  - set global command về rỗng. Bot không dùng global command.
+- **Button:** `customId` có dạng `<namespace>:<payload>`. Command khai báo namespace trong `buttonIds` và tự validate payload.
+- `events/interactionCreate.ts` là dispatcher duy nhất và là **error boundary** cho mọi interaction: lỗi trong command chỉ ảnh hưởng tới interaction đó. Kiểm tra quyền sau này đặt ở đây.
+- `events/ready.ts` (event `clientReady`) gọi `deploy()` trước, rồi mới `Sqlite.setup()` (chạy `db/setup.sql`).
+- `classes/Sqlite.ts` là static singleton của better-sqlite3, dùng file `<root>/db/data.db`. Code gọi `Sqlite.prepare<Params, Row>(sql)`.
 - Trong code demo (`note.ts`), UI, business logic và SQL nằm chung một command class. **Không lặp lại** kiểu này ở code mới.
 
-Các lỗi đã biết của khung hiện tại được ghi trong `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa `interactionCreate.ts`, `EventHandler.ts`, `Sqlite.ts` hay cơ chế config.
+Các lỗi đã biết và bài học được ghi trong `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa dispatcher, loader, `Sqlite.ts` hay cơ chế config.
 
 ### Mục tiêu (đã chốt)
 
@@ -77,16 +79,17 @@ Discord → Command/Event (mỏng) → Service → Repository → SQLite
 - TypeScript `strict`, CommonJS. Không dùng `any` hay `as` cast nếu không ghi rõ lý do; ưu tiên type guard.
 - Mọi Promise phải được `await` hoặc xử lý lỗi tường minh. Handler async phải khai báo kiểu trả về `Promise<void>`.
 - Để business logic test được, dependency truyền qua constructor thay vì truy cập static singleton hay biến global. Không thêm DI container.
-- Code style do `.eslintrc.cjs` quy định: tab, Allman brace, double quote, trailing comma cho nhiều dòng, không inline comment. Chạy `npm run lint` thay vì tự đoán.
+- Code style do `eslint.config.mjs` quy định: tab, Allman brace, double quote, trailing comma cho nhiều dòng, không inline comment. Chạy `npm run lint` thay vì tự đoán.
 - Thay đổi nhỏ, có kiểm chứng. Tận dụng code tốt, không rewrite vì sở thích.
 
 ## Nguyên tắc security
 
 - **Least privilege.** Không dùng Administrator, Manage Guild, Manage Roles, Manage Messages, Ban/Kick nếu không có yêu cầu đã duyệt. Chỉ thêm intent khi cần. **Privileged intent** (`MessageContent`, `GuildMembers`, `GuildPresences`) phải có quyết định trong `DECISIONS.md`.
 - **Admin command có hai lớp bảo vệ:** `setDefaultMemberPermissions` **và** kiểm tra quyền trong code. Lớp Discord có thể bị admin server nới lỏng, nên không được chỉ dựa vào nó.
-- **Secret** không được nằm trong source, commit, log hay **build artifact**. Không import file chứa secret bằng `import ... from "*.json"`, vì `tsc` (với `resolveJsonModule`) sẽ copy file đó vào `build/`.
+- **Secret** không được nằm trong source, commit, log hay **build artifact**. Secret chỉ đọc từ biến môi trường qua `src/config.ts`. Không import file chứa secret bằng `import ... from "*.json"`: nếu bật `resolveJsonModule`, `tsc` sẽ copy file đó vào `build/` (LL-002).
 - Khi bot gửi lại nội dung do user nhập, phải chặn mention bằng `allowedMentions`.
 - Không gọi network nào ngoài Discord API. Không webhook, telemetry, SaaS.
+- Không dựa vào install script của dependency: `.npmrc` đặt `ignore-scripts=true`. Dependency mới cần install script phải được duyệt riêng.
 - Không lưu nội dung tin nhắn vào database khi chưa có quyết định.
 
 ## Luật bảo vệ (protected) — không tự thay đổi
