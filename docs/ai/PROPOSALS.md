@@ -10,18 +10,18 @@
 
 | Mã | Tên | Ưu tiên | Trạng thái |
 | --- | --- | --- | --- |
-| PROP-001 | Nâng toolchain TypeScript và tsconfig | HIGH (blocker) | PROPOSED |
-| PROP-002 | Nâng better-sqlite3 và cố định Node runtime | HIGH (blocker) | PROPOSED |
-| PROP-003 | Error boundary và xử lý async đúng | HIGH (blocker) | PROPOSED |
-| PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | PROPOSED |
-| PROP-005 | Quản lý secret bằng environment variable | HIGH | PROPOSED |
+| PROP-001 | Nâng toolchain TypeScript và tsconfig | HIGH (blocker) | APPROVED |
+| PROP-002 | Nâng better-sqlite3 và cố định Node runtime | HIGH (blocker) | APPROVED |
+| PROP-003 | Error boundary và xử lý async đúng | HIGH (blocker) | APPROVED |
+| PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | APPROVED |
+| PROP-005 | Quản lý secret bằng environment variable | HIGH | APPROVED |
 | PROP-006 | Tách git khỏi repo upstream public | MEDIUM | IMPLEMENTED (2026-09-24) |
 | PROP-007 | Nền tảng database | HIGH | PROPOSED |
-| PROP-008 | Backup và restore SQLite | MEDIUM | PROPOSED |
+| PROP-008 | Backup và restore SQLite | MEDIUM | APPROVED |
 | PROP-009 | Chiến lược test không thêm dependency | MEDIUM | PROPOSED |
-| PROP-010 | ESLint dùng thông tin type | MEDIUM | PROPOSED |
+| PROP-010 | ESLint dùng thông tin type | MEDIUM | APPROVED |
 | PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | PROPOSED |
-| PROP-012 | Hardening tầng Discord | MEDIUM | PROPOSED |
+| PROP-012 | Hardening tầng Discord | MEDIUM | APPROVED |
 | PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | PROPOSED |
 | PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | PROPOSED |
 | PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | PROPOSED |
@@ -30,7 +30,7 @@
 | PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | PROPOSED |
 | PROP-019 | Dọn code demo và viết lại README | LOW | PROPOSED |
 | PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
-| PROP-021 | Metadata `package.json` của dự án | MEDIUM | PROPOSED |
+| PROP-021 | Metadata `package.json` của dự án | MEDIUM | APPROVED |
 
 ---
 
@@ -70,7 +70,7 @@ HIGH (blocker)
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -109,7 +109,7 @@ Nếu server production không có internet ra ngoài, vẫn phải chuẩn bị
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -151,7 +151,7 @@ Thấp. Handler `unhandledRejection` chỉ nên log, không được nuốt lỗ
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -192,7 +192,7 @@ discord.js bản mới có thể đổi một số type hoặc deprecate API; c�
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -233,7 +233,7 @@ Cần thống nhất cách cấp `.env` trên production (quyền file chỉ cho
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -355,7 +355,7 @@ Backup nằm cùng máy thì không chống được hỏng máy.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-017: sao lưu hàng ngày; triển khai ở Phase 2)
 
 ---
 
@@ -437,7 +437,7 @@ Chuyển sang flat config tốn công. Có thể làm theo từng bước: trư�
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -524,7 +524,7 @@ Nếu sau này cần command trong DM thì phải mở lại có chủ đích.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)
 
 ---
 
@@ -882,4 +882,4 @@ Không.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-24, DEC-014)

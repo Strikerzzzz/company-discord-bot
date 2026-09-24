@@ -105,17 +105,59 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Muốn publish sau này thì thêm remote mới (URL CHƯA XÁC ĐỊNH) theo chỉ thị.
   - Không rewrite history; giữ license MIT.
 
+### DEC-014 — Duyệt phạm vi Phase 1 và việc nâng dependency
+
+- **Ngày:** 2026-09-24 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-001, PEND-002)
+- **Nội dung:**
+  - Phase 1 gồm PROP-001, 002, 003, 004, 005, 010, 012, 021.
+  - Được phép nâng version dependency và bỏ `@discordjs/rest`, `discord-api-types`.
+- **Hệ quả:**
+  - Các proposal trên chuyển sang `APPROVED`.
+  - Chọn: TypeScript 5.9.x (bản 7.x chưa được typescript-eslint hỗ trợ); better-sqlite3 13.x (kèm sẵn binary N-API, không tải gì lúc cài); discord.js 14.27.x; ESLint 9.x (ESLint 10 yêu cầu Node ≥ 22.13, máy dev đang là 22.12).
+
+### DEC-015 — Secret qua environment variable
+
+- **Ngày:** 2026-09-24 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-003)
+- **Nội dung:**
+  - Token và cấu hình đọc từ `process.env`.
+  - File `.env` được nạp bằng tính năng có sẵn của Node (`--env-file`), không thêm `dotenv`.
+  - Bỏ `src/config.json`.
+
+### DEC-016 — Production chạy Linux, runtime Node 24 LTS
+
+- **Ngày:** 2026-09-24 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời một phần PEND-005)
+- **Nội dung:**
+  - Server production là Linux.
+  - Runtime mục tiêu cho production là Node 24 LTS (hỗ trợ tới 04/2028).
+  - Code phải chạy được trên Node ≥ 22.12 để máy dev hiện tại (Windows, Node 22.12) dùng được.
+- **Hệ quả:**
+  - Process manager và máy chủ cụ thể vẫn đang chờ (PEND-005).
+  - Không host trên nền tảng cloud không cần thiết (DEC-002).
+
+### DEC-017 — Sao lưu database hàng ngày
+
+- **Ngày:** 2026-09-24 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách
+- **Nội dung:** Database của bot phải được sao lưu mỗi ngày.
+- **Hệ quả:**
+  - PROP-008 chuyển sang `APPROVED`, triển khai ở Phase 2.
+  - Nơi lưu bản sao ngoài máy chủ: CHƯA XÁC ĐỊNH.
+
+### DEC-018 — Mỗi phase làm trên một branch riêng
+
+- **Ngày:** 2026-09-24 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách
+- **Nội dung:**
+  - Mỗi phase làm trên branch `phase-N/<tên>`, mỗi bước một commit.
+  - Người phụ trách duyệt xong thì merge vào `main`.
+  - `main` luôn là trạng thái đã được duyệt.
+
 ---
 
 ## Đang chờ quyết định
 
 | Mã | Câu hỏi | Ảnh hưởng tới | Liên quan |
 | --- | --- | --- | --- |
-| PEND-001 | Có duyệt phạm vi Phase 1 (ổn định nền) như đề xuất không? | Toàn bộ phase sau | `ROADMAP.md`, PROP-001…005, 010, 012, 021 |
-| PEND-002 | Có cho phép nâng version dependency (TypeScript 5.x, better-sqlite3 major, discord.js 14.x mới nhất) và bỏ `@discordjs/rest`, `discord-api-types` không? | Phase 1 | PROP-001, 002, 004 |
-| PEND-003 | Có chuyển secret từ `src/config.json` sang `.env` (dùng tính năng có sẵn của Node, không thêm dotenv) không? | Phase 1 | PROP-005 |
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
-| PEND-005 | Production chạy Windows hay Linux? Dùng process manager nào (pm2, systemd, Windows service)? Node version nào? | Phase 1, Phase 11 | PROP-002, 018 |
+| PEND-005 | Máy chủ Linux cụ thể (xin cấp server nội bộ?) và process manager (đề xuất systemd) | Phase 2 (backup), Phase 11 | DEC-016, PROP-018 |
 | PEND-006 | Có bật privileged intent `MessageContent` cho anti-spam không? | Phase 4 | PROP-015 |
 | PEND-007 | Thành viên team tính theo role tại thời điểm ghi điểm (snapshot) hay role hiện tại (cần intent `GuildMembers`)? | Phase 6 | PROP-016 |
 | PEND-008 | Công thức: XP mỗi tin nhắn, đường cong level, team score, contribution score | Phase 4–9 | DEC-012 |
@@ -124,3 +166,6 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | PEND-011 | Chọn test framework | Phase 2 | PROP-009 |
 | PEND-012 | Duyệt cấu trúc module mục tiêu | Phase 2 | PROP-011 |
 | PEND-013 | Chính sách lưu và giữ dữ liệu (nội dung tin nhắn, thời gian giữ log/audit) | Phase 2, 4 | PROP-014, 015 |
+| PEND-014 | Ngôn ngữ bot hiển thị cho người dùng Discord (tiếng Việt hay tiếng Anh)? Hiện code demo dùng tiếng Anh | Phase 3 trở đi | — |
+
+**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016.
