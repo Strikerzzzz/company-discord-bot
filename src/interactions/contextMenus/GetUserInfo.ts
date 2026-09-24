@@ -6,7 +6,6 @@ export default class GetUserInfo extends ContextMenu
 	data = new ContextMenuCommandBuilder()
 		.setName("Get User Info")
 		.setType(ApplicationCommandType.User);
-	override global = true;
 
 	async execute(interaction: UserContextMenuCommandInteraction): Promise<void>
 	{

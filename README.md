@@ -79,6 +79,7 @@ autocomplete(interaction: AutocompleteInteraction): string[]
 
 ### Buttons
 If one of your slash commands sends a button through an interaction, you can implement the button logic inside the same class for convenience using the ``executeButton()`` method. When you finish building your buttons make sure to register the custom IDs you have set in the ``buttonIds`` array, otherwise the bot won't be able to reply to the button interactions.
+`customId` có thể có dạng `<namespace>:<payload>` (ví dụ `vote:42`); khi đó chỉ khai báo `namespace` trong `buttonIds`, còn payload do command tự parse và validate.
 You can see the clickme command for a simple implementation of two buttons.
 
 ### Context Menus

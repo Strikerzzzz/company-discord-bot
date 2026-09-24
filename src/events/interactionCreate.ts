@@ -1,7 +1,5 @@
 import Event from "../classes/Event";
 import { Events, Interaction, InteractionReplyOptions, MessageFlags } from "discord.js";
-import Command from "../classes/Command";
-import ContextMenu from "../classes/ContextMenu";
 
 // Discord chỉ nhận tối đa 25 lựa chọn cho một autocomplete.
 const MAX_AUTOCOMPLETE_CHOICES = 25;
@@ -28,28 +26,28 @@ export default class InteractionCreate extends Event
 	{
 		if (interaction.isChatInputCommand())
 		{
-			const command = this.client.interactions.get(interaction.commandName) as Command | undefined;
+			const command = this.client.interactions.commands.get(interaction.commandName);
 			if (!command) return;
 
 			await command.execute(interaction);
 		}
 		else if (interaction.isButton())
 		{
-			const button = this.client.buttons.get(interaction.customId);
-			if (!button) return;
+			const command = this.client.buttons.resolve(interaction.customId);
+			if (!command) return;
 
-			await button.executeButton(interaction);
+			await command.executeButton(interaction);
 		}
 		else if (interaction.isContextMenuCommand())
 		{
-			const contextMenu = this.client.interactions.get(interaction.commandName) as ContextMenu | undefined;
+			const contextMenu = this.client.interactions.contextMenus.get(interaction.commandName);
 			if (!contextMenu) return;
 
 			await contextMenu.execute(interaction);
 		}
 		else if (interaction.isAutocomplete())
 		{
-			const command = this.client.interactions.get(interaction.commandName) as Command | undefined;
+			const command = this.client.interactions.commands.get(interaction.commandName);
 			if (!command) return;
 
 			const choices = command.autocomplete(interaction).slice(0, MAX_AUTOCOMPLETE_CHOICES);

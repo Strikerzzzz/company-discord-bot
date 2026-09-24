@@ -6,8 +6,7 @@ export default class ClickMeCmd extends Command
 {
 	data = new SlashCommandBuilder()
 		.setName("clickme")
-		.setDescription("Sends some cool buttons.")
-	override global = true;
+		.setDescription("Sends some cool buttons.");
 	override buttonIds = ["clickMeButton", "dontClickMeButton"];
 
 	async execute(interaction: ChatInputCommandInteraction): Promise<void>

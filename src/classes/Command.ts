@@ -15,7 +15,7 @@ export default abstract class Command
 	readonly client: DiscordClient;
 
 	abstract data: SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
-	global = false;
+	// Namespace của các button mà command này xử lý; xem ButtonHandler.
 	buttonIds: string[] = [];
 
 	constructor(client: DiscordClient)

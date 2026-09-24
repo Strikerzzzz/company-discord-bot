@@ -7,8 +7,7 @@ export default class PingCmd extends Command
 {
 	data = new SlashCommandBuilder()
 		.setName("ping")
-		.setDescription("Pong!")
-	override global = true;
+		.setDescription("Pong!");
 
 	// The execute function is called when a user enters the slash command.
 	// It gets called by the interactionCreate event.

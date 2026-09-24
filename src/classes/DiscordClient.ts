@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { Client, Events, GatewayIntentBits } from "discord.js";
 import ProcessManager from "./ProcessManager";
 import EventHandler from "../handlers/EventHandler";
 import InteractionHandler from "../handlers/InteractionHandler";
@@ -19,9 +19,9 @@ export default class DiscordClient extends Client
 			intents: [
 				GatewayIntentBits.Guilds,
 			],
-			partials: [
-				Partials.Channel,
-			],
+			// Mặc định không ping ai: nội dung do người dùng nhập mà bot gửi lại không thể kích hoạt
+			// @everyone, @here, role hay user mention. Command nào cần mention phải bật lại có chủ đích.
+			allowedMentions: { parse: [], repliedUser: false },
 		});
 
 		this.guildIds = guildIds;

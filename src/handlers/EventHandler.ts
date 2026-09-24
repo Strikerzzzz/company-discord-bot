@@ -1,8 +1,8 @@
 import DiscordClient from "../classes/DiscordClient";
 import Event from "../classes/Event";
 import { join } from "path";
-import { readdirSync } from "fs";
 import { Collection } from "discord.js";
+import { loadModules } from "./loadModules";
 
 export default class EventHandler extends Collection<string, Event>
 {
@@ -18,14 +18,8 @@ export default class EventHandler extends Collection<string, Event>
 
 	private init(): void
 	{
-		const path = join(__dirname, "..", "events");
-		const files = readdirSync(path);
-
-		files.forEach((file) =>
+		for (const event of loadModules(join(__dirname, "..", "events"), Event, this.client))
 		{
-			const eventClass = ((r) => r.default || r)(require(join(path, file)));
-			const event: Event = new eventClass(this.client);
-
 			this.set(event.name, event);
 
 			this.client[event.once ? "once" : "on"](
@@ -38,6 +32,6 @@ export default class EventHandler extends Collection<string, Event>
 			);
 
 			console.log(`Loaded event "${event.name}"`);
-		});
+		}
 	}
 }

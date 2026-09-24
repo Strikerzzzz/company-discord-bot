@@ -12,7 +12,6 @@ export default abstract class ContextMenu
 	readonly client: DiscordClient;
 
 	abstract data: ContextMenuCommandBuilder;
-	global = false;
 
 	constructor(client: DiscordClient)
 	{
