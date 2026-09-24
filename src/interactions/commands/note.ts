@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder, AutocompleteInteraction } from "discord.js";
+import { ChatInputCommandInteraction, SlashCommandBuilder, AutocompleteInteraction, MessageFlags } from "discord.js";
 import Command from "../../classes/Command";
 import Sqlite from "../../classes/Sqlite";
 import Note from "../../types/Note";
@@ -64,7 +64,7 @@ export default class NoteCmd extends Command
 			const query = Sqlite.prepare("DELETE FROM 'notes' WHERE noteTitle=(?)");
 			const result = query.run(title);
 
-			if (result.changes === 0) return interaction.reply({ content: "Note not found.", ephemeral: true });
+			if (result.changes === 0) return interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
 			return await interaction.reply(`Success! Removed ${result.changes} note(s).`);
 		}
 		else if (action === "get")
@@ -73,10 +73,10 @@ export default class NoteCmd extends Command
 
 			// Example of a SELECT query. When get() is executed it returns the first found row.
 			// https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#getbindparameters---row
-			const query = Sqlite.prepare("SELECT * FROM 'notes' WHERE noteTitle=(?)");
-			const note: Note = query.get(title);
+			const query = Sqlite.prepare<[string], Note>("SELECT * FROM 'notes' WHERE noteTitle=(?)");
+			const note = query.get(title);
 
-			if (!note) return interaction.reply({ content: "Note not found.", ephemeral: true });
+			if (!note) return interaction.reply({ content: "Note not found.", flags: MessageFlags.Ephemeral });
 			return interaction.reply(`**${note.noteTitle}**\n>>> ${note.noteDescription}\nCreated At: ${note.createdAt}`);
 		}
 	}
@@ -91,10 +91,10 @@ export default class NoteCmd extends Command
 		if (focusedOption.name === "title")
 		{
 			// Max of 25 choices at a time.
-			const query = Sqlite.prepare("SELECT * FROM notes LIMIT 25");
+			const query = Sqlite.prepare<[], Note>("SELECT * FROM notes LIMIT 25");
 			// .all() returns an array of all rows from the select query.
 			// You must use a custom type so you can handle the data.
-			const allNotes: Note[] = query.all();
+			const allNotes = query.all();
 			allNotes.forEach(note =>
 			{
 				choices.push(note.noteTitle);

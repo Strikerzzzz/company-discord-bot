@@ -1,10 +1,11 @@
+import { Events } from "discord.js";
 import DiscordClient from "../classes/DiscordClient";
 import Event from "../classes/Event";
 import Sqlite from "../classes/Sqlite";
 
 export default class Ready extends Event
 {
-	name = "ready";
+	name = Events.ClientReady;
 	once = true;
 
 	async execute(client: DiscordClient): Promise<void>

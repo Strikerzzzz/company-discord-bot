@@ -1,5 +1,5 @@
 import ContextMenu from "../../classes/ContextMenu";
-import { ApplicationCommandType, UserContextMenuCommandInteraction, EmbedBuilder, ContextMenuCommandBuilder } from "discord.js";
+import { ApplicationCommandType, UserContextMenuCommandInteraction, EmbedBuilder, ContextMenuCommandBuilder, MessageFlags } from "discord.js";
 
 export default class GetUserInfo extends ContextMenu
 {
@@ -20,6 +20,6 @@ export default class GetUserInfo extends ContextMenu
 			.setColor("Random")
 			.setTimestamp();
 
-		await interaction.reply({ embeds: [whoisEmbed], ephemeral: true });
+		await interaction.reply({ embeds: [whoisEmbed], flags: MessageFlags.Ephemeral });
 	}
 }

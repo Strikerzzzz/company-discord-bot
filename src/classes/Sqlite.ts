@@ -20,9 +20,10 @@ export default class Sqlite
 		return this._instance || (this._instance = new this());
 	}
 
-	public static prepare(query: string): Statement
+	// Params/Row do nơi gọi khai báo theo đúng câu SQL; better-sqlite3 không kiểm tra kiểu của row lúc runtime.
+	public static prepare<Params extends unknown[] = unknown[], Row = unknown>(query: string): Statement<Params, Row>
 	{
-		const statement = this.instance.db.prepare(query);
+		const statement = this.instance.db.prepare<Params, Row>(query);
 		return statement;
 	}
 

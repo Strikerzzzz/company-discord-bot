@@ -3,9 +3,7 @@ import Command from "../classes/Command";
 import ContextMenu from "../classes/ContextMenu";
 import { join } from "path";
 import { readdirSync, existsSync } from "fs";
-import { REST } from "@discordjs/rest";
-import { RESTPostAPIApplicationCommandsJSONBody, Routes } from "discord-api-types/v10";
-import { Collection } from "discord.js";
+import { Collection, REST, RESTPostAPIApplicationCommandsJSONBody, Routes } from "discord.js";
 import { token, clientId, guildIds } from "../config.json";
 
 export default class InteractionHandler extends Collection<string, Command | ContextMenu>

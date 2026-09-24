@@ -1,17 +1,12 @@
 {
-  "name": "discordjs-core-bot",
-  "version": "2.0.0",
-  "description": "A fully customizable Discord bot written in TypeScript. Made with Discord.js v14 and Better SQLite3.",
-  "author": "Retr0#1799",
+  "name": "company-discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord bot nội bộ công ty: Activity XP và Contribution.",
   "license": "MIT",
   "main": "src/index.ts",
-  "homepage": "https://github.com/Retr0-01/discordjs-core-bot",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Retr0-01/discordjs-core-bot"
-  },
-  "bugs": {
-    "url": "https://github.com/Retr0-01/discordjs-core-bot/issues"
+  "engines": {
+    "node": ">=22.14.0"
   },
   "scripts": {
     "dev": "ts-node .",
@@ -20,23 +15,15 @@
     "lint": "eslint .",
     "pm2": "pm2 start ecosystem.config.js"
   },
-  "keywords": [
-    "typescript",
-    "better-sqlite3",
-    "discord-bot",
-    "discord-js"
-  ],
   "dependencies": {
-    "@discordjs/rest": "^1.1.0",
-    "better-sqlite3": "^8.0.0",
-    "discord-api-types": "^0.37.5",
-    "discord.js": "^14.3.0"
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@typescript-eslint/eslint-plugin": "^5.36.1",
     "@typescript-eslint/parser": "^5.36.1",
     "eslint": "^8.23.0",
-    "typescript": "^4.8.2"
+    "typescript": "^5.9.3"
   }
 }
