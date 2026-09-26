@@ -105,6 +105,25 @@ export default class ContributionCmd extends Command
 
 		await interaction.update(contributionMessage(result.contribution));
 		await interaction.followUp({ content: voteFeedback(result.voted), flags: MessageFlags.Ephemeral });
+
+		// Bấm từ bản xem riêng (/contribution view) thì cập nhật cả message công khai gốc để số lượt luôn đúng.
+		const originalId = result.contribution.messageId;
+		if (originalId !== null && originalId !== interaction.message.id) await this.refreshOriginal(result.contribution);
+	}
+
+	/** Sửa message công khai gốc theo trạng thái mới. Không ném lỗi: message có thể đã bị xoá hoặc bot mất quyền. */
+	private async refreshOriginal(contribution: Contribution): Promise<void>
+	{
+		if (contribution.channelId === null || contribution.messageId === null) return;
+		try
+		{
+			const channel = await this.client.channels.fetch(contribution.channelId);
+			if (channel?.isTextBased()) await channel.messages.edit(contribution.messageId, contributionMessage(contribution));
+		}
+		catch (error)
+		{
+			logger.warn(`Không cập nhật được message gốc của contribution #${contribution.id}:`, error);
+		}
 	}
 
 	private async submit(interaction: ChatInputCommandInteraction): Promise<void>

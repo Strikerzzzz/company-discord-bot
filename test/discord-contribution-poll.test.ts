@@ -134,6 +134,8 @@ class FakeContributions
 	listCalls: { guildId: string; authorId?: string; limit: number }[] = [];
 	stored = new Map<number, Contribution>();
 	nextVoted = true;
+	// Vị trí message công khai gốc mà toggleVote trả về (null = chưa đăng message).
+	location: { channelId: string; messageId: string } | null = null;
 
 	submit(input: SubmitContributionInput): Contribution
 	{
@@ -162,7 +164,7 @@ class FakeContributions
 		this.toggles.push(input);
 		const voted = this.nextVoted;
 		this.nextVoted = !voted;
-		return { voted, contribution: makeContribution({ id: input.contributionId, votes: voted ? 4 : 3 }) };
+		return { voted, contribution: makeContribution({ id: input.contributionId, votes: voted ? 4 : 3, ...this.location }) };
 	}
 }
 
@@ -290,12 +292,13 @@ function chatInput(subcommand: string, values: OptionValues = {}, member: Member
 	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies };
 }
 
-function buttonPress(customId: string, member: MemberSpec = {})
+function buttonPress(customId: string, member: MemberSpec = {}, messageId = MESSAGE_ID)
 {
 	const updates: Payload[] = [];
 	const followUps: Payload[] = [];
 	const interaction = {
 		customId,
+		message: { id: messageId },
 		guildId: GUILD,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
@@ -750,6 +753,20 @@ describe("/contribution", () =>
 		await command.executeButton(second.interaction);
 		assert.equal(buttonsOf(second.updates[0].components)[0].label, "👍 Ghi nhận (3)");
 		assert.deepEqual(second.followUps, [{ content: "↩️ Bạn đã rút ghi nhận.", flags: MessageFlags.Ephemeral }]);
+	});
+
+	test("nút ghi nhận ở bản xem riêng: cập nhật cả message công khai gốc; bấm trên message gốc thì không sửa thêm", async () =>
+	{
+		const { client, contributions, edits } = setup();
+		contributions.location = { channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID };
+		const command = new ContributionCmd(client);
+
+		await command.executeButton(buttonPress("contrib:7", { userId: USER_B }, OTHER_MESSAGE_ID).interaction);
+		assert.deepEqual(edits.map(edit => edit.messageId), [MESSAGE_ID]);
+		assert.equal(buttonsOf(edits[0].payload.components)[0].label, "👍 Ghi nhận (4)");
+
+		await command.executeButton(buttonPress("contrib:7", { userId: USER_B }, MESSAGE_ID).interaction);
+		assert.equal(edits.length, 1);
 	});
 
 	test("nút ghi nhận sai định dạng: UserError, không gọi service", async () =>
