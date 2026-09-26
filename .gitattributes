@@ -1,0 +1,2 @@
+# Mọi máy (Windows lẫn Linux) đều checkout LF, bất kể cấu hình core.autocrlf (PROP-023).
+* text=auto eol=lf
