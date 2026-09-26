@@ -33,6 +33,13 @@
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
 | PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
 | PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | IMPLEMENTED |
+| PROP-024 | Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ | MEDIUM | PROPOSED |
+| PROP-025 | Ghi nhận đóng góp qua modal (người ghi nhận tự viết tiêu đề, mô tả) | MEDIUM | PROPOSED |
+| PROP-026 | Snapshot team của lượt ghi nhận: lúc gửi hay lúc được ghi nhận | LOW | PROPOSED |
+| PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | PROPOSED |
+| PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | PROPOSED |
+| PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | PROPOSED |
+| PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
 
 ---
 
@@ -959,3 +966,273 @@ Commit normalize ban đầu có thể làm diff lớn nếu repo đang lẫn CRL
 ### Trạng thái
 
 IMPLEMENTED (2026-09-26, DEC-019). Không có diff chuẩn hoá (repo vốn lưu LF cả 38 file); working copy trên máy dev đã được checkout lại toàn bộ sang LF.
+
+---
+
+## PROP-024 — Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ
+
+### Vấn đề
+
+`adjust` chặn tổng âm, nhưng rút ghi nhận (`voidEvent`) và gỡ contribution (`voidByReference`) thì trừ thẳng vào tổng. Ví dụ: A có 2 điểm từ ghi nhận → admin trừ 2 (tổng 0) → admin gỡ contribution → tổng **-2**. Người bị phạt bị trừ hai lần cho cùng một contribution; điểm team cũng giảm theo. Phát hiện ở đợt review 2026-09-26.
+
+### Đề xuất
+
+Chọn một trong hai:
+- (a) Khi void làm tổng âm, ghi thêm một event bù (source `admin`, lý do tự động) trong cùng transaction để tổng về 0.
+- (b) Cho phép âm, hiển thị đúng số âm.
+
+Khuyến nghị (a).
+
+### Lý do
+
+Tránh phạt hai lần; con số dễ hiểu với người dùng.
+
+### Tác động
+
+- **Code:** ContributionService.
+- **Database:** Thêm event bù; không đổi schema.
+- **Security:** Không.
+- **Performance:** Không.
+- **UX:** Điểm không âm.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Đây là quy tắc nghiệp vụ (DEC-012), cần người phụ trách chốt.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-025 — Ghi nhận đóng góp qua modal
+
+### Vấn đề
+
+Luật dự án cấm lưu nội dung tin nhắn khi chưa có quyết định, nên context menu "Ghi nhận đóng góp" chỉ lưu link, với tiêu đề cố định kiểu "Đóng góp từ tin nhắn trong #kênh". Danh sách contribution vì thế khó phân biệt.
+
+### Đề xuất
+
+Khi bấm "Ghi nhận đóng góp", bot mở modal để người ghi nhận tự viết tiêu đề (bắt buộc) và mô tả ngắn (lý do ghi nhận). Nội dung do chính người ghi nhận nhập, không chép từ tin nhắn.
+
+### Lý do
+
+Contribution có tiêu đề rõ ràng, đúng tinh thần "ghi nhận", mà không vi phạm luật lưu nội dung.
+
+### Tác động
+
+- **Code:** Context menu và thêm cơ chế định tuyến modal submit trong dispatcher (giống button).
+- **Database:** Không.
+- **Security:** Không lưu nội dung người khác.
+- **Performance:** Không.
+- **UX:** Thêm một bước điền form.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Thêm một loại interaction cần test trên Discord thật.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-026 — Snapshot team của lượt ghi nhận
+
+### Vấn đề
+
+Điểm của lượt ghi nhận đang tính cho team của tác giả **lúc gửi** contribution (lưu ở `contribution_teams`). DEC-024 ghi "team tại thời điểm phát sinh điểm", tức là lúc được ghi nhận. Nếu tác giả chuyển team giữa hai thời điểm này thì điểm vẫn vào team cũ.
+
+### Đề xuất
+
+- (a) Giữ nguyên và sửa câu chữ DEC-024/025 cho khớp. Lý do kỹ thuật: lúc người khác bấm ghi nhận, bot không biết role hiện tại của tác giả nếu không có intent GuildMembers, trừ khi gọi REST mỗi lần bấm.
+- (b) Mỗi lần ghi nhận thì gọi REST lấy role hiện tại của tác giả.
+
+Khuyến nghị (a).
+
+### Lý do
+
+Đơn giản, không cần intent hay request thêm; contribution thuộc về team nơi nó được tạo ra.
+
+### Tác động
+
+- **Code:** (a) chỉ sửa tài liệu; (b) sửa button handler và service.
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** (b) thêm một REST call mỗi lần bấm.
+- **UX:** Không đáng kể.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Đây là quy tắc nghiệp vụ, cần người phụ trách chốt.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-027 — Tin có chữ ngắn kèm file đính kèm
+
+### Vấn đề
+
+Theo DEC-023: tin chỉ có ảnh thì được XP (chỉ áp dụng cooldown), nhưng ảnh kèm caption ngắn (ví dụ "ok") lại bị loại vì quá ngắn.
+
+### Đề xuất
+
+- (a) Tin có file đính kèm thì bỏ kiểm tra độ dài tối thiểu (vẫn chống trùng, vẫn cooldown).
+- (b) Giữ nguyên.
+
+### Lý do
+
+Hành vi nhất quán hơn với người dùng.
+
+### Tác động
+
+- **Code:** `antiSpam.ts`.
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** Không.
+- **UX:** Ít trường hợp khó hiểu hơn.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Đây là quy tắc nghiệp vụ, cần người phụ trách chốt.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-028 — Giới hạn XP từ vote
+
+### Vấn đề
+
+Người có quyền tạo vote có thể tạo, tự vote, đóng, rồi lặp lại để lấy XP (mặc định 5 XP mỗi vote). Admin có thể đặt XP riêng tới 1000. Audit đã ghi mức XP (từ đợt sửa 2026-09-26), nhưng không có giới hạn.
+
+### Đề xuất
+
+Chọn một hoặc nhiều:
+- người tạo không nhận XP ở vote của chính mình;
+- giới hạn số vote có XP mà một người nhận được mỗi ngày;
+- giới hạn XP tối đa của một vote thấp hơn 1000.
+
+### Lý do
+
+Chống lạm dụng từ người có quyền tạo vote.
+
+### Tác động
+
+- **Code:** PollService.
+- **Database:** Có thể cần truy vấn theo ngày.
+- **Security:** Giảm lạm dụng.
+- **Performance:** Không đáng kể.
+- **UX:** Không.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Đây là quy tắc nghiệp vụ. Người tạo vote hiện là admin hoặc role được tin cậy, nên rủi ro thấp.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-029 — Nút chuyển trang cho bảng xếp hạng
+
+### Vấn đề
+
+`/leaderboard` chuyển trang bằng option `trang`; phải gõ lại lệnh.
+
+### Đề xuất
+
+Thêm nút ◀ ▶ với customId dạng `lb:<loai>:<pham-vi>:<trang>` để chuyển trang ngay trên message.
+
+### Lý do
+
+Tiện hơn cho người dùng.
+
+### Tác động
+
+- **Code:** Command leaderboard và view.
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** Mỗi lần bấm là một truy vấn (đã được tối ưu bằng bảng cache).
+- **UX:** Tốt hơn.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Thấp.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-030 — Đưa riêng từng giá trị của channel về mặc định
+
+### Vấn đề
+
+Discord option không truyền được giá trị "trống", nên muốn một channel quay về XP hoặc cooldown chung phải chạy `/config channel reset`, lệnh này xoá cả cấu hình bật/tắt XP.
+
+### Đề xuất
+
+Thêm option kiểu boolean `dung-mac-dinh-xp` và `dung-mac-dinh-cooldown` cho `/config channel set`.
+
+### Lý do
+
+Admin chỉnh cấu hình chính xác hơn.
+
+### Tác động
+
+- **Code:** Command config.
+- **Database:** Không.
+- **Security:** Không.
+- **Performance:** Không.
+- **UX:** Tốt hơn.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+LOW
+
+### Rủi ro
+
+Thấp.
+
+### Trạng thái
+
+PROPOSED

@@ -10,7 +10,7 @@ Type=simple
 User=discordbot
 Group=discordbot
 WorkingDirectory=/opt/company-discord-bot
-# File .env chứa DISCORD_TOKEN, DISCORD_GUILD_IDS...; quyền 600, chủ sở hữu discordbot.
+# File .env (root:root, quyền 600) được systemd đọc trước khi hạ quyền; process bot không cần đọc file này.
 EnvironmentFile=/opt/company-discord-bot/.env
 # Kiểm tra đường dẫn node bằng `which node` (Node 24 LTS).
 ExecStart=/usr/bin/node build/index.js
@@ -19,6 +19,9 @@ RestartSec=5
 # Bot tự đóng kết nối và database khi nhận SIGTERM.
 TimeoutStopSec=20
 
+# File mới (database, backup) chỉ user chạy bot đọc được: phiếu vote "ẩn danh" vẫn lưu user_id trong DB.
+UMask=0077
+
 # Giới hạn quyền của process: chỉ được ghi vào thư mục data (database và backup).
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -26,6 +29,23 @@ ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
 ReadWritePaths=/opt/company-discord-bot/data
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Không bật MemoryDenyWriteExecute: V8 (JIT của Node) cần vùng nhớ vừa ghi vừa thực thi.
 
 [Install]
 WantedBy=multi-user.target

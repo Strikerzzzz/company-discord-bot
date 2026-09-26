@@ -242,5 +242,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
 | PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
 | PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
+| PEND-015 | Xác nhận ngữ nghĩa reset contribution. **Đang làm:** lượt ghi nhận đã bị admin reset không ghi nhận lại được (chống vượt reset); người chưa từng ghi nhận vẫn ghi nhận bình thường | Contribution | Review 2026-09-26 |
+| PEND-016 | Điểm contribution có được âm không? | Contribution | PROP-024 |
+| PEND-017 | Context menu "Ghi nhận đóng góp": dùng modal cho người ghi nhận tự viết tiêu đề? **Đang làm:** chỉ lưu link, tiêu đề cố định, không chép nội dung tin nhắn | Contribution | PROP-025 |
+| PEND-018 | Snapshot team của lượt ghi nhận: lúc gửi (**đang làm**) hay lúc được ghi nhận | Điểm team | PROP-026 |
+| PEND-019 | Ảnh kèm chữ ngắn có được XP không? | Activity XP | PROP-027 |
+| PEND-020 | Có giới hạn XP từ vote (người tạo tự vote, số vote mỗi ngày) không? | Vote | PROP-028 |
 
 **Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020.
