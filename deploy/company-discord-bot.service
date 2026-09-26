@@ -1,0 +1,31 @@
+# systemd unit cho bot (production Linux, DEC-016). Hướng dẫn đầy đủ: docs/DEPLOY.md
+# Cài đặt: sudo cp deploy/company-discord-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+[Unit]
+Description=Company Discord Bot (Activity XP & Contribution)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discordbot
+Group=discordbot
+WorkingDirectory=/opt/company-discord-bot
+# File .env chứa DISCORD_TOKEN, DISCORD_GUILD_IDS...; quyền 600, chủ sở hữu discordbot.
+EnvironmentFile=/opt/company-discord-bot/.env
+# Kiểm tra đường dẫn node bằng `which node` (Node 24 LTS).
+ExecStart=/usr/bin/node build/index.js
+Restart=on-failure
+RestartSec=5
+# Bot tự đóng kết nối và database khi nhận SIGTERM.
+TimeoutStopSec=20
+
+# Giới hạn quyền của process: chỉ được ghi vào thư mục data (database và backup).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/opt/company-discord-bot/data
+
+[Install]
+WantedBy=multi-user.target

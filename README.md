@@ -1,103 +1,85 @@
-# Discord.js Core Bot
-> A fully customizable Discord bot written in TypeScript. Made with Discord.js v14 and Better-SQLite3.
+# Company Discord Bot
 
-This repository contains the core of a Discord bot powered by Discord.js v14 with support for slash commands, autocomplete interactions, buttons and context menus. With Better-SQLite fully setup, you can easily use this template for your own projects and customize the bot to your needs.
+Discord bot nội bộ cho gamification và ghi nhận đóng góp, với **hai hệ thống điểm độc lập**:
 
-- [Discord.js Core Bot](#discordjs-core-bot)
-	- [Getting Started](#getting-started)
-		- [Prerequisites](#prerequisites)
-		- [Installing](#installing)
-		- [Building](#building)
-	- [Configuration](#configuration)
-	- [Interactions](#interactions)
-		- [Slash Commands](#slash-commands)
-		- [Autocomplete](#autocomplete)
-		- [Buttons](#buttons)
-		- [Context Menus](#context-menus)
-	- [Using SQLite](#using-sqlite)
+- **Activity XP**: tin nhắn hợp lệ → XP → Level → bảng xếp hạng (cá nhân và team). Có chống spam/farm: cooldown, bỏ tin quá ngắn hoặc trùng lặp, cấu hình theo từng channel.
+- **Contribution Score**: nhân viên gửi đóng góp (ý tưởng, giải pháp, tài liệu, ...), đồng nghiệp bấm 👍 để ghi nhận → điểm → bảng xếp hạng (cá nhân và team).
 
-## Getting Started
+Ngoài ra bot có **vote / bầu cử / lấy ý kiến**:
+- phiếu ẩn danh;
+- được đổi phiếu tới khi vote đóng;
+- người tham gia được Activity XP một lần cho mỗi vote.
 
-### Prerequisites
-* [Node.js](https://nodejs.org/en/download/) - v16.9.0 or higher.
-* [Git](https://git-scm.com/) - If you want to install the bot using method 3.
+Team được xác định bằng Discord Role. Mọi quản trị thực hiện bằng slash command và được ghi audit log.
 
-### Installing
-*Method 1*  
-If you want your project to be on GitHub you can simply click the big green **Use this template** button to get started.
+Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Database của bot hoàn toàn độc lập.
 
-*Method 2*
-1. Download the [ZIP file](https://github.com/Retr0-01/discordjs-core-bot/archive/main.zip) containing the source code.
-1. Extract it to your preferable location.
-1. Delete the ZIP file if you want, we won't need it.
+## Lệnh cho người dùng
 
-*Method 3*
-1. Launch a terminal in the directory you want the bot to install.
-2. Type:
-```batch
-git clone https://github.com/Retr0-01/discordjs-core-bot.git
+| Lệnh | Chức năng |
+| --- | --- |
+| `/rank [thanh-vien]` | Level, XP, hạng; điểm contribution; team |
+| `/leaderboard loai [pham-vi] [trang]` | Bảng xếp hạng Activity hoặc Contribution, theo cá nhân hoặc team |
+| `/contribution submit` | Gửi một đóng góp |
+| `/contribution view` · `list` | Xem một đóng góp · danh sách đóng góp gần đây |
+| Chuột phải tin nhắn → **Ghi nhận đóng góp** | Biến tin nhắn thành contribution cho tác giả tin nhắn |
+| `/poll create` · `close` · `results` · `list` | Tạo vote, đóng vote, xem kết quả, xem vote đang mở. Chỉ admin hoặc role được cấp quyền mới tạo được |
+| `/ping` | Kiểm tra bot còn hoạt động |
+
+## Lệnh quản trị
+
+Cần quyền **Manage Server** hoặc role admin do bot cấu hình.
+
+| Lệnh | Chức năng |
+| --- | --- |
+| `/admin xp view · give · remove · reset · reset-all` | Xem, cộng, trừ, reset XP |
+| `/admin contribution adjust · remove · reset · reset-all` | Điều chỉnh điểm, gỡ contribution, reset |
+| `/admin stats` · `audit` · `backup` | Thống kê, nhật ký quản trị, sao lưu ngay |
+| `/config view · xp · channel · team · admin-role · poll · contribution` | Cấu hình XP, cooldown, channel, team, quyền |
+
+## Phát triển
+
+Yêu cầu: Node.js ≥ 22.14 (production dùng Node 24 LTS).
+
+```bash
+npm ci                  # cài dependency (không chạy install script, xem .npmrc)
+cp .env.example .env    # điền DISCORD_TOKEN, DISCORD_GUILD_IDS
+npm run dev             # build rồi chạy bot với .env
+npm run build           # dọn build/ rồi compile TypeScript
+npm run lint            # ESLint (có dùng thông tin type)
+npm test                # compile và chạy toàn bộ test (node:test, SQLite trong bộ nhớ)
+npm run check           # build + lint + test
 ```
 
-### Building
-Assuming you have Node.js installed and you are in the directory you installed the bot, open a command prompt and type:
-```batch
-npm install
-```
-This will install all the required dependencies the bot needs to function.
+Chạy một phần test (sau khi `npm test` hoặc `npx tsc -p test` đã compile):
 
-## Configuration
-Cấu hình đọc từ biến môi trường. Khi chạy local: sao chép `.env.example` thành `.env` rồi điền giá trị (file `.env` đã được gitignore, không commit).
-
-| Biến                | Ý nghĩa                                                                   |
-| ------------------- | ------------------------------------------------------------------------- |
-| `DISCORD_TOKEN`     | Token của bot (Discord Developer Portal → Bot)                            |
-| `DISCORD_GUILD_IDS` | ID các server được đăng ký slash command, cách nhau bằng dấu phẩy         |
-
-`npm run dev` build rồi chạy với `.env`; `npm run prod` chạy bản đã build và nạp `.env` nếu có (trên server có thể cấp biến qua môi trường của process).
-
-## Interactions
-The core bot fully supports slash commands, autocomplete interactions, button interactions and context menus.
-
-**NOTE:** Slash commands and context menus get automatically deployed to the guilds you have set in your config by the interaction handler each time the bot receives the `ready` event, there is nothing else to do on your part.
-
-### Slash Commands
-To create a new slash command, go into ``/interactions/commands/`` and create a new class which derives from the ``Command`` class.  
-The folder is filled with some example commands which showcase slash commands, command options, subcommands, buttons, autocomplete and usage with the database. Feel free to delete them if you want. 
-
-### Autocomplete
-Each slash command which has at least one option which enables autocomplete can implement an ``autocomplete()`` method which returns an array of strings. Make sure you filter your strings according to the user's currently typed focused value. For example:
-```ts
-autocomplete(interaction: AutocompleteInteraction): string[]
-{
-   const focusedValue = interaction.options.getFocused();
-   const choices: string[] = ["First Option", "Second Option", "Third Option"];
-
-   const filtered = choices.filter(choice => choice.startsWith(focusedValue));
-   return filtered;
-}
+```bash
+node --test build-test/test/activity.test.js                              # một file
+node --test --test-name-pattern="cooldown" "build-test/test/**/*.test.js"  # theo tên test
 ```
 
-### Buttons
-If one of your slash commands sends a button through an interaction, you can implement the button logic inside the same class for convenience using the ``executeButton()`` method. When you finish building your buttons make sure to register the custom IDs you have set in the ``buttonIds`` array, otherwise the bot won't be able to reply to the button interactions.
-`customId` có thể có dạng `<namespace>:<payload>` (ví dụ `vote:42`); khi đó chỉ khai báo `namespace` trong `buttonIds`, còn payload do command tự parse và validate.
-You can see the clickme command for a simple implementation of two buttons.
+## Cấu hình
 
-### Context Menus
-> You are free to delete the context menus directory if you don't want to implement context menus.
+| Biến môi trường | Bắt buộc | Ý nghĩa |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | ✅ | Token của bot |
+| `DISCORD_GUILD_IDS` | ✅ | ID các server được đăng ký slash command, cách nhau bằng dấu phẩy |
+| `DATABASE_PATH` | | File SQLite (mặc định `data/bot.db`) |
+| `BACKUP_DIR` | | Thư mục sao lưu (mặc định `data/backups`) |
+| `BACKUP_KEEP` | | Số bản sao lưu giữ lại (mặc định 14) |
+| `LOG_LEVEL` | | `debug`, `info`, `warn`, `error` (mặc định `info`) |
 
-Go into ``/interactions/contextMenus/`` and create a new context menu command which derives from the ``ContextMenu`` class. Make sure you also use the correct type in the execute method's interaction parameter according to the type of your context menu (``UserContextMenuInteraction`` for ``ApplicationCommandType.User`` and ``MessageContextMenuInteraction`` for ``ApplicationCommandType.Message``).
+Các con số nghiệp vụ (XP mỗi tin, cooldown, điểm mỗi lượt ghi nhận, XP khi vote, ...) do admin chỉnh trong Discord bằng `/config`, không nằm trong file cấu hình.
 
-## Using SQLite
-> If you don't want to use SQLite at all, comment out the following line of the `index.ts` file:
-> ```ts
-> new Sqlite();
-> ```
+## Triển khai
 
-This bot can utilize SQLite to store and retrieve data from a local database. Using the database utility is simple but requires some setup:
-- Modify the `setup.sql` file inside the db folder.
-	- This file contains queries that get executed each time the database is started, in other words, *every time your bot starts*.
-- For each table structure you have in your db, you must create a type for it in order to properly handle the data you receive.
-  - Inside the `types` folder create any new interfaces you need.
-- Use `Sqlite.prepare()` to prepare a statement, then execute it.
+Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, xử lý sự cố.
 
-Check the `note.ts` file to see an example implementation.
+## Tài liệu dự án
+
+- [CLAUDE.md](CLAUDE.md): luật nền tảng của dự án (kiến trúc, coding, security, quy trình).
+- [docs/ai/](docs/ai/): bối cảnh, kiến trúc, quyết định kỹ thuật, bài học, đề xuất, trạng thái, roadmap.
+
+## Ghi công
+
+Dự án phát triển từ template mã nguồn mở [discordjs-core-bot](https://github.com/Retr0-01/discordjs-core-bot) (© 2022 Retr0-01, giấy phép MIT, xem [LICENCE.md](LICENCE.md)).
