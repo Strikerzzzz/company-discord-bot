@@ -92,7 +92,7 @@ Format mỗi mục:
 
 ## LL-007 — Khởi tạo database sai thứ tự và mở trùng connection
 
-- **Phát hiện:** 2026-09-24 · **Mức độ:** Trung bình · **Trạng thái:** Chưa sửa (PROP-007)
+- **Phát hiện:** 2026-09-24 · **Mức độ:** Trung bình · **Trạng thái:** Đã sửa 2026-09-26 (PROP-007: một connection mở và migrate trong `index.ts` trước khi login; bỏ `Sqlite.ts`)
 - **Hiện tượng:**
   1. `index.ts` gọi `new Sqlite()` trực tiếp. Instance này không được gán vào singleton `_instance`, nên lần gọi `Sqlite.prepare` hay `setup` đầu tiên lại tạo thêm một connection nữa. Kết quả: 2 connection, trong đó 1 connection không bao giờ được dùng hay đóng.
   2. `ready.ts` chạy `await deploy()` (network call) rồi mới `Sqlite.setup()`. Ở lần chạy đầu, trong khoảng chờ đó interaction có thể tới trước khi bảng tồn tại → lỗi "no such table" → sập bot (theo LL-001).
@@ -123,3 +123,29 @@ Format mỗi mục:
 - **Bài học:**
   - Không tin hoàn toàn vào `engines` của native module; phải chạy thử trên đúng version Node sẽ dùng.
   - Server production phải dùng Node ≥ 22.14; mục tiêu là Node 24 LTS (DEC-016).
+
+## LL-010 — `tsc` không xoá file cũ trong `build/`, mà loader nạp mọi file trong thư mục
+
+- **Phát hiện:** 2026-09-26 (Phase 2) · **Mức độ:** Cao · **Trạng thái:** Đã xử lý (`scripts/clean.cjs`)
+- **Hiện tượng (dự đoán trước khi xảy ra):** Sau khi xoá `note.ts`, `clickme.ts`, `GetUserInfo.ts`, `Sqlite.ts`, các file `.js` tương ứng vẫn còn trong `build/`. Loader `require` mọi file trong `build/interactions/commands/`, nên sẽ nạp lại command đã xoá, và command đó `require` tới `Sqlite` không còn tồn tại, làm crash lúc khởi động.
+- **Nguyên nhân:** `tsc` chỉ ghi đè hoặc thêm file, không bao giờ xoá output cũ. Cơ chế tự nạp theo thư mục khiến file rác trở thành code chạy thật.
+- **Cách xử lý:** `npm run build` và `npm test` chạy `node scripts/clean.cjs <thư mục>` trước khi compile (không dùng pre-script được, vì `.npmrc ignore-scripts=true` tắt cả pre/post script).
+- **Bài học:** Build phải luôn bắt đầu từ thư mục sạch. Khi deploy, luôn chạy `npm run build`, không copy chồng `build/` cũ.
+
+## LL-011 — Agent chạy song song ngầm hiểu khác nhau về dữ liệu nằm ngoài interface
+
+- **Phát hiện:** 2026-09-26 (tích hợp Phase 2–10) · **Mức độ:** Trung bình · **Trạng thái:** Đã sửa; có test chặn tái phát
+- **Hiện tượng:** Giao diện `/admin audit` hiển thị target của `contribution.remove` thành `contribution #<id>`. Thực tế service ghi target là **tác giả** (user ID) và để mã contribution trong `details`. Nếu không sửa, audit sẽ hiện `contribution #300000000000000001`.
+- **Nguyên nhân:** Interface TypeScript chỉ quy định kiểu (`targetId: string | null`), không quy định ý nghĩa. Agent làm giao diện và agent làm service làm cùng lúc, mỗi bên tự giả định. Test của mỗi bên chỉ dùng fake của chính mình nên đều pass.
+- **Cách xử lý:** Sửa view cho khớp dữ liệu thật; thêm `test/audit-view.test.ts` dựng audit từ **service thật** rồi kiểm tra phần hiển thị.
+- **Bài học:**
+  - Khi chia việc song song, hợp đồng phải ghi cả **ý nghĩa** của từng trường (target là gì, details có key nào), không chỉ kiểu dữ liệu.
+  - Luôn có test tích hợp chạy qua code thật của cả hai phía.
+
+## LL-012 — Worktree của agent nằm trong thư mục repo bị git và ESLint quét
+
+- **Phát hiện:** 2026-09-26 · **Mức độ:** Thấp · **Trạng thái:** Đã xử lý (ignore `.claude/worktrees/`)
+- **Hiện tượng:**
+  - `git status` hiện `.claude/` là untracked.
+  - `eslint .` quét cả source trong các worktree, nên chạy rất chậm (một lượt lint + test mất hơn 3 phút) và có thể báo lỗi của code không thuộc branch hiện tại.
+- **Bài học:** Khi dùng worktree cho agent, thêm thư mục worktree vào `.gitignore` và ignore của ESLint ngay từ đầu. Sau khi merge thì dọn worktree.

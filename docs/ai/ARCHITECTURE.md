@@ -1,179 +1,139 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-24, sau Phase 1 bước 1–5 (branch `phase-1/on-dinh-nen`).
-> Mô tả kiến trúc **hiện tại** (theo source code thực tế) và kiến trúc **mục tiêu**.
-> Phần mục tiêu chưa được duyệt được đánh dấu rõ kèm mã proposal.
+> Cập nhật lần cuối: 2026-09-26, sau khi hoàn thiện Phase 2–10 (branch `phase-2-10/hoan-thien-tinh-nang`).
+> Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
-## 1. Kiến trúc hiện tại
-
-### 1.1 Tổng quan
-
-Khung "command framework" từ template open-source, đã được làm chắc ở Phase 1:
-
-- Command và event được nạp tự động bằng cách quét thư mục (`loadModules`), có kiểm tra kiểu lúc runtime.
-- Dispatcher `interactionCreate` là error boundary chung: lỗi trong một command không làm sập bot.
-- Token và cấu hình đọc từ biến môi trường (`src/config.ts`).
-- Vẫn chưa có tầng service, repository, migration hay test. Code demo (`note.ts`) vẫn gộp UI, SQL và format output.
+## 1. Tổng quan
 
 ```
-Mong muốn :  Discord → Command/Event (mỏng) → Service → Repository → SQLite
-Hiện tại  :  Discord → Event dispatcher (error boundary) → Command (làm tất cả) → static Sqlite → SQLite
+Discord ──► Tầng Discord (mỏng) ──► Service nghiệp vụ ──► Ledger / Repository ──► SQLite (1 file)
+            events, commands,        modules/*              modules/ledger,
+            views, guards            (không import          *Repository.ts
+                                     discord.js)
 ```
 
-### 1.2 Luồng khởi động
+- **Topology** (DEC-002, DEC-016): 1 process Node.js (Linux, Node 24 LTS), 1 file SQLite (WAL), kết nối ra Discord. Không mở port, không có hạ tầng nào khác.
+- **Hai hệ thống điểm độc lập** (DEC-004): Activity XP dùng `xp_events` + `member_xp`; Contribution Score dùng `contribution_events` + `member_contribution`. Hai hệ thống dùng hai instance `Ledger` riêng và không bao giờ cộng gộp.
+- **Hướng phụ thuộc**: `discord` → `modules` → `db` / `shared`. ESLint chặn `src/modules/**`, `src/db/**`, `src/shared/**` import discord.js (DEC-007).
 
-```
-src/index.ts   main()
-├── loadConfig()                                     đọc DISCORD_TOKEN, DISCORD_GUILD_IDS; thiếu hoặc sai → lỗi rõ ràng, exit(1)
-├── new DiscordClient(guildIds)
-│   ├── events       = new EventHandler(this)        loadModules(src/events) → client.on/once(name, listener có .catch)
-│   ├── interactions = new InteractionHandler(this)  loadModules(commands) → commands; loadModules(contextMenus) → contextMenus
-│   ├── buttons      = new ButtonHandler(this)       namespace trong Command.buttonIds → Command
-│   ├── on("error")                                  log lỗi của discord.js client
-│   └── new ProcessManager(this)                     SIGINT; message "shutdown" (chỉ win32) → destroy() rồi exit
-├── new Sqlite()                                     instance thừa, không nằm trong singleton (LL-007, chờ PROP-007)
-└── await client.login(token)
-process.on("unhandledRejection")                     chỉ log (lưới an toàn cuối cùng)
-```
-
-Thứ tự khởi tạo class field (`events` → `interactions` → `buttons`) là quan trọng: `ButtonHandler` đọc `client.interactions.commands` đã được nạp. Toàn bộ việc nạp là đồng bộ (`readdirSync`, `require`), nên xong trước khi gọi `login()`.
-
-### 1.3 Luồng runtime
-
-```
-Discord Gateway (intent: Guilds)
- ├─ "clientReady" ───────► events/ready.ts
- │                          ├─ await InteractionHandler.deploy(guildIds)
- │                          │    ├─ application.commands.set(tất cả command, guildId)   cho từng guild; lỗi một guild thì chỉ log
- │                          │    └─ application.commands.set([])                        dọn global command cũ
- │                          └─ Sqlite.setup()                                         exec db/setup.sql (vẫn SAU deploy, LL-007)
- └─ "interactionCreate" ─► events/interactionCreate.ts   (dispatcher + error boundary)
-        ├─ isChatInputCommand ─► interactions.commands.get(name).execute()
-        ├─ isButton           ─► buttons.resolve("<namespace>:<payload>").executeButton()
-        ├─ isContextMenu      ─► interactions.contextMenus.get(name).execute()
-        └─ isAutocomplete     ─► command.autocomplete() → cắt 25 → respond()
-        lỗi bất kỳ ─► log + reply/followUp ephemeral (reply thất bại thì chỉ log)
-                                   └─ (note.ts) Sqlite.prepare<Params, Row>(sql) → better-sqlite3 → db/data.db
-```
-
-Chưa có event `messageCreate`, nên hiện chưa có đường nào để nhận tin nhắn cho Activity XP.
-
-### 1.4 Trách nhiệm từng thành phần
-
-| File | Trách nhiệm | Vấn đề còn lại |
-| --- | --- | --- |
-| `src/index.ts` | Composition root tối giản: config → client → login | Còn `new Sqlite()` thừa (LL-007) |
-| `src/config.ts` | Đọc và validate biến môi trường, không log secret | — |
-| `classes/DiscordClient.ts` | Kế thừa `Client`; intent `Guilds`, `allowedMentions` rỗng, tạo handler, listener `error` | Handler được tạo trong constructor (khó test) |
-| `classes/Command.ts`, `ContextMenu.ts`, `Event.ts` | Base class abstract, handler trả về `Promise<void>` | Command nhận cả `DiscordClient` (service locator), chưa nhận service riêng (PROP-011) |
-| `classes/ProcessManager.ts` | Tắt bot: đợi `destroy()` rồi exit | Không xử lý SIGTERM, không đóng DB (PROP-018) |
-| `classes/Sqlite.ts` | Static singleton better-sqlite3; `prepare<Params, Row>()`, `setup()` | Không PRAGMA, migration, transaction; 2 connection (PROP-007) |
-| `handlers/loadModules.ts` | Nạp module theo thư mục: chỉ `.js`/`.ts`, kiểm tra class kế thừa base | — |
-| `handlers/EventHandler.ts` | Đăng ký event, bắt reject của mọi listener | — |
-| `handlers/InteractionHandler.ts` | Registry `commands` / `contextMenus`; `deploy()` theo guild | — |
-| `handlers/ButtonHandler.ts` | Namespace → Command; chặn namespace trùng hoặc chứa `:` | — |
-| `events/interactionCreate.ts` | Dispatcher + error boundary | Chưa có kiểm tra quyền (PROP-013) |
-| `events/ready.ts` | Event `clientReady`: deploy, rồi setup DB | Thứ tự sai (LL-007) |
-| `interactions/commands/*.ts`, `contextMenus/*.ts` | Code demo: `ping`, `clickme`, `note`, `Get User Info` | `note.ts` gộp UI + SQL; không kiểm tra quyền (PROP-019) |
-| `db/setup.sql` | DDL bảng `notes` (demo) | Chạy lại mỗi lần start; không có version |
-| `ecosystem.config.js` | Cấu hình pm2, nạp `.env` qua `node_args` | `wait_ready: true` nhưng code không gửi `ready` (PROP-018) |
-
-### 1.5 Hướng phụ thuộc hiện tại
-
-- Command phụ thuộc trực tiếp vào static `Sqlite` và class `DiscordClient` cụ thể (kiểu service locator).
-- Config chỉ được đọc một lần ở `index.ts`; `guildIds` được truyền vào `DiscordClient`.
-- Có import vòng giữa `DiscordClient` → handlers → base class → `DiscordClient`. Phía base class và `loadModules` chỉ dùng `DiscordClient` làm type, nên không gây lỗi runtime.
-- `EventHandler` và `ButtonHandler` kế thừa `Collection`; `InteractionHandler` dùng composition (2 Collection).
-
-### 1.6 Cấu hình và secret
-
-- Biến môi trường: `DISCORD_TOKEN`, `DISCORD_GUILD_IDS` (xem `.env.example`).
-- `npm run dev` dùng `node --env-file=.env`; `npm run prod` và pm2 dùng `--env-file-if-exists=.env`. Không dùng dotenv.
-- Không còn import JSON (`resolveJsonModule` đã tắt); `build/` không chứa secret.
-- `.npmrc`: `ignore-scripts=true` (LL-008).
-
-### 1.7 Giao tiếp ra bên ngoài
-
-| Thời điểm | Đích | Qua |
-| --- | --- | --- |
-| Runtime | Discord Gateway (WebSocket) | discord.js |
-| Runtime | Discord REST API | discord.js (`@discordjs/rest` 2.x bên trong) |
-| Cài đặt | npm registry | `npm ci` (không có install script nào chạy; binary của better-sqlite3 nằm sẵn trong package) |
-
-Không có webhook, telemetry, HTTP server hay port nào được mở.
-
-### 1.8 Dependency
-
-```
-Runtime
-discord.js 14.27.0 ─┬─ @discordjs/rest 2.6.3 ── undici 6.28.1
-                    ├─ @discordjs/ws ── ws 8.21.3
-                    └─ @discordjs/builders, discord-api-types, ... (nội bộ discord.js)
-better-sqlite3 13.0.3                            binary N-API 10 kèm sẵn (linux/win32/darwin, x64/arm64); cần Node ≥ 22.14
-
-Dev
-typescript 5.9.3 · eslint 10.11 · @eslint/js 10 · typescript-eslint 8.70 · @types/better-sqlite3 9.6
-```
-
-`npm audit` (2026-09-24): 0 lỗ hổng.
-
-## 2. Kiến trúc mục tiêu
-
-### 2.1 Phần đã chốt (DEC-007)
-
-```
-Discord → Command/Event (mỏng) → Service → Repository → SQLite
-```
-
-- Business module **không phụ thuộc discord.js**. Module nhận dữ liệu thuần: `userId`, `channelId`, `roleIds[]`, timestamp, ...
-- Tầng Discord càng mỏng càng tốt: nhận event, chuyển đổi dữ liệu, gọi service, định dạng phản hồi.
-- Activity XP và Contribution là hai miền dữ liệu tách biệt (DEC-004).
-- Topology: 1 process + 1 file SQLite (DEC-002). Production chạy Linux, Node 24 LTS (DEC-016).
-
-### 2.2 Cấu trúc module đề xuất — CHƯA DUYỆT (PROP-011)
+## 2. Cấu trúc thư mục
 
 ```
 src/
-├── index.ts          Composition root: config → DB → migrate → repositories/services → client → login
-├── config/           Đọc và validate cấu hình; lỗi thì dừng ngay
-├── discord/          Tầng giao tiếp Discord, tái sử dụng khung loader/dispatcher hiện có
-│   ├── loader/       Từ EventHandler / InteractionHandler / ButtonHandler / loadModules
-│   ├── guards/       Error boundary, kiểm tra quyền admin
-│   ├── events/       clientReady, interactionCreate, messageCreate
-│   └── commands/
-├── modules/          Business logic, KHÔNG import discord.js
-│   ├── activity/     XP, cooldown, anti-spam, level
-│   ├── contribution/ Contribution, vote, score
-│   ├── leaderboard/  Truy vấn đọc cho 4 bảng xếp hạng
-│   ├── team/         Xác định team từ role ID đã cấu hình
-│   ├── guild-config/ Cấu hình channel, cooldown, team role
-│   ├── admin/        Điều chỉnh/reset điểm + audit log
-│   └── statistics/
-├── db/               Connection + PRAGMA, migrations/, backup
-└── shared/           Logger, kiểu lỗi, Clock
+├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login
+├── config.ts                 Đọc và validate biến môi trường (DEC-015)
+├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
+├── shared/                   clock (inject được), errors (UserError), logger (che token)
+├── db/
+│   ├── connection.ts         openDatabase(): 1 connection, WAL, foreign_keys, busy_timeout
+│   ├── migrations.ts         Migration nhúng trong code, version lưu ở PRAGMA user_version (append-only)
+│   └── backup.ts             BackupService (db.backup(), giữ N bản) + lịch kiểm tra mỗi giờ (DEC-017)
+├── modules/                  Nghiệp vụ, KHÔNG import discord.js
+│   ├── deps.ts               ServiceDeps: clock, guildConfig, teams, audit, xpLedger, contributionLedger
+│   ├── ledger/Ledger.ts      Sổ cái điểm append-only + cache tổng + snapshot team (PROP-014)
+│   ├── guild-config/         Cấu hình guild/channel, giới hạn hợp lệ, permissions (isAdmin, canCreatePoll)
+│   ├── team/                 Team = role do admin chỉ định; resolveTeams() tạo snapshot
+│   ├── audit/                Nhật ký thao tác quản trị
+│   ├── activity/             levels (5n²+50n+100), antiSpam (chuẩn hoá, chống trùng trong RAM), ActivityService
+│   ├── contribution/         ContributionService + ContributionRepository
+│   ├── poll/                 PollService + PollRepository (vote/bầu cử ẩn danh)
+│   ├── leaderboard/          4 bảng xếp hạng (cá nhân/team × activity/contribution), phân trang
+│   └── statistics/           Thống kê tổng quan 7 ngày cho admin
+├── classes/                  Base class Command / ContextMenu / Event, DiscordClient, ProcessManager
+├── handlers/                 loadModules (nạp theo thư mục), EventHandler, InteractionHandler (deploy), ButtonHandler
+├── events/                   clientReady (deploy + lịch đóng vote), interactionCreate (dispatcher), messageCreate (XP)
+├── interactions/
+│   ├── commands/             ping, rank, leaderboard, contribution, poll, admin, config
+│   └── contextMenus/         RecognizeContribution ("Ghi nhận đóng góp")
+└── discord/                  Helper của tầng Discord
+    ├── guards.ts             requireGuildId, assertAdmin, checkAdmin, checkCanCreatePoll
+    ├── members.ts            roleIdsOf()
+    ├── format.ts             Số vi-VN, thanh tiến độ, mention, thời gian, màu
+    ├── pollScheduler.ts      Tự đóng vote quá hạn và sửa message
+    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin
+test/                         node:test + SQLite :memory: (xem mục 7)
+deploy/                       Unit systemd
+docs/DEPLOY.md                Runbook triển khai và vận hành
 ```
 
-Hướng phụ thuộc đề xuất: `discord/` → `modules/` → `db/`. Không được đi theo chiều ngược lại.
+## 3. Luồng chính
 
-### 2.3 Tái sử dụng code hiện có
+### 3.1 Khởi động
+`index.ts`:
+1. `loadConfig()`;
+2. `openDatabase()` + `runMigrations()`, **trước** khi login (LL-007);
+3. `createServices()`;
+4. `startBackupSchedule()`;
+5. `new DiscordClient(services, guildIds)`;
+6. `ProcessManager` với các hook tắt: dừng backup → `client.destroy()` → `db.close()`;
+7. `login()`.
 
-| Hiện có | Trạng thái |
+Khi `clientReady`:
+- deploy toàn bộ command theo guild, set global command về rỗng;
+- khởi động lịch đóng vote (30 giây một lần).
+
+### 3.2 Tin nhắn → Activity XP
+```
+messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; thread → dùng channel cha)
+  → ActivityService.handleMessage
+      1. channel tắt XP?                 → channel_disabled
+      2. chống trùng trong RAM (hash)    → duplicate      (DEC-023, không lưu nội dung)
+      3. tin quá ngắn?                   → too_short
+      4. transaction: cooldown theo member_xp.last_message_xp_at → cooldown
+                      Ledger.record(xp, snapshot team) + cập nhật last_message_xp_at
+  → lên level và bật thông báo → gửi "🎉 Chúc mừng" (chỉ ping đúng người đó)
+```
+
+### 3.3 Contribution (DEC-025)
+- `/contribution submit` hoặc context menu → `ContributionService.submit` (validate, lưu snapshot team của tác giả). Bot đăng message công khai kèm nút `contrib:<id>` và lưu vị trí message.
+- Bấm nút → `toggleVote`: không tự ghi nhận; đã ghi nhận thì rút (void event). Điểm = `contributionVotePoints` tại thời điểm ghi nhận. Message được cập nhật, kể cả message gốc khi bấm từ bản xem riêng.
+- Admin gỡ contribution → `voidByReference` huỷ mọi điểm của nó.
+
+### 3.4 Vote / bầu cử (DEC-026)
+- `/poll create`: chỉ admin hoặc role tạo vote; XP riêng chỉ admin đặt được. Nút có dạng `poll:<id>:<index>`.
+- Bấm nút: chọn một thì đổi phiếu, chọn nhiều thì bật/tắt. Lần tham gia đầu được XP (Activity) một lần. Phiếu ẩn danh.
+- Lịch `pollScheduler` gọi `closeDue()`, rồi sửa message sang trạng thái đóng.
+
+### 3.5 Quản trị
+- Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
+- Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
+
+## 4. Dữ liệu (migration 1)
+
+| Nhóm | Bảng |
 | --- | --- |
-| `EventHandler`, `InteractionHandler`, `loadModules` | Đã sửa ở Phase 1 (async, lọc file, tách registry). Giữ |
-| `ButtonHandler` | Đã hỗ trợ namespace ở Phase 1. Giữ |
-| `interactionCreate.ts` | Đã có error boundary ở Phase 1; còn thiếu kiểm tra quyền (PROP-013) |
-| Base class `Command` / `ContextMenu` / `Event` | Đã abstract ở Phase 1; còn phải nhận service qua tham số (PROP-011) |
-| `InteractionHandler.deploy()` | Đã dùng `application.commands.set()` ở Phase 1 |
-| `Sqlite` | Thay bằng connection được inject + migration (PROP-007) |
-| `ProcessManager` | Sửa tiếp (PROP-018) |
-| Demo command, `setup.sql`, `types/Note.ts` | Xoá khi đã có command thật (PROP-019) |
+| Cấu hình | `guild_settings`, `channel_settings`, `team_roles` |
+| Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at) |
+| Contribution | `contributions`, `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_votes` |
+| Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
+| Quản trị | `audit_log` |
 
-## 3. Topology triển khai
+Quy tắc:
+- mọi bảng có `guild_id`;
+- ledger chỉ thêm dòng, không sửa hay xoá (void bằng `voided_at`);
+- bảng `member_*` là cache, luôn cập nhật trong cùng transaction với ledger;
+- không có cột nào chứa nội dung tin nhắn.
 
-| | Hiện tại | Hướng mục tiêu |
-| --- | --- | --- |
-| Máy chủ | Máy dev Windows (Node 22.23) | Server Linux, Node 24 LTS (DEC-016); máy cụ thể CHƯA XÁC ĐỊNH (PEND-005) |
-| Process | 1 process Node (pm2 tuỳ chọn) | 1 process Node; process manager chờ quyết (PEND-005) |
-| Database | `<root>/db/data.db` | `data/bot.db` (PROP-007), sao lưu hàng ngày (DEC-017) |
-| Secret | Biến môi trường / `.env` | Biến môi trường / `.env` với quyền file chỉ cho user chạy bot |
-| Hạ tầng khác | Không | Không |
+## 5. Bảo mật
+
+- Intent: `Guilds`, `GuildMessages`, `MessageContent` (privileged, DEC-023). Không dùng `GuildMembers` hay `GuildPresences`.
+- Quyền bot tối thiểu: View Channels, Send Messages, Send Messages in Threads, Embed Links (`docs/DEPLOY.md`).
+- `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level mới ping người được nhắc.
+- Secret chỉ lấy từ env; logger che token; `build/` không chứa file cấu hình.
+- `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
+
+## 6. Giao tiếp ra bên ngoài
+
+| Thời điểm | Đích |
+| --- | --- |
+| Runtime | Discord Gateway (WebSocket) và Discord REST, qua discord.js |
+| Cài đặt | npm registry (không có install script; binary better-sqlite3 nằm sẵn trong package) |
+
+## 7. Test
+
+- `npm test` compile vào `build-test/` rồi chạy `node --test`.
+- Service được test với SQLite `:memory:` và migration thật, không mock DB.
+- Tầng Discord được test bằng fake interaction/service.
+- `test/integration.test.ts` chạy kịch bản end-to-end qua toàn bộ service thật.
+- `test/audit-view.test.ts` kiểm hiển thị audit với dữ liệu thật (LL-011).
+- `test/commands.test.ts` kiểm mọi command build được JSON, không trùng tên, và command admin có đủ hai lớp quyền.

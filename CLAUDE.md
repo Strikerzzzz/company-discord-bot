@@ -33,46 +33,35 @@ Topology cố định: **1 process Node.js + 1 file SQLite + Discord**. Chi ti�
 
 ```bash
 npm ci           # cài dependency theo lockfile (.npmrc tắt install script, xem LL-008)
-npm run build    # tsc → build/
+npm run build    # dọn build/ rồi tsc (LL-010)
 npm run lint     # eslint . (flat config, có dùng thông tin type)
+npm test         # dọn build-test/, compile test/ rồi node --test
+npm run check    # build + lint + test — phải pass trước khi coi một task là xong
 npm run dev      # build rồi chạy với file .env (node --env-file=.env)
 npm run prod     # chạy build/index.js, nạp .env nếu có
-npm run pm2      # pm2 start ecosystem.config.js   (pm2 phải cài global)
 ```
 
-- Node ≥ 22.14 (better-sqlite3 13 cần N-API 10). Production dùng Node 24 LTS (DEC-016).
-- Cấu hình: copy `.env.example` thành `.env` (`DISCORD_TOKEN`, `DISCORD_GUILD_IDS`). Không bao giờ commit `.env`.
-- Chưa có test framework, chưa có script `test`, nên chưa có cách chạy một test đơn lẻ. Khi thêm test framework, cập nhật mục này.
+- Chạy một file test: `node --test build-test/test/activity.test.js`. Lọc theo tên: `node --test --test-name-pattern="cooldown" "build-test/test/**/*.test.js"`. Cả hai cách đều cần `npm test` hoặc `npx tsc -p test` chạy trước.
+- Node ≥ 22.14 (better-sqlite3 13 cần N-API 10). Production dùng Node 24 LTS trên Linux (DEC-016); triển khai theo `docs/DEPLOY.md`.
+- Cấu hình: copy `.env.example` thành `.env` (`DISCORD_TOKEN`, `DISCORD_GUILD_IDS`, tuỳ chọn `DATABASE_PATH`, `BACKUP_DIR`, `BACKUP_KEEP`, `LOG_LEVEL`). Không bao giờ commit `.env`.
 
 ## Kiến trúc
 
-### Hiện tại (khung từ template open-source)
-
-- `src/index.ts`: `loadConfig()` (đọc env) → `new DiscordClient(guildIds)` → `await login()`. Khởi động lỗi thì log rồi `exit(1)`.
-- Constructor của `DiscordClient` tạo 3 handler dưới dạng class field theo thứ tự `events` → `interactions` → `buttons`. Nó cũng gắn listener `error` và `ProcessManager`, và đặt `allowedMentions` mặc định là không ping ai.
-- **Tự nạp bằng file system** qua `handlers/loadModules.ts`:
-  - Chỉ nạp file `.js`/`.ts` trong thư mục.
-  - Mỗi file phải `export default` một class kế thừa `Event`, `Command` hoặc `ContextMenu`; sai thì bot không khởi động được.
-  - `InteractionHandler` có 2 registry riêng: `commands` và `contextMenus`.
-- **Thêm command:** tạo file `export default class X extends Command` trong `interactions/commands/`, không cần đăng ký thủ công. Mỗi lần khởi động, event `clientReady` sẽ:
-  - deploy **toàn bộ** command lên từng guild trong `DISCORD_GUILD_IDS` (ghi đè toàn bộ command của guild);
-  - set global command về rỗng. Bot không dùng global command.
-- **Button:** `customId` có dạng `<namespace>:<payload>`. Command khai báo namespace trong `buttonIds` và tự validate payload.
-- `events/interactionCreate.ts` là dispatcher duy nhất và là **error boundary** cho mọi interaction: lỗi trong command chỉ ảnh hưởng tới interaction đó. Kiểm tra quyền sau này đặt ở đây.
-- `events/ready.ts` (event `clientReady`) gọi `deploy()` trước, rồi mới `Sqlite.setup()` (chạy `db/setup.sql`).
-- `classes/Sqlite.ts` là static singleton của better-sqlite3, dùng file `<root>/db/data.db`. Code gọi `Sqlite.prepare<Params, Row>(sql)`.
-- Trong code demo (`note.ts`), UI, business logic và SQL nằm chung một command class. **Không lặp lại** kiểu này ở code mới.
-
-Các lỗi đã biết và bài học được ghi trong `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa dispatcher, loader, `Sqlite.ts` hay cơ chế config.
-
-### Mục tiêu (đã chốt)
-
 ```
-Discord → Command/Event (mỏng) → Service → Repository → SQLite
+Discord → Command/Event (mỏng) → Service (src/modules) → Ledger/Repository → SQLite
 ```
 
-- Business module **không import discord.js**. Module chỉ nhận dữ liệu thuần (id, roleIds, timestamp, ...). Tầng Discord chỉ chuyển đổi dữ liệu và gọi service.
-- Cấu trúc module chi tiết: `docs/ai/ARCHITECTURE.md`. Phần chưa được duyệt được đánh dấu là proposal.
+Chi tiết và sơ đồ: `docs/ai/ARCHITECTURE.md`. Những điểm cần biết trước khi sửa code:
+
+- **Composition root** là `src/index.ts` + `src/services.ts`: mở DB và migrate trước khi login; mọi service được tạo bằng constructor injection. Command và event lấy service qua `this.client.services`.
+- **Business module** (`src/modules/**`) không import discord.js (ESLint chặn); chỉ nhận dữ liệu thuần (id, roleIds, timestamp). Lỗi hiển thị cho người dùng thì ném `UserError` với thông báo tiếng Việt.
+- **Điểm** luôn đi qua `Ledger` (append-only + cache tổng + snapshot team). Có hai instance tách biệt, `xpLedger` và `contributionLedger`; không ghi thẳng vào bảng `member_*`.
+- **Tự nạp theo thư mục** (`handlers/loadModules.ts`): mỗi file trong `events/`, `interactions/commands/`, `interactions/contextMenus/` phải `export default` một class kế thừa `Event` / `Command` / `ContextMenu`. Thêm command chỉ cần tạo file; khi `clientReady`, bot deploy toàn bộ command lên từng guild và xoá global command.
+- **Dispatcher** `events/interactionCreate.ts` là error boundary duy nhất. Nó hiển thị `UserError` nguyên văn và kiểm tra `adminOnly` (lớp quyền 2).
+- **Button**: `customId` có dạng `<namespace>:<payload>`. Namespace khai báo trong `buttonIds`; command tự validate payload.
+- **Hiển thị**: dựng embed/nút bằng hàm thuần trong `src/discord/views/`, dùng helper trong `src/discord/format.ts`.
+
+Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa dispatcher, loader, ledger, migration hay cơ chế config.
 
 ## Nguyên tắc coding
 
@@ -108,7 +97,8 @@ Chỉ được thay đổi thông qua proposal đã được duyệt (xem mục 
 
 - Chỉ một file SQLite do bot sở hữu, truy cập qua better-sqlite3.
 - Chỉ dùng parameter binding (`?` hoặc named). Không bao giờ nối chuỗi vào SQL.
-- Khi đã có migration runner, mọi thay đổi schema phải đi qua migration có đánh số. Không sửa schema bằng tay.
+- Mọi thay đổi schema phải là một migration MỚI trong `src/db/migrations.ts` (version tăng dần). Không bao giờ sửa migration đã phát hành, không sửa schema bằng tay.
+- Mọi bảng có `guild_id`. Reset hay gỡ chỉ đánh dấu `voided_at`, không xoá dòng dữ liệu (DEC-027).
 - Thao tác ghi nhiều bước phải nằm trong transaction. Không để `await` chen giữa bước đọc và bước ghi của cùng một thao tác.
 - Không tạo schema nghiệp vụ khi thiết kế chưa được duyệt.
 - Activity XP và Contribution Score lưu tách biệt, không bao giờ cộng gộp thành một điểm.
@@ -143,9 +133,15 @@ Các trường hợp ngoại lệ dưới đây được phép sửa tối thi�
 - lỗi làm task hiện tại không thể hoàn thành;
 - vi phạm rule đã chốt.
 
+### Chia việc cho nhiều agent song song
+
+- Chốt interface và dữ liệu dùng chung trước. Hợp đồng phải ghi cả **ý nghĩa** của từng trường (ví dụ target và details của audit), không chỉ kiểu dữ liệu (LL-011).
+- Mỗi agent chỉ sửa các file mình được giao, làm trong worktree riêng.
+- Sau khi gộp, phải có test tích hợp chạy qua code thật của các bên.
+
 ### Test và hoàn tất task
 
-Task chỉ được coi là xong khi `npm run build`, `npm run lint` và test (khi đã có) đều pass, hoặc khi đã ghi rõ lý do lệnh fail.
+Task chỉ được coi là xong khi `npm run check` (build + lint + test) pass, hoặc khi đã ghi rõ lý do lệnh fail. Service được test với SQLite `:memory:` và migration thật, không mock DB.
 
 Self-review trước khi báo xong:
 
