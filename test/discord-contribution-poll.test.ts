@@ -400,6 +400,7 @@ interface TargetSpec
 {
 	authorId?: string;
 	bot?: boolean;
+	system?: boolean;
 	content?: string;
 	cachedRoles?: string[];
 	/** Role lấy qua REST; bỏ trống = tác giả đã rời server (REST báo lỗi). */
@@ -430,6 +431,7 @@ function messageMenu(target: TargetSpec)
 			id: OTHER_MESSAGE_ID,
 			channelId: CHANNEL_GENERAL,
 			author: { id: authorId, bot: target.bot ?? false },
+			system: target.system ?? false,
 			content: target.content ?? "Nội dung bí mật không được lưu",
 			url: `https://discord.com/channels/@me/${CHANNEL_GENERAL}/${OTHER_MESSAGE_ID}`,
 			member: target.cachedRoles ? { roles: target.cachedRoles } : null,
@@ -1142,6 +1144,16 @@ describe("context menu Ghi nhận đóng góp", () =>
 		const { interaction, deferred } = messageMenu({ bot: true });
 
 		await assert.rejects(new RecognizeContribution(client).execute(interaction), userError("Không thể ghi nhận tin nhắn của bot."));
+		assert.equal(contributions.submitted.length, 0);
+		assert.equal(deferred.length, 0);
+	});
+
+	test("tin nhắn hệ thống bị từ chối, trước khi defer", async () =>
+	{
+		const { client, contributions } = setup();
+		const { interaction, deferred } = messageMenu({ system: true });
+
+		await assert.rejects(new RecognizeContribution(client).execute(interaction), userError("Không thể ghi nhận tin nhắn hệ thống."));
 		assert.equal(contributions.submitted.length, 0);
 		assert.equal(deferred.length, 0);
 	});

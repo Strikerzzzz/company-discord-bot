@@ -339,6 +339,7 @@ const DETAIL_LABELS = new Map<string, string>([
 	["pollId", "Mã vote"],
 	["totalXp", "Tổng XP"],
 	["score", "Tổng điểm"],
+	["xpReward", "XP khi tham gia"],
 ]);
 
 /** Nhãn tiếng Việt của một hành động trong audit log. */

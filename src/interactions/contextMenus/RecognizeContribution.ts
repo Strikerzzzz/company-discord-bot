@@ -27,6 +27,8 @@ export default class RecognizeContribution extends ContextMenu
 		const guildId = requireGuildId(interaction);
 		const target = interaction.targetMessage;
 		if (target.author.bot) throw new UserError("Không thể ghi nhận tin nhắn của bot.");
+		// Tin nhắn hệ thống (ví dụ "X đã vào server", tin ghim) không phải đóng góp của ai.
+		if (target.system) throw new UserError("Không thể ghi nhận tin nhắn hệ thống.");
 		// Bot đăng thay người dùng, nên người không được gửi tin ở kênh này cũng không được đăng qua bot.
 		assertCanSendMessages(interaction);
 
