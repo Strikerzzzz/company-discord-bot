@@ -149,3 +149,22 @@ Format mỗi mục:
   - `git status` hiện `.claude/` là untracked.
   - `eslint .` quét cả source trong các worktree, nên chạy rất chậm (một lượt lint + test mất hơn 3 phút) và có thể báo lỗi của code không thuộc branch hiện tại.
 - **Bài học:** Khi dùng worktree cho agent, thêm thư mục worktree vào `.gitignore` và ignore của ESLint ngay từ đầu. Sau khi merge thì dọn worktree.
+
+## LL-013 — Review độc lập tìm ra lỗi mà hàng trăm test không bắt được
+
+- **Phát hiện:** 2026-09-26 (sau khi hoàn thiện Phase 2–10, 242 test pass) · **Mức độ:** Cao · **Trạng thái:** Đã sửa các lỗi đã xác nhận
+- **Hiện tượng:** Ba agent review độc lập (đúng đắn/dữ liệu, Discord API, bảo mật) tìm ra các lỗi thật, trong khi toàn bộ test đều pass:
+  - lộ nội dung contribution/vote của kênh riêng tư qua `/…view|list|results` (dò ID tăng dần);
+  - context menu chép nội dung tin nhắn vào DB (vi phạm luật; lỗi nằm ngay trong spec giao cho agent);
+  - admin reset điểm bị người dùng vượt qua bằng cách bấm ghi nhận 2 lần;
+  - một tin nhắn ghi nhận được nhiều lần, nên điểm bị nhân lên;
+  - bảng xếp hạng team quét toàn bộ event (200k event mất khoảng 1,1 s, bot đứng im, DoS);
+  - thành viên đăng bài vào kênh chỉ đọc thông qua bot;
+  - server lạ vẫn được tính XP.
+- **Nguyên nhân:**
+  - Test chỉ kiểm những gì người viết spec đã nghĩ tới; fake Discord luôn "đúng ý" người viết test.
+  - Lỗi về quyền, lạm dụng và hiệu năng ở quy mô lớn nằm ngoài những gì spec mô tả.
+- **Bài học:**
+  - Với mọi thay đổi lớn, chạy review độc lập theo từng góc nhìn (đúng đắn, API bên ngoài, bảo mật/lạm dụng), yêu cầu reviewer **kiểm chứng** từng lỗi.
+  - Spec giao việc phải được đối chiếu với luật trong `CLAUDE.md`, vì chính spec cũng có thể sai.
+  - Mỗi lệnh đọc dữ liệu phải trả lời được câu hỏi: người gọi có quyền xem dữ liệu này không.

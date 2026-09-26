@@ -1,25 +1,25 @@
 # ROADMAP
 
 > Roadmap tổng thể. Cập nhật lần cuối: 2026-09-26.
-> **Phase 2 trở đi là BẢN NHÁP, chưa được duyệt.** Thứ tự và phạm vi có thể đổi theo quyết định của người phụ trách.
-> Nguyên tắc: không xây feature trên nền chưa build được; viết test song song từ Phase 2, không dồn về cuối; mỗi phase nghiệp vụ chỉ bắt đầu khi các quyết định liên quan đã được chốt.
+> Theo DEC-021, Phase 2–10 được làm liên tục trên branch `phase-2-10/hoan-thien-tinh-nang`, kèm tính năng vote/bầu cử (DEC-026).
+> Nguyên tắc: không xây feature trên nền chưa build được; viết test song song với code; mỗi phase nghiệp vụ chỉ bắt đầu khi các quyết định liên quan đã được chốt.
 
 ## Tổng quan
 
 | Phase | Tên | Trạng thái | Phụ thuộc quyết định |
 | --- | --- | --- | --- |
 | 0 | Audit và khởi tạo AI Operating System | **HOÀN THÀNH, đã duyệt** (2026-09-24) | — |
-| 1 | Ổn định nền | **Gần xong**: đã merge vào `main`, còn bước 6 (chạy thật) | Đã duyệt (DEC-014…019) |
-| 2 | Nền database và test | Nháp | PEND-010, 011, 012, 013 |
-| 3 | Phân quyền admin và cấu hình | Nháp | PROP-013 |
-| 4 | Activity XP | Nháp | PEND-006, 008 |
-| 5 | Level và Individual Activity Leaderboard | Nháp | PEND-008 |
-| 6 | Team và Team Activity Leaderboard | Nháp | PEND-007, 008 |
-| 7 | Contribution | Nháp | PEND-009 |
-| 8 | Voting và Contribution Score | Nháp | PEND-008, 009 |
-| 9 | Contribution Leaderboards (cá nhân và team) | Nháp | PEND-007, 008 |
-| 10 | Admin nâng cao và Statistics | Nháp | — |
-| 11 | Security review và Deployment | Nháp | PEND-005 |
+| 1 | Ổn định nền | **Đã merge vào `main`**; còn bước 6 (chạy thật, gộp vào lần chạy thật của Phase 11) | DEC-014…019 |
+| 2 | Nền database và test | **ĐÃ CODE** (chờ review, chưa merge) | DEC-021, DEC-027 |
+| 3 | Phân quyền admin và cấu hình | **ĐÃ CODE** | DEC-021 (PROP-013) |
+| 4 | Activity XP | **ĐÃ CODE** | DEC-022, DEC-023 |
+| 5 | Level và Individual Activity Leaderboard | **ĐÃ CODE** | DEC-022 |
+| 6 | Team và Team Activity Leaderboard | **ĐÃ CODE** | DEC-024 |
+| 7 | Contribution | **ĐÃ CODE** (chờ PEND-015, 016, 017, 018) | DEC-025 |
+| 8 | Voting và Contribution Score | **ĐÃ CODE**, kèm vote/bầu cử (DEC-026) | DEC-025, DEC-026 |
+| 9 | Contribution Leaderboards (cá nhân và team) | **ĐÃ CODE** | DEC-024 |
+| 10 | Admin nâng cao và Statistics | **ĐÃ CODE** | — |
+| 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
 
 ## Chi tiết
 
@@ -103,3 +103,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-24 | Phase 0 được duyệt. PROP-006 (git) đã triển khai; phần metadata tách thành PROP-021 và đưa vào Phase 1 |
 | 2026-09-24 | Phase 1 được duyệt và đang làm; bước 1–5 xong. Thêm `.npmrc ignore-scripts` vào Phase 1 (LL-008) |
 | 2026-09-26 | Thêm PROP-022, PROP-023 vào Phase 1 và làm xong; merge Phase 1 vào `main` (DEC-019). Còn bước 6 |
+| 2026-09-26 | DEC-021: Phase 2–10 làm liên tục trên một branch, thêm tính năng vote/bầu cử (DEC-026). Đã code, test (323) và qua review độc lập. Phase 11 chờ server Linux |

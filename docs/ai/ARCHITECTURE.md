@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-26, sau khi hoàn thiện Phase 2–10 (branch `phase-2-10/hoan-thien-tinh-nang`).
+> Cập nhật lần cuối: 2026-09-26, sau khi hoàn thiện Phase 2–10 và sửa lỗi từ đợt review độc lập (branch `phase-2-10/hoan-thien-tinh-nang`).
 > Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
 ## 1. Tổng quan
@@ -46,9 +46,11 @@ src/
 │   ├── commands/             ping, rank, leaderboard, contribution, poll, admin, config
 │   └── contextMenus/         RecognizeContribution ("Ghi nhận đóng góp")
 └── discord/                  Helper của tầng Discord
-    ├── guards.ts             requireGuildId, assertAdmin, checkAdmin, checkCanCreatePoll
+    ├── guards.ts             requireGuildId, assertAdmin/checkAdmin, checkCanCreatePoll,
+    │                         canSendMessages (chặn đăng hộ vào kênh chỉ đọc), canViewChannel/filterViewable
     ├── members.ts            roleIdsOf()
-    ├── format.ts             Số vi-VN, thanh tiến độ, mention, thời gian, màu
+    ├── format.ts             Số vi-VN, truncate theo UTF-16, fitLines, disableMaskedLinks, DISCORD_LIMITS, mention, màu
+    ├── messages.ts           Sửa message đã đăng (contribution, vote); lỗi chỉ ghi log
     ├── pollScheduler.ts      Tự đóng vote quá hạn và sửa message
     └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin
 test/                         node:test + SQLite :memory: (xem mục 7)
@@ -85,9 +87,17 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 ```
 
 ### 3.3 Contribution (DEC-025)
-- `/contribution submit` hoặc context menu → `ContributionService.submit` (validate, lưu snapshot team của tác giả). Bot đăng message công khai kèm nút `contrib:<id>` và lưu vị trí message.
-- Bấm nút → `toggleVote`: không tự ghi nhận; đã ghi nhận thì rút (void event). Điểm = `contributionVotePoints` tại thời điểm ghi nhận. Message được cập nhật, kể cả message gốc khi bấm từ bản xem riêng.
-- Admin gỡ contribution → `voidByReference` huỷ mọi điểm của nó.
+- **Gửi contribution**:
+  - `/contribution submit` → `ContributionService.submit` (validate, lưu snapshot team của tác giả).
+  - Context menu "Ghi nhận đóng góp": **không chép nội dung tin nhắn**. Chỉ lưu link, `source_message_id` và tiêu đề cố định kiểu "Đóng góp từ tin nhắn trong #kênh" (PEND-017). Mỗi tin nhắn chỉ là nguồn của một contribution còn hiệu lực. Context menu lấy role của tác giả qua REST sau khi `deferReply`.
+  - Bot đăng message công khai kèm nút `contrib:<id>` và lưu vị trí message. Người không có quyền gửi tin ở kênh đó thì bị từ chối.
+- **Bấm nút ghi nhận** → `toggleVote`:
+  - không tự ghi nhận; đã ghi nhận thì rút (void event);
+  - lượt đã bị admin reset thì không ghi nhận lại được (PEND-015);
+  - điểm = `contributionVotePoints` tại thời điểm ghi nhận;
+  - `votes` chỉ đếm lượt còn hiệu lực.
+- **Xem**: `/contribution view` trả lời riêng, không có nút; có nút link tới bài đăng gốc.
+- **Admin gỡ contribution** → `voidByReference` huỷ mọi điểm của nó, và message gốc chuyển sang "Đã bị gỡ".
 
 ### 3.4 Vote / bầu cử (DEC-026)
 - `/poll create`: chỉ admin hoặc role tạo vote; XP riêng chỉ admin đặt được. Nút có dạng `poll:<id>:<index>`.
@@ -98,20 +108,33 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 - Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
 - Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
 
-## 4. Dữ liệu (migration 1)
+### 3.6 Quyền xem và đăng
+
+- **Xem**: `/contribution view|list`, `/poll results|list|close` chỉ hiện mục mà người gọi xem được kênh gốc (`canViewChannel`). Mục không xem được thì báo "không tìm thấy", để không lộ nội dung kênh riêng tư.
+- **Đăng**: tạo nội dung công khai (contribution, vote) cần quyền gửi tin ở kênh đó. `/rank` và `/leaderboard` thì trả lời riêng khi người gọi không có quyền gửi tin.
+- **Guild**: bot bỏ qua tin nhắn và interaction của guild không có trong `DISCORD_GUILD_IDS`.
+
+## 4. Dữ liệu
 
 | Nhóm | Bảng |
 | --- | --- |
 | Cấu hình | `guild_settings`, `channel_settings`, `team_roles` |
-| Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at) |
-| Contribution | `contributions`, `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_votes` |
+| Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
+| Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
+Migration:
+- **1**: toàn bộ schema ban đầu.
+- **2**:
+  - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
+  - `contributions.source_message_id` + unique index một phần `(guild_id, source_message_id) WHERE source_message_id IS NOT NULL AND status = 'active'`.
+
 Quy tắc:
-- mọi bảng có `guild_id`;
+- bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;
 - ledger chỉ thêm dòng, không sửa hay xoá (void bằng `voided_at`);
-- bảng `member_*` là cache, luôn cập nhật trong cùng transaction với ledger;
+- bảng `member_*` và `*_team_totals` là cache, luôn cập nhật trong cùng transaction với ledger;
+- hạng tính theo competition ranking (`RANK()`: hoà điểm thì cùng hạng), giống nhau ở `/rank` và `/leaderboard`;
 - không có cột nào chứa nội dung tin nhắn.
 
 ## 5. Bảo mật

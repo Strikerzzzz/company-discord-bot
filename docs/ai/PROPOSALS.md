@@ -16,19 +16,19 @@
 | PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | IMPLEMENTED |
 | PROP-005 | Quản lý secret bằng environment variable | HIGH | IMPLEMENTED |
 | PROP-006 | Tách git khỏi repo upstream public | MEDIUM | IMPLEMENTED (2026-09-24) |
-| PROP-007 | Nền tảng database | HIGH | APPROVED |
-| PROP-008 | Backup và restore SQLite | MEDIUM | APPROVED |
-| PROP-009 | Chiến lược test không thêm dependency | MEDIUM | APPROVED |
+| PROP-007 | Nền tảng database | HIGH | IMPLEMENTED |
+| PROP-008 | Backup và restore SQLite | MEDIUM | IMPLEMENTED |
+| PROP-009 | Chiến lược test không thêm dependency | MEDIUM | IMPLEMENTED |
 | PROP-010 | ESLint dùng thông tin type | MEDIUM | IMPLEMENTED |
-| PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | APPROVED |
+| PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | IMPLEMENTED |
 | PROP-012 | Hardening tầng Discord | MEDIUM | IMPLEMENTED |
-| PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | APPROVED |
-| PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | APPROVED |
-| PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | APPROVED |
-| PROP-016 | Snapshot team tại thời điểm ghi điểm | MEDIUM | APPROVED |
-| PROP-017 | Chống gian lận vote contribution | MEDIUM | APPROVED |
-| PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | APPROVED |
-| PROP-019 | Dọn code demo và viết lại README | LOW | APPROVED |
+| PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | IMPLEMENTED |
+| PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | IMPLEMENTED |
+| PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | IMPLEMENTED |
+| PROP-016 | Snapshot team tại thời điểm ghi điểm | MEDIUM | IMPLEMENTED |
+| PROP-017 | Chống gian lận vote contribution | MEDIUM | IMPLEMENTED |
+| PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | IMPLEMENTED |
+| PROP-019 | Dọn code demo và viết lại README | LOW | IMPLEMENTED |
 | PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
 | PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
@@ -325,7 +325,7 @@ HIGH
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). src/db/connection.ts, migrations.ts (2 migration, user_version), DB mở và migrate trước login; data/bot.db.
 
 ---
 
@@ -364,7 +364,7 @@ Backup nằm cùng máy thì không chống được hỏng máy.
 
 ### Trạng thái
 
-APPROVED (2026-09-24, DEC-017: sao lưu hàng ngày; triển khai ở Phase 2)
+IMPLEMENTED (2026-09-26, Phase 2–10). BackupService: tự động mỗi ngày, bản thủ công xoay vòng riêng, /admin backup; runbook khôi phục trong docs/DEPLOY.md.
 
 ---
 
@@ -407,7 +407,7 @@ Phương án (a) phải tránh đưa file test vào build production. Phương �
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). node:test + SQLite :memory:, test/tsconfig.json, npm test / npm run check; 323 test.
 
 ---
 
@@ -486,7 +486,7 @@ Nếu làm quá tay thì thành over-engineering. Chỉ tạo module khi có fea
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). modules/*, services.ts (constructor injection), tầng Discord mỏng; ESLint chặn modules import discord.js.
 
 ---
 
@@ -573,7 +573,7 @@ Cấu hình role admin sai có thể khoá hết admin. Cần có đường dự
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). setDefaultMemberPermissions(ManageGuild) + adminOnly ở dispatcher; audit_log cho mọi thay đổi; reset toàn bộ cần xác nhận "XAC NHAN".
 
 ---
 
@@ -612,7 +612,7 @@ Bảng ledger tăng dần theo thời gian; cần chính sách giữ hoặc gộ
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021, DEC-027)
+IMPLEMENTED (2026-09-26, Phase 2–10). modules/ledger/Ledger.ts: ledger append-only, void thay vì xoá, cache member_* và *_team_totals.
 
 ---
 
@@ -651,7 +651,7 @@ Trạng thái trong bộ nhớ mất khi restart, dẫn tới một khoảng ng�
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-023)
+IMPLEMENTED (2026-09-26, Phase 2–10). antiSpam.ts: chống trùng bằng hash trong RAM, không lưu nội dung; context menu cũng không chép nội dung tin nhắn.
 
 ---
 
@@ -688,7 +688,7 @@ MEDIUM
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-024)
+IMPLEMENTED (2026-09-26, Phase 2–10). Snapshot team ở mọi event (xp_event_teams, contribution_event_teams); không dùng intent GuildMembers.
 
 ---
 
@@ -732,7 +732,7 @@ Quy tắc quá chặt làm giảm việc sử dụng. Đây là business rule, c
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-025)
+IMPLEMENTED (2026-09-26, Phase 2–10). Một phần: không tự ghi nhận, mỗi người một lần, rút được, admin gỡ/điều chỉnh có audit, chống ghi nhận trùng một tin nhắn, chống vượt reset. Chưa làm: giới hạn mỗi ngày, thống kê vote qua lại.
 
 ---
 
@@ -773,7 +773,7 @@ Thấp.
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). shared/logger.ts (level, che token, bỏ requestBody), ProcessManager (SIGINT/SIGTERM, đóng DB), systemd unit.
 
 ---
 
@@ -814,7 +814,7 @@ Không.
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-021)
+IMPLEMENTED (2026-09-26, Phase 2–10). Xoá note/clickme/Get User Info/Sqlite/setup.sql; README tiếng Việt.
 
 ---
 
