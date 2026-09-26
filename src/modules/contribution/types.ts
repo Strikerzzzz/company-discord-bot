@@ -32,7 +32,7 @@ export interface Contribution
 	messageId: string | null;
 	status: "active" | "removed";
 	createdAt: number;
-	/** Số lượt ghi nhận hiện tại. */
+	/** Số lượt ghi nhận còn hiệu lực (không tính lượt có điểm đã bị huỷ do reset hoặc gỡ). */
 	votes: number;
 }
 
@@ -47,6 +47,11 @@ export interface SubmitContributionInput
 	link: string | null;
 	/** Role hiện có của tác giả (snapshot team). */
 	authorRoleIds: readonly string[];
+	/**
+	 * ID tin nhắn nguồn khi ghi nhận qua context menu. Mỗi tin nhắn chỉ được là nguồn của MỘT contribution
+	 * còn hiệu lực trong guild (chống nhân điểm); trùng thì UserError. Bỏ trống với /contribution submit.
+	 */
+	sourceMessageId?: string | null;
 }
 
 export interface ContributionVoteResult

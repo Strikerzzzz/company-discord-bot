@@ -24,7 +24,14 @@ let minLevel = parseLevel(process.env.LOG_LEVEL);
 
 function format(value: unknown): string
 {
-	return typeof value === "string" ? value : inspect(value, { depth: 4, breakLength: Infinity });
+	if (typeof value === "string") return value;
+	// Lỗi REST của discord.js mang theo requestBody (nội dung embed/tin nhắn gửi đi): không đưa vào log.
+	if (value instanceof Error && "requestBody" in value)
+	{
+		const { requestBody: _omitted, ...rest } = value as Error & Record<string, unknown>;
+		return `${value.stack ?? `${value.name}: ${value.message}`} ${inspect(rest, { depth: 2, breakLength: Infinity })}`;
+	}
+	return inspect(value, { depth: 4, breakLength: Infinity });
 }
 
 function write(level: LogLevel, message: string, details: unknown[]): void

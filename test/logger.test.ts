@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { redact } from "../src/shared/logger";
+import { logger, redact } from "../src/shared/logger";
 
 describe("redact", () =>
 {
@@ -22,5 +22,17 @@ describe("redact", () =>
 	test("không đụng tới văn bản bình thường", () =>
 	{
 		assert.equal(redact("Đã cộng 10 XP cho 300000000000000001"), "Đã cộng 10 XP cho 300000000000000001");
+	});
+
+	test("lỗi REST không in requestBody (nội dung embed) nhưng vẫn giữ mã lỗi", (t) =>
+	{
+		const lines: string[] = [];
+		t.mock.method(console, "error", (line: string) => lines.push(line));
+		const error = Object.assign(new Error("Unknown Message"), { code: 10008, status: 404, requestBody: { json: { embeds: [{ title: "Nội dung bí mật" }] } } });
+		logger.warn("Không sửa được message:", error);
+		assert.equal(lines.length, 1);
+		assert.ok(lines[0].includes("Unknown Message"));
+		assert.ok(lines[0].includes("10008"));
+		assert.ok(!lines[0].includes("Nội dung bí mật"));
 	});
 });

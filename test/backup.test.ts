@@ -45,4 +45,53 @@ describe("BackupService (DEC-017)", () =>
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	test("bản thủ công xoay vòng riêng, không đẩy mất bản hàng ngày", async () =>
+	{
+		const dir = mkdtempSync(join(tmpdir(), "bot-backup-"));
+		try
+		{
+			const db = openDatabase(":memory:");
+			const clock = new FakeClock();
+			const backup = new BackupService(db, dir, 2, clock);
+			await backup.createBackup("auto");
+			for (let i = 0; i < 5; i++)
+			{
+				clock.advanceSeconds(1);
+				await backup.createBackup("manual");
+			}
+			assert.equal(backup.list("auto").length, 1);
+			assert.equal(backup.list("manual").length, 2);
+			assert.equal(backup.isDue(), false);
+			db.close();
+		}
+		finally
+		{
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("đồng hồ bị lùi: bản mang thời điểm tương lai không chặn backup, và bị xoay ra theo thời gian thật", async () =>
+	{
+		const dir = mkdtempSync(join(tmpdir(), "bot-backup-"));
+		try
+		{
+			const db = openDatabase(":memory:");
+			const clock = new FakeClock();
+			const backup = new BackupService(db, dir, 2, clock);
+			clock.advance(365 * DAY_MS);
+			await backup.createBackup("auto");
+			clock.advance(-365 * DAY_MS);
+			assert.equal(backup.isDue(), true);
+			await backup.runIfDue();
+			clock.advance(DAY_MS);
+			await backup.runIfDue();
+			assert.equal(backup.list("auto").length, 2);
+			db.close();
+		}
+		finally
+		{
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
