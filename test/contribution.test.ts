@@ -58,7 +58,7 @@ function userError(message: string | RegExp): (error: unknown) => boolean
 	};
 }
 
-function countRows(context: TestContext, table: "contributions" | "contribution_teams" | "contribution_events" | "xp_events"): number
+function countRows(context: TestContext, table: "contributions" | "contribution_teams" | "contribution_events" | "contribution_votes" | "xp_events"): number
 {
 	return context.db.prepare<[], { n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n ?? 0;
 }
@@ -309,7 +309,8 @@ describe("ContributionService.remove", () =>
 		clock.advanceSeconds(60);
 		const removed = service.remove(GUILD, created.id, ADMIN);
 		assert.equal(removed.status, "removed");
-		assert.equal(removed.votes, 2);
+		assert.equal(removed.votes, 0, "điểm của các lượt ghi nhận đã bị huỷ nên không còn lượt nào hiệu lực");
+		assert.equal(countRows(context, "contribution_votes"), 3, "dòng ghi nhận vẫn được giữ để truy vết");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 4);
 		assert.deepEqual(deps.contributionLedger.teamTotals(GUILD, 10), []);
 		assert.equal(service.get(GUILD, created.id)?.status, "removed");
@@ -406,7 +407,9 @@ describe("ContributionService reset", () =>
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 1);
 		assert.equal(countRows(context, "contribution_events"), 4);
-		assert.equal(service.get(GUILD, mine.id)?.votes, 2);
+		assert.equal(countRows(context, "contribution_votes"), 3);
+		assert.equal(service.get(GUILD, mine.id)?.votes, 0, "lượt ghi nhận bị reset không còn hiệu lực");
+		assert.equal(service.get(GUILD, theirs.id)?.votes, 1);
 
 		const [entry] = deps.audit.list(GUILD, 1);
 		assert.equal(entry.action, "contribution.reset_user");
@@ -436,30 +439,188 @@ describe("ContributionService reset", () =>
 		assert.equal(deps.audit.list(OTHER_GUILD, 5).length, 0);
 	});
 
-	test("sau reset vẫn rút và ghi nhận lại đúng, tổng không âm", () =>
+});
+
+describe("ContributionService: lượt ghi nhận sau khi admin reset", () =>
+{
+	const VOTE_RESET = "Lượt ghi nhận của bạn cho đóng góp này đã bị admin reset nên không thể ghi nhận lại.";
+	const USER_D = "300000000000000004";
+
+	function voteRows(context: TestContext, contributionId: number): string[]
 	{
-		const { service, deps } = setup();
+		return context.db.prepare<[number], { voter_id: string }>("SELECT voter_id FROM contribution_votes WHERE contribution_id = ? ORDER BY voter_id")
+			.all(contributionId)
+			.map(row => row.voter_id);
+	}
+
+	test("resetUser: người đã ghi nhận bấm lại bị từ chối, giữ nguyên dòng vote, điểm không quay về", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
 		const { id } = service.submit(input());
 		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
 		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
 		service.resetUser(GUILD, USER_A, ADMIN);
 
-		const withdrawn = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(withdrawn.voted, false);
-		assert.equal(withdrawn.contribution.votes, 1);
+		for (let click = 0; click < 2; click++)
+		{
+			assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+			assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }), userError(VOTE_RESET));
+		}
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(voteRows(context, id), [USER_B, USER_C]);
+		assert.equal(service.get(GUILD, id)?.votes, 0);
+		assert.equal(countRows(context, "contribution_events"), 2, "lượt bị từ chối không ghi thêm event nào");
+	});
 
-		const revoted = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(revoted.voted, true);
+	test("người chưa từng ghi nhận vẫn ghi nhận và rút bình thường sau reset", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const { id } = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.resetUser(GUILD, USER_A, ADMIN);
+
+		const voted = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D });
+		assert.equal(voted.voted, true);
+		assert.equal(voted.contribution.votes, 1, "chỉ đếm lượt còn hiệu lực");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 
-		service.resetAll(GUILD, ADMIN);
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }).voted, false);
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }).voted, false);
+		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D }).voted, false);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D }).voted, true);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
+		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+		assert.deepEqual(voteRows(context, id), [USER_B, USER_D]);
+	});
+
+	test("resetAll: người đã ghi nhận không lấy lại được điểm; người mới ghi nhận được; guild khác không bị ảnh hưởng", () =>
+	{
+		const { service, deps } = setup();
+		const { id } = service.submit(input());
+		const elsewhere = service.submit(input({ guildId: OTHER_GUILD }));
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.toggleVote({ guildId: OTHER_GUILD, contributionId: elsewhere.id, voterId: USER_B });
+		service.resetAll(GUILD, ADMIN);
+
+		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+
 		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }).voted, true);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 		assert.equal(service.get(GUILD, id)?.votes, 1);
+
+		const withdrawn = service.toggleVote({ guildId: OTHER_GUILD, contributionId: elsewhere.id, voterId: USER_B });
+		assert.equal(withdrawn.voted, false);
+		assert.equal(deps.contributionLedger.total(OTHER_GUILD, USER_A), 0);
+	});
+
+	test("đã rút ghi nhận trước khi reset thì không còn lượt nào bị khoá, ghi nhận lại được", () =>
+	{
+		const { service, deps } = setup();
+		const { id } = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.resetUser(GUILD, USER_A, ADMIN);
+
+		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }).voted, true);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
+	});
+
+	test("list, get và getProfile chỉ đếm lượt còn hiệu lực", () =>
+	{
+		const { service } = setup();
+		const reset = service.submit(input({ title: "Bị reset" }));
+		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_C });
+		service.resetUser(GUILD, USER_A, ADMIN);
+		const fresh = service.submit(input({ title: "Sau reset" }));
+		service.toggleVote({ guildId: GUILD, contributionId: fresh.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_D });
+
+		assert.deepEqual(service.list(GUILD, { limit: 10 }).map(c => [c.title, c.votes]), [["Sau reset", 1], ["Bị reset", 1]]);
+		assert.equal(service.get(GUILD, reset.id)?.votes, 1);
+		assert.equal(service.getProfile(GUILD, USER_A).score, 2);
+	});
+});
+
+describe("ContributionService: tin nhắn nguồn (sourceMessageId)", () =>
+{
+	const SOURCE = "700000000000000001";
+	const OTHER_SOURCE = "700000000000000002";
+
+	function sourceOf(context: TestContext, contributionId: number): string | null | undefined
+	{
+		return context.db.prepare<[number], { source_message_id: string | null }>("SELECT source_message_id FROM contributions WHERE id = ?")
+			.get(contributionId)?.source_message_id;
+	}
+
+	test("lưu tin nhắn nguồn; một tin chỉ ghi nhận được thành một contribution còn hiệu lực trong guild", () =>
+	{
+		const context = setup();
+		const { service } = context;
+		const first = service.submit(input({ authorId: USER_B, submittedBy: USER_A, sourceMessageId: SOURCE }));
+		assert.equal(sourceOf(context, first.id), SOURCE);
+
+		const duplicate = userError(`Tin nhắn này đã được ghi nhận thành đóng góp #${first.id}.`);
+		assert.throws(() => service.submit(input({ authorId: USER_B, submittedBy: USER_C, sourceMessageId: SOURCE })), duplicate);
+		assert.throws(() => service.submit(input({ authorId: USER_B, submittedBy: USER_A, sourceMessageId: SOURCE, title: "Tiêu đề khác" })), duplicate);
+		assert.equal(countRows(context, "contributions"), 1);
+
+		assert.notEqual(service.submit(input({ authorId: USER_B, sourceMessageId: OTHER_SOURCE })).id, first.id);
+		assert.equal(service.submit(input({ guildId: OTHER_GUILD, authorId: USER_B, sourceMessageId: SOURCE })).guildId, OTHER_GUILD);
+		assert.equal(countRows(context, "contributions"), 3);
+	});
+
+	test("contribution không có tin nhắn nguồn (/contribution submit) không bị giới hạn", () =>
+	{
+		const context = setup();
+		const { service } = context;
+		const withoutField = service.submit(input());
+		const withNull = service.submit(input({ sourceMessageId: null }));
+		service.submit(input({ sourceMessageId: null }));
+		assert.equal(sourceOf(context, withoutField.id), null);
+		assert.equal(sourceOf(context, withNull.id), null);
+		assert.equal(countRows(context, "contributions"), 3);
+	});
+
+	test("contribution nguồn bị gỡ thì tin nhắn được ghi nhận lại", () =>
+	{
+		const { service } = setup();
+		const first = service.submit(input({ authorId: USER_B, sourceMessageId: SOURCE }));
+		service.remove(GUILD, first.id, ADMIN);
+
+		const second = service.submit(input({ authorId: USER_B, sourceMessageId: SOURCE }));
+		assert.notEqual(second.id, first.id);
+		assert.throws(
+			() => service.submit(input({ authorId: USER_B, sourceMessageId: SOURCE })),
+			userError(`Tin nhắn này đã được ghi nhận thành đóng góp #${second.id}.`),
+		);
+	});
+
+	test("không nhân điểm: điểm của một tin nhắn chỉ đến từ một contribution", () =>
+	{
+		const { service, deps } = setup();
+		const { id } = service.submit(input({ authorId: USER_B, submittedBy: USER_A, sourceMessageId: SOURCE }));
+		assert.throws(() => service.submit(input({ authorId: USER_B, submittedBy: USER_C, sourceMessageId: SOURCE })), UserError);
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_A });
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 2);
+	});
+
+	test("unique index là lớp chặn cuối ở tầng database", () =>
+	{
+		const context = setup();
+		const first = context.service.submit(input({ sourceMessageId: SOURCE }));
+		const insert = context.db.prepare<[string, string]>(`
+			INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, source_message_id, status, created_at)
+			VALUES (?, 'u', 'u', 'Tiêu đề', 'Mô tả', 'khac', ?, 'active', 0)`);
+		assert.throws(() => insert.run(GUILD, SOURCE), /UNIQUE constraint failed/);
+
+		context.service.remove(GUILD, first.id, ADMIN);
+		insert.run(GUILD, SOURCE);
+		assert.equal(countRows(context, "contributions"), 2);
 	});
 });
 

@@ -1,5 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { SETTING_LIMITS } from "../src/modules/guild-config/types";
 import { PollService } from "../src/modules/poll/PollService";
 import { CreatePollInput, Poll, POLL_LIMITS } from "../src/modules/poll/types";
 import { UserError } from "../src/shared/errors";
@@ -98,7 +99,20 @@ describe("PollService.create", () =>
 		assert.equal(entry.action, "poll.create");
 		assert.equal(entry.actorId, ADMIN);
 		assert.equal(entry.targetId, null);
-		assert.deepEqual(entry.details, { pollId: poll.id, question: "Ăn trưa ở đâu?" });
+		assert.deepEqual(entry.details, { pollId: poll.id, question: "Ăn trưa ở đâu?", xpReward: 7 });
+	});
+
+	test("audit poll.create ghi XP thưởng, kể cả khi bằng 0 hoặc ở mức tối đa", () =>
+	{
+		const { polls, deps } = setup();
+		const zero = polls.create(pollInput({ xpReward: 0 }));
+		const max = polls.create(pollInput({ xpReward: SETTING_LIMITS.defaultPollXp.max }));
+
+		const details = deps.audit.list(GUILD, 5).filter(entry => entry.action === "poll.create").map(entry => entry.details);
+		assert.deepEqual(details, [
+			{ pollId: max.id, question: "Đi team building ở đâu?", xpReward: SETTING_LIMITS.defaultPollXp.max },
+			{ pollId: zero.id, question: "Đi team building ở đâu?", xpReward: 0 },
+		]);
 	});
 
 	test("có thời hạn thì closesAt = lúc tạo + số phút", () =>

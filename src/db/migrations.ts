@@ -204,6 +204,46 @@ export const MIGRATIONS: readonly Migration[] = [
 			CREATE INDEX idx_audit_log_guild ON audit_log (guild_id, created_at);
 		`,
 	},
+	{
+		version: 2,
+		name: "team_totals_and_contribution_source",
+		sql: `
+			-- Tổng điểm theo team (cache của ledger theo snapshot team, DEC-024), cập nhật trong cùng transaction với ledger.
+			-- Lưu mọi role từng có trong snapshot, kể cả role chưa hoặc không còn là team; lúc đọc mới lọc theo team_roles.
+			CREATE TABLE xp_team_totals (
+				guild_id TEXT NOT NULL,
+				role_id TEXT NOT NULL,
+				total INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (guild_id, role_id)
+			);
+
+			CREATE TABLE contribution_team_totals (
+				guild_id TEXT NOT NULL,
+				role_id TEXT NOT NULL,
+				total INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (guild_id, role_id)
+			);
+
+			INSERT INTO xp_team_totals (guild_id, role_id, total)
+			SELECT e.guild_id, et.role_id, SUM(e.amount)
+			FROM xp_event_teams et
+			JOIN xp_events e ON e.id = et.event_id
+			WHERE e.voided_at IS NULL
+			GROUP BY e.guild_id, et.role_id;
+
+			INSERT INTO contribution_team_totals (guild_id, role_id, total)
+			SELECT e.guild_id, et.role_id, SUM(e.amount)
+			FROM contribution_event_teams et
+			JOIN contribution_events e ON e.id = et.event_id
+			WHERE e.voided_at IS NULL
+			GROUP BY e.guild_id, et.role_id;
+
+			-- Tin nhắn nguồn khi ghi nhận qua context menu: mỗi tin chỉ là nguồn của một contribution còn hiệu lực trong guild.
+			ALTER TABLE contributions ADD COLUMN source_message_id TEXT;
+			CREATE UNIQUE INDEX idx_contributions_source_message ON contributions (guild_id, source_message_id)
+				WHERE source_message_id IS NOT NULL AND status = 'active';
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

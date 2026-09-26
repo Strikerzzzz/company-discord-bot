@@ -193,6 +193,28 @@ describe("StatisticsService", () =>
 		assert.deepEqual(stats.summary(GUILD).contribution, { total: 2, last7Days: 1, votes: 3, totalScore: 3 });
 	});
 
+	test("Contribution: lượt ghi nhận có điểm đã bị admin reset không được tính", () =>
+	{
+		const { db, deps, clock } = createTestContext();
+		const stats = new StatisticsService(db, deps);
+
+		const resetOne = insertContribution(db, GUILD, USER_A, clock.now());
+		insertVote(db, deps, GUILD, resetOne, USER_A, USER_B);
+		insertVote(db, deps, GUILD, resetOne, USER_A, USER_C);
+		const kept = insertContribution(db, GUILD, USER_B, clock.now());
+		insertVote(db, deps, GUILD, kept, USER_B, USER_C);
+		assert.equal(stats.summary(GUILD).contribution.votes, 3);
+
+		deps.contributionLedger.voidUser(GUILD, USER_A);
+		assert.deepEqual(stats.summary(GUILD).contribution, { total: 2, last7Days: 2, votes: 1, totalScore: 1 });
+
+		insertVote(db, deps, GUILD, resetOne, USER_A, ADMIN);
+		assert.equal(stats.summary(GUILD).contribution.votes, 2);
+
+		deps.contributionLedger.voidGuild(GUILD);
+		assert.deepEqual(stats.summary(GUILD).contribution, { total: 2, last7Days: 2, votes: 0, totalScore: 0 });
+	});
+
 	test("Contribution Score tách biệt với Activity XP (DEC-004); tổng chỉ cộng các dòng dương", () =>
 	{
 		const { db, deps } = createTestContext();

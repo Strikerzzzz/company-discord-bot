@@ -1,10 +1,11 @@
 import { ServiceDeps } from "../deps";
-import { Ledger } from "../ledger/Ledger";
+import { Ledger, RankedEntry } from "../ledger/Ledger";
 
 export type ScoreKind = "activity" | "contribution";
 
 export interface LeaderboardEntry
 {
+	/** Hạng kiểu competition ranking (hoà điểm thì cùng hạng: 1, 1, 3), khớp với hạng trong /rank. */
 	rank: number;
 	/** User ID (cá nhân) hoặc role ID (team). */
 	id: string;
@@ -47,7 +48,7 @@ export class LeaderboardService implements LeaderboardServiceApi
 	teams(guildId: string, kind: ScoreKind, page: number, pageSize = DEFAULT_PAGE_SIZE): LeaderboardPage
 	{
 		const ledger = this.ledger(kind);
-		return paginate(ledger.countTeams(guildId), page, pageSize, (limit, offset) => ledger.teamTotals(guildId, limit, offset));
+		return paginate(ledger.countTeams(guildId), page, pageSize, (limit, offset) => ledger.topTeams(guildId, limit, offset));
 	}
 }
 
@@ -55,13 +56,14 @@ function paginate(
 	totalEntries: number,
 	requestedPage: number,
 	pageSize: number,
-	fetch: (limit: number, offset: number) => { id: string; total: number }[],
+	fetch: (limit: number, offset: number) => RankedEntry[],
 ): LeaderboardPage
 {
 	const size = Math.max(1, Math.floor(pageSize));
 	const totalPages = Math.max(1, Math.ceil(totalEntries / size));
 	const page = Math.min(Math.max(1, Math.floor(requestedPage) || 1), totalPages);
 	const offset = (page - 1) * size;
-	const entries = fetch(size, offset).map((row, index) => ({ rank: offset + index + 1, id: row.id, value: row.total }));
+	// Hạng lấy từ ledger (tính trên toàn bảng), không suy ra từ vị trí trong trang, để người hoà điểm cùng hạng.
+	const entries = fetch(size, offset).map(row => ({ rank: row.rank, id: row.id, value: row.total }));
 	return { entries, page, totalPages, totalEntries };
 }

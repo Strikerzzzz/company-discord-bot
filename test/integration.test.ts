@@ -5,7 +5,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { openDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
+import { SubmitContributionInput } from "../src/modules/contribution/types";
 import { createServices } from "../src/services";
+import { UserError } from "../src/shared/errors";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, FakeClock, GUILD, ROLE_BACKEND, ROLE_FRONTEND, USER_A, USER_B, USER_C } from "./helpers";
 
 // Luồng end-to-end qua toàn bộ service thật (như khi bot chạy), chỉ thay Discord bằng lời gọi trực tiếp.
@@ -93,6 +95,29 @@ describe("tích hợp: một ngày làm việc của bot", () =>
 			assert.equal(s.activity.getProfile(GUILD, USER_A).level.totalXp, 0);
 			assert.equal(s.contributions.getProfile(GUILD, USER_B).score, 2);
 			assert.ok(s.audit.list(GUILD, 50).some(entry => entry.action === "xp.reset_user"));
+
+			// Ghi nhận tin nhắn qua context menu: một tin chỉ thành một contribution (không nhân điểm).
+			const recognition: SubmitContributionInput = {
+				guildId: GUILD, authorId: USER_A, submittedBy: USER_C, title: "Sửa lỗi đăng nhập",
+				description: "Mình vừa deploy xong bản sửa lỗi đăng nhập", category: "khac", link: null,
+				authorRoleIds: [ROLE_BACKEND], sourceMessageId: "700000000000000001",
+			};
+			const recognized = s.contributions.submit(recognition);
+			assert.throws(() => s.contributions.submit({ ...recognition, submittedBy: USER_B }), UserError);
+			s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B });
+			assert.deepEqual(s.leaderboard.teams(GUILD, "contribution", 1).entries, [
+				{ rank: 1, id: ROLE_FRONTEND, value: 2 },
+				{ rank: 2, id: ROLE_BACKEND, value: 1 },
+			]);
+
+			// Admin reset contribution của A: người đã ghi nhận không bấm lại để lấy lại điểm được.
+			s.contributions.resetUser(GUILD, USER_A, ADMIN);
+			assert.throws(() => s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B }), UserError);
+			assert.throws(() => s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B }), UserError);
+			assert.equal(s.contributions.getProfile(GUILD, USER_A).score, 0);
+			assert.equal(s.contributions.get(GUILD, recognized.id)?.votes, 0);
+			assert.equal(s.statistics.summary(GUILD).contribution.votes, 2);
+			assert.deepEqual(s.leaderboard.teams(GUILD, "contribution", 1).entries, [{ rank: 1, id: ROLE_FRONTEND, value: 2 }]);
 
 			// Sao lưu thủ công hoạt động trên DB thật.
 			const backupPath = await s.backup.createBackup();
