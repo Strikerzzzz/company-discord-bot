@@ -269,7 +269,8 @@ export const MIGRATIONS: readonly Migration[] = [
 				updated_at INTEGER NOT NULL
 			);
 
-			-- Bảng xếp hạng tuần/tháng: tổng theo khoảng thời gian chỉ cần đọc index (DEC-029).
+			-- Bảng xếp hạng tuần/tháng: quét theo khoảng thời gian, chỉ gồm event chưa huỷ (DEC-029). SQLite không coi partial index
+			-- "voided_at IS NULL" là index phủ, nên vẫn đọc dòng bảng; 200k event: bảng tháng khoảng 25 ms, team tháng khoảng 56 ms.
 			CREATE INDEX idx_xp_events_period ON xp_events (guild_id, created_at, user_id, amount) WHERE voided_at IS NULL;
 			CREATE INDEX idx_contribution_events_period ON contribution_events (guild_id, created_at, user_id, amount) WHERE voided_at IS NULL;
 			-- Chuỗi ngày hoạt động, số tin được XP, XP từ vote trong ngày: theo người và nguồn.

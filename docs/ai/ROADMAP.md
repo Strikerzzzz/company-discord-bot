@@ -1,7 +1,8 @@
 # ROADMAP
 
 > Roadmap tổng thể. Cập nhật lần cuối: 2026-09-26.
-> Theo DEC-021, Phase 2–10 được làm liên tục trên branch `phase-2-10/hoan-thien-tinh-nang`, kèm tính năng vote/bầu cử (DEC-026).
+> Theo DEC-021, Phase 2–10 được làm liên tục trên branch `phase-2-10/hoan-thien-tinh-nang`, kèm tính năng vote/bầu cử (DEC-026), và đã merge vào `main` (DEC-028).
+> Phase 12 (gamification và ảnh thẻ, DEC-029…031) làm trên branch `phase-12/gamification`.
 > Nguyên tắc: không xây feature trên nền chưa build được; viết test song song với code; mỗi phase nghiệp vụ chỉ bắt đầu khi các quyết định liên quan đã được chốt.
 
 ## Tổng quan
@@ -10,16 +11,17 @@
 | --- | --- | --- | --- |
 | 0 | Audit và khởi tạo AI Operating System | **HOÀN THÀNH, đã duyệt** (2026-09-24) | — |
 | 1 | Ổn định nền | **Đã merge vào `main`**; còn bước 6 (chạy thật, gộp vào lần chạy thật của Phase 11) | DEC-014…019 |
-| 2 | Nền database và test | **ĐÃ CODE** (chờ review, chưa merge) | DEC-021, DEC-027 |
-| 3 | Phân quyền admin và cấu hình | **ĐÃ CODE** | DEC-021 (PROP-013) |
-| 4 | Activity XP | **ĐÃ CODE** | DEC-022, DEC-023 |
-| 5 | Level và Individual Activity Leaderboard | **ĐÃ CODE** | DEC-022 |
-| 6 | Team và Team Activity Leaderboard | **ĐÃ CODE** | DEC-024 |
-| 7 | Contribution | **ĐÃ CODE** (chờ PEND-015, 016, 017, 018) | DEC-025 |
-| 8 | Voting và Contribution Score | **ĐÃ CODE**, kèm vote/bầu cử (DEC-026) | DEC-025, DEC-026 |
-| 9 | Contribution Leaderboards (cá nhân và team) | **ĐÃ CODE** | DEC-024 |
-| 10 | Admin nâng cao và Statistics | **ĐÃ CODE** | — |
+| 2 | Nền database và test | **Đã merge vào `main`** (DEC-028) | DEC-021, DEC-027 |
+| 3 | Phân quyền admin và cấu hình | **Đã merge vào `main`** | DEC-021 (PROP-013) |
+| 4 | Activity XP | **Đã merge vào `main`** | DEC-022, DEC-023 |
+| 5 | Level và Individual Activity Leaderboard | **Đã merge vào `main`** | DEC-022 |
+| 6 | Team và Team Activity Leaderboard | **Đã merge vào `main`** | DEC-024 |
+| 7 | Contribution | **Đã merge vào `main`**; PEND-015…018 đã trả lời (DEC-028) | DEC-025, DEC-028 |
+| 8 | Voting và Contribution Score | **Đã merge vào `main`**, kèm vote/bầu cử (DEC-026) | DEC-025, DEC-026 |
+| 9 | Contribution Leaderboards (cá nhân và team) | **Đã merge vào `main`** | DEC-024 |
+| 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
 | 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
+| 12 | Gamification và giao diện ảnh | **ĐANG LÀM** trên `phase-12/gamification` | DEC-028…031 |
 
 ## Chi tiết
 
@@ -88,6 +90,17 @@ Individual Contribution Leaderboard và Team Contribution Leaderboard. Tuỳ ch�
 
 Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống kê.
 
+### Phase 12 — Gamification và giao diện ảnh · ĐANG LÀM
+
+- **Mục tiêu:** làm level và bảng xếp hạng thú vị hơn, có giao diện riêng ngay trong Discord.
+- **Phạm vi:**
+  - DEC-028: điểm contribution không âm (PROP-024); giới hạn XP từ vote mỗi ngày (PROP-028).
+  - DEC-029: cảnh giới tu tiên, chuỗi ngày hoạt động, huy hiệu, bảng xếp hạng tuần/tháng (PROP-020).
+  - DEC-030: ảnh thẻ `/rank` và ảnh `/leaderboard` (`@napi-rs/canvas`, font Be Vietnam Pro), nút chuyển trang (PROP-029), Bảng vàng tự cập nhật.
+  - DEC-031: tự gán role theo cảnh giới (quyền Manage Roles).
+- **Cách làm:** nền móng chung, rồi đợt 1 (3 agent: dữ liệu theo kỳ và gamification; quy tắc nghiệp vụ; vẽ ảnh), rồi đợt 2 (2 agent: lệnh xem và Bảng vàng; cấu hình, sự kiện và role), sau đó review độc lập.
+- **Điều kiện hoàn thành:** `npm run check` pass; ảnh render đúng trên máy dev Windows và trên Linux khi chạy thật; review độc lập không còn lỗi đã xác nhận.
+
 ### Phase 11 — Security review và Deployment
 
 - Rà soát permission và OAuth scope thực tế trên Developer Portal (hiện CHƯA XÁC ĐỊNH).
@@ -104,3 +117,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-24 | Phase 1 được duyệt và đang làm; bước 1–5 xong. Thêm `.npmrc ignore-scripts` vào Phase 1 (LL-008) |
 | 2026-09-26 | Thêm PROP-022, PROP-023 vào Phase 1 và làm xong; merge Phase 1 vào `main` (DEC-019). Còn bước 6 |
 | 2026-09-26 | DEC-021: Phase 2–10 làm liên tục trên một branch, thêm tính năng vote/bầu cử (DEC-026). Đã code, test (323) và qua review độc lập. Phase 11 chờ server Linux |
+| 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`. Thêm Phase 12 (gamification và ảnh thẻ, DEC-029…031) |
