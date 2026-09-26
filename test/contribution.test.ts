@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { ContributionService } from "../src/modules/contribution/ContributionService";
 import { SubmitContributionInput } from "../src/modules/contribution/types";
+import { LedgerEvent } from "../src/modules/ledger/Ledger";
 import { UserError } from "../src/shared/errors";
 import {
 	ADMIN,
@@ -732,5 +733,200 @@ describe("ContributionService đọc dữ liệu", () =>
 		assert.deepEqual(service.getProfile(GUILD, USER_A), { userId: USER_A, score: 1, rank: 2, totalRanked: 2, contributions: 2 });
 		assert.deepEqual(service.getProfile(GUILD, USER_C), { userId: USER_C, score: 5, rank: 1, totalRanked: 2, contributions: 0 });
 		assert.deepEqual(service.getProfile(GUILD, USER_B), { userId: USER_B, score: 0, rank: null, totalRanked: 2, contributions: 1 });
+	});
+});
+
+describe("ContributionService: điểm không âm (PROP-024)", () =>
+{
+	const COMPENSATION_REASON = "Tự động bù để điểm không âm (PROP-024)";
+	const USER_D = "300000000000000004";
+
+	/** Các event bù của một người, theo thứ tự ghi. */
+	function compensations(context: TestContext, userId: string): LedgerEvent[]
+	{
+		return context.deps.contributionLedger.recent(GUILD, userId, 100)
+			.filter(event => event.reason === COMPENSATION_REASON)
+			.reverse();
+	}
+
+	/** Đọc thẳng bảng tổng team, vì teamTotals chỉ trả team có tổng > 0 nên không thấy được tổng âm. */
+	function rawTeamTotal(context: TestContext, roleId: string): number | undefined
+	{
+		return context.db.prepare<[string, string], { total: number }>("SELECT total FROM contribution_team_totals WHERE guild_id = ? AND role_id = ?")
+			.get(GUILD, roleId)?.total;
+	}
+
+	function eventTeams(context: TestContext, eventId: number): string[]
+	{
+		return context.db.prepare<[number], { role_id: string }>("SELECT role_id FROM contribution_event_teams WHERE event_id = ? ORDER BY role_id")
+			.all(eventId)
+			.map(row => row.role_id);
+	}
+
+	test("ví dụ trong PROP-024: 2 ghi nhận, admin trừ 2, gỡ contribution thì tổng là 0 chứ không phải -2", () =>
+	{
+		const context = setup();
+		const { service, deps, clock } = context;
+		const created = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: "phạt", roleIds: [] });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+
+		clock.advanceSeconds(60);
+		service.remove(GUILD, created.id, ADMIN);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.equal(countRows(context, "contribution_events"), 4, "2 ghi nhận + 1 admin trừ + 1 event bù");
+
+		const [compensation] = compensations(context, USER_A);
+		assert.deepEqual(compensation, {
+			id: compensation.id,
+			guildId: GUILD,
+			userId: USER_A,
+			amount: 2,
+			source: "admin",
+			referenceId: null,
+			actorId: null,
+			reason: COMPENSATION_REASON,
+			createdAt: clock.now(),
+			voidedAt: null,
+		});
+
+		const [entry] = deps.audit.list(GUILD, 1);
+		assert.equal(entry.action, "contribution.remove");
+		assert.equal(entry.targetId, USER_A);
+		assert.deepEqual(entry.details, { contributionId: created.id, title: created.title, compensated: 2 });
+	});
+
+	test("rút ghi nhận sau khi admin trừ: tự bù về 0, không ghi audit; ghi nhận lại vẫn cộng bình thường", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const { id } = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [] });
+		const auditCount = deps.audit.list(GUILD, 100).length;
+
+		const withdrawn = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		assert.equal(withdrawn.voted, false);
+		assert.equal(withdrawn.contribution.votes, 1);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(compensations(context, USER_A).map(event => [event.amount, event.source, event.actorId, event.referenceId]), [[1, "admin", null, null]]);
+
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(compensations(context, USER_A).map(event => event.amount), [1, 1]);
+		assert.equal(deps.audit.list(GUILD, 100).length, auditCount, "rút ghi nhận không ghi audit");
+
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.equal(compensations(context, USER_A).length, 2, "tổng về đúng 0 thì không cần bù");
+	});
+
+	test("chỉ bù đúng phần âm khi admin trừ một phần", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const { id } = service.submit(input());
+		deps.guildConfig.updateSettings(GUILD, { contributionVotePoints: 3 }, ADMIN);
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -4, actorId: ADMIN, reason: null, roleIds: [] });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 2);
+
+		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(compensations(context, USER_A).map(event => event.amount), [1]);
+	});
+
+	test("event bù dùng snapshot team của contribution: điểm team không âm và khớp điểm thành viên", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		const penalized = service.submit(input({ authorRoleIds: [ROLE_BACKEND] }));
+		const teammate = service.submit(input({ authorId: USER_B, authorRoleIds: [ROLE_BACKEND] }));
+		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_C });
+		service.toggleVote({ guildId: GUILD, contributionId: teammate.id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [ROLE_BACKEND] });
+		assert.equal(rawTeamTotal(context, ROLE_BACKEND), 1);
+
+		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_B });
+		assert.equal(rawTeamTotal(context, ROLE_BACKEND), 1);
+
+		service.remove(GUILD, penalized.id, ADMIN);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 1);
+		assert.equal(rawTeamTotal(context, ROLE_BACKEND), 1, "team chỉ còn điểm của USER_B, không bị kéo âm");
+		assert.deepEqual(deps.contributionLedger.teamTotals(GUILD, 10), [{ id: ROLE_BACKEND, total: 1 }]);
+		assert.deepEqual(compensations(context, USER_A).map(event => eventTeams(context, event.id)), [[ROLE_BACKEND], [ROLE_BACKEND]]);
+	});
+
+	test("không bù khi tổng vẫn >= 0; audit contribution.remove không có compensated", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const created = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -1, actorId: ADMIN, reason: null, roleIds: [] });
+
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: 5, actorId: ADMIN, reason: null, roleIds: [] });
+		service.remove(GUILD, created.id, ADMIN);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 4);
+		assert.deepEqual(compensations(context, USER_A), []);
+
+		const [entry] = deps.audit.list(GUILD, 1);
+		assert.equal(entry.action, "contribution.remove");
+		assert.deepEqual(entry.details, { contributionId: created.id, title: created.title });
+	});
+
+	test("event bù không bị huỷ khi sau đó gỡ chính contribution ấy hay contribution khác", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const first = service.submit(input());
+		const second = service.submit(input({ title: "Đóng góp thứ hai" }));
+		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_C });
+		service.toggleVote({ guildId: GUILD, contributionId: second.id, voterId: USER_B });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -3, actorId: ADMIN, reason: null, roleIds: [] });
+
+		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_B });
+		service.remove(GUILD, first.id, ADMIN);
+		service.remove(GUILD, second.id, ADMIN);
+
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(compensations(context, USER_A).map(event => [event.amount, event.voidedAt]), [[1, null], [1, null], [1, null]]);
+		const compensated = deps.audit.list(GUILD, 10)
+			.filter(entry => entry.action === "contribution.remove")
+			.map(entry => entry.details?.compensated);
+		assert.deepEqual(compensated, [1, 1]);
+	});
+
+	test("reset user vẫn đưa tổng về 0 như cũ, huỷ cả event bù; sau đó ghi nhận mới cộng bình thường", () =>
+	{
+		const context = setup();
+		const { service, deps } = context;
+		const created = service.submit(input());
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
+		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [] });
+		service.remove(GUILD, created.id, ADMIN);
+
+		assert.deepEqual(service.resetUser(GUILD, USER_A, ADMIN), { voidedEvents: 2 }, "admin trừ + event bù (2 ghi nhận đã bị huỷ khi gỡ)");
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.equal(compensations(context, USER_A).length, 1);
+		assert.ok(compensations(context, USER_A).every(event => event.voidedAt !== null));
+
+		const fresh = service.submit(input({ title: "Sau reset" }));
+		service.toggleVote({ guildId: GUILD, contributionId: fresh.id, voterId: USER_D });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 	});
 });
