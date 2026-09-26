@@ -1,5 +1,6 @@
 import { ServiceDeps } from "../deps";
 import { Ledger, RankedEntry } from "../ledger/Ledger";
+import { startOfVnMonth, startOfVnWeek } from "../../shared/time";
 
 export type ScoreKind = "activity" | "contribution";
 
@@ -71,6 +72,11 @@ export interface LeaderboardServiceApi
 
 export const DEFAULT_PAGE_SIZE = 10;
 
+/** Không giới hạn số dòng khi đọc cả bảng của một kỳ (LIMIT của SQLite nhận số nguyên 64-bit). */
+const ALL_ROWS = Number.MAX_SAFE_INTEGER;
+
+type PeriodWindow = Pick<LeaderboardPage, "period" | "since">;
+
 /** Bảng xếp hạng: hai loại điểm luôn tách biệt (DEC-004). */
 export class LeaderboardService implements LeaderboardServiceApi
 {
@@ -84,24 +90,60 @@ export class LeaderboardService implements LeaderboardServiceApi
 
 	individual(guildId: string, kind: ScoreKind, page: number, pageSize = DEFAULT_PAGE_SIZE): LeaderboardPage
 	{
-		const ledger = this.ledger(kind);
-		return paginate(ledger.countRanked(guildId), page, pageSize, (limit, offset) => ledger.top(guildId, limit, offset));
+		return this.query({ guildId, kind, scope: "individual", period: "all", page, pageSize });
 	}
 
 	teams(guildId: string, kind: ScoreKind, page: number, pageSize = DEFAULT_PAGE_SIZE): LeaderboardPage
 	{
-		const ledger = this.ledger(kind);
-		return paginate(ledger.countTeams(guildId), page, pageSize, (limit, offset) => ledger.topTeams(guildId, limit, offset));
+		return this.query({ guildId, kind, scope: "team", period: "all", page, pageSize });
 	}
 
 	query(query: LeaderboardQuery): LeaderboardPage
 	{
-		throw new Error(`Chưa triển khai: LeaderboardService.query (${query.period}).`);
+		const { guildId, scope, period, page } = query;
+		const ledger = this.ledger(query.kind);
+		const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+		const since = this.periodStart(period);
+		const window: PeriodWindow = { period, since };
+
+		if (since === null)
+		{
+			// Kỳ "all" đọc từ bảng cache nên đếm và lấy trang đều rẻ.
+			return scope === "individual"
+				? paginate(ledger.countRanked(guildId), page, pageSize, window, (limit, offset) => ledger.top(guildId, limit, offset))
+				: paginate(ledger.countTeams(guildId), page, pageSize, window, (limit, offset) => ledger.topTeams(guildId, limit, offset));
+		}
+
+		// Điểm theo kỳ phải cộng từ ledger. Đọc cả bảng của kỳ trong một lần quét rồi cắt trang trong bộ nhớ, thay vì
+		// quét hai lần (đếm rồi lấy trang). Số dòng tối đa bằng số người (hoặc team) có điểm dương trong kỳ.
+		const rows = scope === "individual"
+			? ledger.topSince(guildId, since, ALL_ROWS)
+			: ledger.topTeamsSince(guildId, since, ALL_ROWS);
+		return paginate(rows.length, page, pageSize, window, (limit, offset) => rows.slice(offset, offset + limit));
 	}
 
 	userStanding(guildId: string, kind: ScoreKind, period: LeaderboardPeriod, userId: string): LeaderboardStanding
 	{
-		throw new Error(`Chưa triển khai: LeaderboardService.userStanding (${guildId}, ${kind}, ${period}, ${userId}).`);
+		const ledger = this.ledger(kind);
+		const since = this.periodStart(period);
+		if (since === null)
+		{
+			const { rank, totalRanked } = ledger.rank(guildId, userId);
+			return { rank, value: ledger.total(guildId, userId), totalRanked };
+		}
+		const { rank, total, totalRanked } = ledger.rankSince(guildId, userId, since);
+		return { rank, value: total, totalRanked };
+	}
+
+	/** Mốc bắt đầu kỳ theo giờ Việt Nam tại thời điểm hiện tại; null với kỳ "all". */
+	private periodStart(period: LeaderboardPeriod): number | null
+	{
+		if (period === "all") return null;
+		const now = this.deps.clock.now();
+		if (period === "week") return startOfVnWeek(now);
+		if (period === "month") return startOfVnMonth(now);
+		// Kiểu TypeScript không bảo vệ được giá trị đến từ customId của nút lúc chạy.
+		throw new Error(`Kỳ xếp hạng không hợp lệ: ${String(period)}.`);
 	}
 }
 
@@ -109,6 +151,7 @@ function paginate(
 	totalEntries: number,
 	requestedPage: number,
 	pageSize: number,
+	window: PeriodWindow,
 	fetch: (limit: number, offset: number) => RankedEntry[],
 ): LeaderboardPage
 {
@@ -118,5 +161,5 @@ function paginate(
 	const offset = (page - 1) * size;
 	// Hạng lấy từ ledger (tính trên toàn bảng), không suy ra từ vị trí trong trang, để người hoà điểm cùng hạng.
 	const entries = fetch(size, offset).map(row => ({ rank: row.rank, id: row.id, value: row.total }));
-	return { entries, page, totalPages, totalEntries, period: "all", since: null };
+	return { entries, page, totalPages, totalEntries, period: window.period, since: window.since };
 }
