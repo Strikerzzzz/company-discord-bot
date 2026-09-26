@@ -19,6 +19,7 @@ const MAX_LIST_LIMIT = 50;
 
 const NOT_FOUND = "Không tìm thấy contribution này.";
 const ALREADY_REMOVED = "Contribution này đã bị gỡ.";
+const VOTE_RESET = "Lượt ghi nhận của bạn cho đóng góp này đã bị admin reset nên không thể ghi nhận lại.";
 
 function isContributionCategory(value: string): value is ContributionCategory
 {
@@ -111,6 +112,7 @@ function toContribution(row: ContributionRow): Contribution
  * Contribution Score (DEC-025): ai cũng gửi được, người khác ghi nhận để cộng điểm cho tác giả.
  * Chỉ dùng contributionLedger, không bao giờ đụng tới Activity XP (DEC-004).
  * Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
+ * Lượt ghi nhận có điểm đã bị admin reset vẫn tính là đã dùng: người đó không ghi nhận lại được contribution ấy.
  */
 export class ContributionService implements ContributionServiceApi
 {
@@ -124,8 +126,16 @@ export class ContributionService implements ContributionServiceApi
 	submit(input: SubmitContributionInput): Contribution
 	{
 		const valid = validateSubmission(input);
+		const sourceMessageId = input.sourceMessageId ?? null;
 		return this.db.transaction((): Contribution =>
 		{
+			// Mỗi tin nhắn chỉ là nguồn của một contribution còn hiệu lực, để không nhân điểm. Unique index là lớp chặn cuối.
+			if (sourceMessageId !== null)
+			{
+				const existing = this.repo.findActiveIdBySource(input.guildId, sourceMessageId);
+				if (existing !== null) throw new UserError(`Tin nhắn này đã được ghi nhận thành đóng góp #${existing}.`);
+			}
+
 			const id = this.repo.insert({
 				guildId: input.guildId,
 				authorId: input.authorId,
@@ -134,6 +144,7 @@ export class ContributionService implements ContributionServiceApi
 				description: valid.description,
 				category: valid.category,
 				link: valid.link,
+				sourceMessageId,
 				createdAt: this.deps.clock.now(),
 			});
 			this.repo.insertTeams(id, this.deps.teams.resolveTeams(input.guildId, input.authorRoleIds));
@@ -169,11 +180,12 @@ export class ContributionService implements ContributionServiceApi
 			const contribution = this.requireActive(guildId, contributionId);
 			if (voterId === contribution.authorId) throw new UserError("Bạn không thể tự ghi nhận đóng góp của chính mình.");
 
-			const existingEventId = this.repo.findVoteEventId(contributionId, voterId);
-			if (existingEventId !== null)
+			const existing = this.repo.findVote(contributionId, voterId);
+			if (existing !== null)
 			{
-				// Event có thể đã bị void do reset; khi đó voidEvent trả null nhưng vẫn phải xoá lượt ghi nhận.
-				this.deps.contributionLedger.voidEvent(existingEventId);
+				// Lượt đã bị admin reset (event bị huỷ) vẫn tính là đã dùng: giữ nguyên dòng vote để không bấm hai lần mà lấy lại điểm.
+				if (existing.voided) throw new UserError(VOTE_RESET);
+				this.deps.contributionLedger.voidEvent(existing.eventId);
 				this.repo.deleteVote(contributionId, voterId);
 				return { voted: false, contribution: this.require(guildId, contributionId) };
 			}

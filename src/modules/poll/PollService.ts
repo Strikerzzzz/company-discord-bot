@@ -108,7 +108,8 @@ export class PollService implements PollServiceApi
 				createdAt: now,
 			});
 			options.forEach((label, index) => this.repo.insertOption(pollId, index, label));
-			this.deps.audit.record(input.guildId, input.creatorId, "poll.create", null, { pollId, question });
+			// Ghi cả XP thưởng để truy vết được vote đặt XP cao bất thường.
+			this.deps.audit.record(input.guildId, input.creatorId, "poll.create", null, { pollId, question, xpReward: input.xpReward });
 			return this.load(pollId, now);
 		})();
 	}

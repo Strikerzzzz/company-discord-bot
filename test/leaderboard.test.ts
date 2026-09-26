@@ -28,6 +28,42 @@ describe("LeaderboardService", () =>
 		assert.deepEqual(page3.entries.map(e => e.rank), [11, 12]);
 	});
 
+	test("hoà điểm cùng hạng (1, 2, 2, 2, 5) và hạng khớp Ledger.rank (/rank), kể cả ở trang 2", () =>
+	{
+		const { deps } = createTestContext();
+		const totals: [string, number][] = [["u1", 100], ["u2", 90], ["u3", 90], ["u4", 90], ["u5", 80]];
+		for (const [userId, amount] of totals) deps.contributionLedger.record({ guildId: GUILD, userId, amount, source: "admin" });
+		const board = new LeaderboardService(deps);
+
+		const pages = [1, 2, 3].map(page => board.individual(GUILD, "contribution", page, 2));
+		assert.deepEqual(pages.map(page => page.entries.map(e => [e.id, e.rank])), [
+			[["u1", 1], ["u2", 2]],
+			[["u3", 2], ["u4", 2]],
+			[["u5", 5]],
+		]);
+		for (const entry of pages.flatMap(page => page.entries))
+		{
+			assert.equal(deps.contributionLedger.rank(GUILD, entry.id).rank, entry.rank, `hạng của ${entry.id} lệch với /rank`);
+		}
+	});
+
+	test("bảng team: team hoà điểm cùng hạng, kể cả ở trang 2", () =>
+	{
+		const { deps } = createTestContext();
+		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		deps.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		deps.xpLedger.record({ guildId: GUILD, userId: "u1", amount: 40, source: "message", teamRoleIds: [ROLE_BACKEND, ROLE_FRONTEND] });
+		const board = new LeaderboardService(deps);
+
+		assert.deepEqual(board.teams(GUILD, "activity", 1, 1).entries, [{ rank: 1, id: ROLE_BACKEND, value: 40 }]);
+		assert.deepEqual(board.teams(GUILD, "activity", 2, 1), {
+			entries: [{ rank: 1, id: ROLE_FRONTEND, value: 40 }],
+			page: 2,
+			totalPages: 2,
+			totalEntries: 2,
+		});
+	});
+
 	test("bảng rỗng vẫn có 1 trang", () =>
 	{
 		const { deps } = createTestContext();

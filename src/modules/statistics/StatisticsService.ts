@@ -91,7 +91,8 @@ export class StatisticsService implements StatisticsServiceApi
 					WHERE guild_id = @guildId AND status = 'active' AND created_at >= @since) AS last7Days,
 				(SELECT COUNT(*) FROM contribution_votes v
 					JOIN contributions c ON c.id = v.contribution_id
-					WHERE c.guild_id = @guildId AND c.status = 'active') AS votes,
+					JOIN contribution_events e ON e.id = v.event_id
+					WHERE c.guild_id = @guildId AND c.status = 'active' AND e.voided_at IS NULL) AS votes,
 				(SELECT COALESCE(SUM(total), 0) FROM member_contribution WHERE guild_id = @guildId AND total > 0) AS totalScore`);
 
 		this.pollTotals = db.prepare<GuildParams & { now: number }, PollRow>(`
