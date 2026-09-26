@@ -3,11 +3,12 @@ import {
 	APIInteractionGuildMember,
 	ChatInputCommandInteraction,
 	GuildMember,
+	MessageFlags,
 	SlashCommandBuilder,
 	User,
 } from "discord.js";
 import Command from "../../classes/Command";
-import { requireGuildId } from "../../discord/guards";
+import { canSendMessages, requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import { rankEmbed } from "../../discord/views/activity";
 import { UserError } from "../../shared/errors";
@@ -37,6 +38,7 @@ export default class RankCmd extends Command
 		const member = chosen ? interaction.options.getMember(TARGET_OPTION) : interaction.member;
 		const { activity, contributions, teams } = this.client.services;
 
+		// Người không được gửi tin ở kênh này chỉ nhận kết quả riêng, không đăng công khai qua bot.
 		await interaction.reply({
 			embeds: [rankEmbed({
 				displayName: displayNameOf(target, member),
@@ -45,6 +47,7 @@ export default class RankCmd extends Command
 				contribution: contributions.getProfile(guildId, target.id),
 				teamRoleIds: teams.resolveTeams(guildId, roleIdsOf(member)),
 			})],
+			flags: canSendMessages(interaction) ? undefined : MessageFlags.Ephemeral,
 		});
 	}
 }

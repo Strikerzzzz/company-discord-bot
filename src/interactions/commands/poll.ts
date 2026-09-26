@@ -1,6 +1,6 @@
 import { ButtonInteraction, ChatInputCommandInteraction, MessageFlags, SlashCommandBuilder } from "discord.js";
 import Command from "../../classes/Command";
-import { checkAdmin, checkCanCreatePoll, requireGuildId } from "../../discord/guards";
+import { assertCanSendMessages, canViewChannel, checkAdmin, checkCanCreatePoll, filterViewable, requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import { refreshPollMessage } from "../../discord/pollScheduler";
 import {
@@ -13,7 +13,7 @@ import {
 	pollSelectionText,
 } from "../../discord/views/poll";
 import { SETTING_LIMITS } from "../../modules/guild-config/types";
-import { POLL_LIMITS } from "../../modules/poll/types";
+import { Poll, POLL_LIMITS } from "../../modules/poll/types";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
 
@@ -123,6 +123,8 @@ export default class PollCmd extends Command
 		// Người tạo không phải admin chỉ dùng mức XP mặc định (DEC-026).
 		const xp = interaction.options.getInteger("xp");
 		if (xp !== null && !checkAdmin(interaction, services)) throw new UserError("Chỉ admin mới đặt được XP riêng cho vote.");
+		// Vote được đăng công khai thay người tạo: phải có quyền gửi tin ở kênh này.
+		assertCanSendMessages(interaction);
 
 		const poll = services.polls.create({
 			guildId,
@@ -147,16 +149,16 @@ export default class PollCmd extends Command
 	private async close(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
+		const pollId = interaction.options.getInteger("id", true);
 		const { services } = this.client;
-		const poll = services.polls.close({
-			guildId,
-			pollId: interaction.options.getInteger("id", true),
-			actorId: interaction.user.id,
-			actorIsAdmin: checkAdmin(interaction, services),
-		});
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		// Trả lời trước (hạn 3 giây của interaction), sau đó mới sửa message gốc; lỗi khi sửa chỉ ghi log.
-		await interaction.reply({ content: "Đã đóng vote.", embeds: [pollEmbed(poll)], flags: MessageFlags.Ephemeral });
+		// Đóng vote hiển thị kết quả, nên cũng chỉ dành cho người xem được kênh của vote.
+		await this.requireVisiblePoll(interaction, guildId, pollId);
+		const poll = services.polls.close({ guildId, pollId, actorId: interaction.user.id, actorIsAdmin: checkAdmin(interaction, services) });
+
+		// Trả lời trước, sau đó mới sửa message gốc; lỗi khi sửa chỉ ghi log.
+		await interaction.editReply({ content: "Đã đóng vote.", embeds: [pollEmbed(poll)] });
 		await refreshPollMessage(this.client, poll);
 	}
 
@@ -164,17 +166,27 @@ export default class PollCmd extends Command
 	{
 		const guildId = requireGuildId(interaction);
 		const pollId = interaction.options.getInteger("id", true);
-		const poll = this.client.services.polls.get(guildId, pollId);
-		if (!poll) throw new UserError(`Không tìm thấy vote #${pollId}.`);
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		await interaction.reply({ embeds: [pollEmbed(poll)], flags: MessageFlags.Ephemeral });
+		const poll = await this.requireVisiblePoll(interaction, guildId, pollId);
+		await interaction.editReply({ embeds: [pollEmbed(poll)] });
 	}
 
+	/** Chỉ liệt kê vote thuộc kênh người gọi xem được. */
 	private async list(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
-		const polls = this.client.services.polls.listOpen(guildId);
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		await interaction.reply({ embeds: [pollListEmbed(polls)], flags: MessageFlags.Ephemeral });
+		const polls = await filterViewable(this.client, interaction, this.client.services.polls.listOpen(guildId));
+		await interaction.editReply({ embeds: [pollListEmbed(polls)] });
+	}
+
+	/** Vote theo mã; người không xem được kênh của vote nhận "không tìm thấy" như với mã không tồn tại. */
+	private async requireVisiblePoll(interaction: ChatInputCommandInteraction, guildId: string, pollId: number): Promise<Poll>
+	{
+		const poll = this.client.services.polls.get(guildId, pollId);
+		if (!poll || !(await canViewChannel(this.client, interaction, poll.channelId))) throw new UserError(`Không tìm thấy vote #${pollId}.`);
+		return poll;
 	}
 }

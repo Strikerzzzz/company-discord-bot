@@ -1,32 +1,16 @@
 import DiscordClient from "../classes/DiscordClient";
 import { Poll } from "../modules/poll/types";
 import { logger } from "../shared/logger";
+import { editPostedMessage } from "./messages";
 import { pollMessage } from "./views/poll";
 
 /**
  * Cập nhật message gốc của vote theo trạng thái hiện tại (dùng sau khi vote bị đóng).
  * Không ném lỗi: message có thể đã bị xoá hoặc bot mất quyền; chỉ ghi log. Trả về true nếu đã sửa được.
  */
-export async function refreshPollMessage(client: DiscordClient, poll: Poll): Promise<boolean>
+export function refreshPollMessage(client: DiscordClient, poll: Poll): Promise<boolean>
 {
-	if (poll.channelId === null || poll.messageId === null) return false;
-
-	try
-	{
-		const channel = await client.channels.fetch(poll.channelId);
-		if (!channel?.isTextBased())
-		{
-			logger.warn(`Không cập nhật được message của vote #${poll.id}: channel "${poll.channelId}" không còn hoặc không phải kênh văn bản.`);
-			return false;
-		}
-		await channel.messages.edit(poll.messageId, pollMessage(poll));
-		return true;
-	}
-	catch (error)
-	{
-		logger.warn(`Không cập nhật được message của vote #${poll.id}:`, error);
-		return false;
-	}
+	return editPostedMessage(client, poll, () => pollMessage(poll), `vote #${poll.id}`);
 }
 
 /** Một lượt: đóng mọi vote quá hạn rồi cập nhật message của từng vote. Trả về số vote vừa đóng. */

@@ -1,35 +1,23 @@
-import { ButtonInteraction, ChatInputCommandInteraction, CommandInteraction, MessageFlags, SlashCommandBuilder } from "discord.js";
+import { ButtonInteraction, ChatInputCommandInteraction, MessageFlags, SlashCommandBuilder } from "discord.js";
 import Command from "../../classes/Command";
-import { requireGuildId } from "../../discord/guards";
+import { assertCanSendMessages, canViewChannel, filterViewable, requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import {
 	CONTRIBUTION_BUTTON_NAMESPACE,
 	CONTRIBUTION_LIST_LIMIT,
+	contributionDetailMessage,
 	contributionListEmbed,
 	contributionMessage,
 	parseCategory,
 	parseContributionButtonId,
 	voteFeedback,
 } from "../../discord/views/contribution";
-import { Contribution, CONTRIBUTION_CATEGORIES, CONTRIBUTION_LIMITS, ContributionServiceApi } from "../../modules/contribution/types";
+import { CONTRIBUTION_CATEGORIES, CONTRIBUTION_LIMITS } from "../../modules/contribution/types";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
 
-/**
- * Trả lời CÔNG KHAI bằng embed + nút ghi nhận, rồi lưu vị trí message để cập nhật sau này.
- * Dùng chung cho /contribution submit và context menu "Ghi nhận đóng góp".
- */
-export async function publishContribution(interaction: CommandInteraction, contributions: ContributionServiceApi, contribution: Contribution): Promise<void>
-{
-	const response = await interaction.reply({ ...contributionMessage(contribution), withResponse: true });
-	const message = response.resource?.message;
-	if (!message)
-	{
-		logger.warn(`Không lấy được message của contribution #${contribution.id}; message sẽ không được cập nhật về sau.`);
-		return;
-	}
-	contributions.attachMessage(contribution.guildId, contribution.id, message.channelId, message.id);
-}
+/** Số contribution lấy từ service cho /contribution list trước khi lọc theo quyền xem kênh (service giới hạn 50). */
+const LIST_FETCH_LIMIT = 50;
 
 // Gửi, xem và ghi nhận Contribution (DEC-025).
 export default class ContributionCmd extends Command
@@ -96,7 +84,7 @@ export default class ContributionCmd extends Command
 		}
 	}
 
-	// Bấm nút ghi nhận: bấm lần nữa để rút (DEC-025).
+	// Bấm nút ghi nhận trên message công khai: bấm lần nữa để rút (DEC-025).
 	override async executeButton(interaction: ButtonInteraction): Promise<void>
 	{
 		const contributionId = parseContributionButtonId(interaction.customId);
@@ -105,30 +93,15 @@ export default class ContributionCmd extends Command
 
 		await interaction.update(contributionMessage(result.contribution));
 		await interaction.followUp({ content: voteFeedback(result.voted), flags: MessageFlags.Ephemeral });
-
-		// Bấm từ bản xem riêng (/contribution view) thì cập nhật cả message công khai gốc để số lượt luôn đúng.
-		const originalId = result.contribution.messageId;
-		if (originalId !== null && originalId !== interaction.message.id) await this.refreshOriginal(result.contribution);
 	}
 
-	/** Sửa message công khai gốc theo trạng thái mới. Không ném lỗi: message có thể đã bị xoá hoặc bot mất quyền. */
-	private async refreshOriginal(contribution: Contribution): Promise<void>
-	{
-		if (contribution.channelId === null || contribution.messageId === null) return;
-		try
-		{
-			const channel = await this.client.channels.fetch(contribution.channelId);
-			if (channel?.isTextBased()) await channel.messages.edit(contribution.messageId, contributionMessage(contribution));
-		}
-		catch (error)
-		{
-			logger.warn(`Không cập nhật được message gốc của contribution #${contribution.id}:`, error);
-		}
-	}
-
+	/** Trả lời CÔNG KHAI bằng embed + nút ghi nhận, rồi lưu vị trí message để cập nhật sau này. */
 	private async submit(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
+		// Bot đăng thay người dùng, nên người không được gửi tin ở kênh này cũng không được đăng qua bot.
+		assertCanSendMessages(interaction);
+
 		const { contributions } = this.client.services;
 		const contribution = contributions.submit({
 			guildId,
@@ -141,28 +114,43 @@ export default class ContributionCmd extends Command
 			authorRoleIds: roleIdsOf(interaction.member),
 		});
 
-		await publishContribution(interaction, contributions, contribution);
+		const response = await interaction.reply({ ...contributionMessage(contribution), withResponse: true });
+		const message = response.resource?.message;
+		if (!message)
+		{
+			logger.warn(`Không lấy được message của contribution #${contribution.id}; message sẽ không được cập nhật về sau.`);
+			return;
+		}
+		contributions.attachMessage(guildId, contribution.id, message.channelId, message.id);
 	}
 
+	/** Bản xem riêng, không có nút ghi nhận. Người không xem được kênh gốc nhận "không tìm thấy" như với mã không tồn tại. */
 	private async view(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
 		const contributionId = interaction.options.getInteger("id", true);
-		const contribution = this.client.services.contributions.get(guildId, contributionId);
-		if (!contribution) throw new UserError(`Không tìm thấy đóng góp #${contributionId}.`);
+		// Kiểm tra quyền xem kênh có thể cần gọi REST: defer trước để không quá hạn 3 giây.
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		await interaction.reply({ ...contributionMessage(contribution), flags: MessageFlags.Ephemeral });
+		const contribution = this.client.services.contributions.get(guildId, contributionId);
+		if (!contribution || !(await canViewChannel(this.client, interaction, contribution.channelId)))
+		{
+			throw new UserError(`Không tìm thấy đóng góp #${contributionId}.`);
+		}
+
+		await interaction.editReply(contributionDetailMessage(contribution));
 	}
 
+	/** Chỉ liệt kê đóng góp thuộc kênh người gọi xem được. */
 	private async list(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
 		const member = interaction.options.getUser("thanh-vien");
-		const contributions = this.client.services.contributions.list(guildId, {
-			authorId: member?.id,
-			limit: CONTRIBUTION_LIST_LIMIT,
-		});
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		await interaction.reply({ embeds: [contributionListEmbed(contributions, member?.id ?? null)], flags: MessageFlags.Ephemeral });
+		const recent = this.client.services.contributions.list(guildId, { authorId: member?.id, limit: LIST_FETCH_LIMIT });
+		const visible = (await filterViewable(this.client, interaction, recent)).slice(0, CONTRIBUTION_LIST_LIMIT);
+
+		await interaction.editReply({ embeds: [contributionListEmbed(visible, member?.id ?? null)] });
 	}
 }
