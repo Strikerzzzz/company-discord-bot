@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { LeaderboardService } from "../src/modules/leaderboard/LeaderboardService";
-import { ADMIN, createTestContext, GUILD, ROLE_BACKEND, ROLE_FRONTEND } from "./helpers";
+import { LeaderboardPage, LeaderboardQuery, LeaderboardService } from "../src/modules/leaderboard/LeaderboardService";
+import { ADMIN, createTestContext, GUILD, OTHER_GUILD, ROLE_BACKEND, ROLE_FRONTEND, TestContext, USER_A, USER_B, USER_C } from "./helpers";
 
 function seedUsers(count: number): string[]
 {
@@ -86,5 +86,179 @@ describe("LeaderboardService", () =>
 		assert.deepEqual(board.individual(GUILD, "contribution", 1).entries, [{ rank: 1, id: "u2", value: 3 }]);
 		assert.deepEqual(board.teams(GUILD, "activity", 1).entries, [{ rank: 1, id: ROLE_BACKEND, value: 50 }]);
 		assert.deepEqual(board.teams(GUILD, "contribution", 1).entries, [{ rank: 1, id: ROLE_FRONTEND, value: 3 }]);
+	});
+});
+
+// Thứ Tư 30/09/2026 10:00 giờ Việt Nam. Tuần bắt đầu 00:00 thứ Hai 28/09, tháng bắt đầu 00:00 ngày 01/09 (giờ Việt Nam).
+const NOW = Date.UTC(2026, 8, 30, 3, 0);
+const WEEK_START = Date.UTC(2026, 8, 27, 17, 0);
+const MONTH_START = Date.UTC(2026, 7, 31, 17, 0);
+const DAY = 86_400_000;
+
+function periodQuery(overrides: Partial<LeaderboardQuery> = {}): LeaderboardQuery
+{
+	return { guildId: GUILD, kind: "activity", scope: "individual", period: "week", page: 1, ...overrides };
+}
+
+/** [id, điểm, hạng] của từng dòng trong trang. */
+function rows(page: LeaderboardPage): [string, number, number][]
+{
+	return page.entries.map(entry => [entry.id, entry.value, entry.rank]);
+}
+
+/** Ghi XP tin nhắn tại thời điểm `at` rồi đưa đồng hồ về NOW. */
+function xpAt(context: TestContext, at: number, userId: string, amount: number, teamRoleIds: string[] = []): void
+{
+	context.clock.current = at;
+	context.deps.xpLedger.record({ guildId: GUILD, userId, amount, source: "message", teamRoleIds });
+	context.clock.current = NOW;
+}
+
+describe("LeaderboardService theo kỳ", () =>
+{
+	function seed(): TestContext
+	{
+		const context = createTestContext();
+		context.deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		context.deps.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		xpAt(context, MONTH_START - 1, USER_A, 100, [ROLE_BACKEND]);
+		xpAt(context, WEEK_START - 1, USER_A, 5, [ROLE_BACKEND]);
+		xpAt(context, MONTH_START, USER_B, 20, [ROLE_FRONTEND]);
+		xpAt(context, WEEK_START, USER_C, 7, [ROLE_BACKEND]);
+		xpAt(context, NOW, USER_B, 3, [ROLE_FRONTEND]);
+		return context;
+	}
+
+	test("tuần từ 00:00 thứ Hai, tháng từ 00:00 ngày 1 (giờ Việt Nam); kết quả ghi rõ period và since", () =>
+	{
+		const board = new LeaderboardService(seed().deps);
+
+		const all = board.query(periodQuery({ period: "all" }));
+		assert.deepEqual(rows(all), [[USER_A, 105, 1], [USER_B, 23, 2], [USER_C, 7, 3]]);
+		assert.equal(all.period, "all");
+		assert.equal(all.since, null);
+
+		const month = board.query(periodQuery({ period: "month" }));
+		assert.deepEqual(rows(month), [[USER_B, 23, 1], [USER_C, 7, 2], [USER_A, 5, 3]]);
+		assert.equal(month.period, "month");
+		assert.equal(month.since, MONTH_START);
+
+		assert.deepEqual(board.query(periodQuery({ period: "week" })), {
+			entries: [{ rank: 1, id: USER_C, value: 7 }, { rank: 2, id: USER_B, value: 3 }],
+			page: 1,
+			totalPages: 1,
+			totalEntries: 2,
+			period: "week",
+			since: WEEK_START,
+		});
+	});
+
+	test("bảng team theo kỳ dùng snapshot team", () =>
+	{
+		const board = new LeaderboardService(seed().deps);
+		assert.deepEqual(rows(board.query(periodQuery({ scope: "team", period: "all" }))), [[ROLE_BACKEND, 112, 1], [ROLE_FRONTEND, 23, 2]]);
+		assert.deepEqual(rows(board.query(periodQuery({ scope: "team", period: "month" }))), [[ROLE_FRONTEND, 23, 1], [ROLE_BACKEND, 12, 2]]);
+		const week = board.query(periodQuery({ scope: "team", period: "week" }));
+		assert.deepEqual(rows(week), [[ROLE_BACKEND, 7, 1], [ROLE_FRONTEND, 3, 2]]);
+		assert.equal(week.period, "week");
+		assert.equal(week.since, WEEK_START);
+	});
+
+	test("sang tuần mới thì bảng tuần trống; sang tháng mới thì mốc tháng đổi", () =>
+	{
+		const context = seed();
+		const board = new LeaderboardService(context.deps);
+		const nextMonday = WEEK_START + 7 * DAY;
+
+		context.clock.current = nextMonday - 1;
+		assert.equal(board.query(periodQuery()).totalEntries, 2);
+		context.clock.current = nextMonday;
+		assert.deepEqual(board.query(periodQuery()), { entries: [], page: 1, totalPages: 1, totalEntries: 0, period: "week", since: nextMonday });
+		assert.equal(board.query(periodQuery({ period: "month" })).since, Date.UTC(2026, 8, 30, 17, 0), "đã sang tháng 10 giờ Việt Nam");
+	});
+
+	test("phân trang theo kỳ: hạng liên tục qua các trang, trang ngoài phạm vi được kẹp lại", () =>
+	{
+		const context = createTestContext();
+		const users = seedUsers(12);
+		users.forEach((userId, i) =>
+		{
+			xpAt(context, WEEK_START - 1, userId, 1_000 * (i + 1));
+			xpAt(context, WEEK_START + i, userId, 100 - i);
+		});
+		const board = new LeaderboardService(context.deps);
+
+		const page1 = board.query(periodQuery({ pageSize: 5 }));
+		assert.equal(page1.totalEntries, 12);
+		assert.equal(page1.totalPages, 3);
+		assert.deepEqual(page1.entries.map(e => [e.id, e.rank]), users.slice(0, 5).map((id, i) => [id, i + 1]));
+
+		const last = board.query(periodQuery({ page: 99, pageSize: 5 }));
+		assert.equal(last.page, 3);
+		assert.deepEqual(last.entries.map(e => e.rank), [11, 12]);
+		assert.deepEqual(board.query(periodQuery({ page: 0, pageSize: 5 })).entries, page1.entries);
+
+		const defaultSize = board.query(periodQuery({ page: 2 }));
+		assert.equal(defaultSize.page, 2);
+		assert.deepEqual(defaultSize.entries.map(e => e.rank), [11, 12], "trang mặc định 10 dòng");
+		assert.deepEqual(board.query(periodQuery({ scope: "team", page: 5 })), {
+			entries: [], page: 1, totalPages: 1, totalEntries: 0, period: "week", since: WEEK_START,
+		});
+	});
+
+	test("individual()/teams() tương đương query kỳ all", () =>
+	{
+		const board = new LeaderboardService(seed().deps);
+		assert.deepEqual(board.individual(GUILD, "activity", 1, 2), board.query(periodQuery({ period: "all", pageSize: 2 })));
+		assert.deepEqual(board.teams(GUILD, "activity", 2, 1), board.query(periodQuery({ scope: "team", period: "all", page: 2, pageSize: 1 })));
+	});
+
+	test("userStanding khớp hạng và điểm trong bảng của từng kỳ", () =>
+	{
+		const context = seed();
+		const { deps } = context;
+		xpAt(context, NOW, "300000000000000009", 3);
+		const board = new LeaderboardService(deps);
+
+		for (const period of ["all", "week", "month"] as const)
+		{
+			const page = board.query(periodQuery({ period, pageSize: 50 }));
+			for (const entry of page.entries)
+			{
+				assert.deepEqual(
+					board.userStanding(GUILD, "activity", period, entry.id),
+					{ rank: entry.rank, value: entry.value, totalRanked: page.totalEntries },
+					`${period}: ${entry.id}`,
+				);
+			}
+		}
+		assert.deepEqual(board.userStanding(GUILD, "activity", "week", USER_A), { rank: null, value: 0, totalRanked: 3 });
+		assert.deepEqual(board.userStanding(GUILD, "activity", "all", USER_A), {
+			rank: deps.xpLedger.rank(GUILD, USER_A).rank,
+			value: deps.xpLedger.total(GUILD, USER_A),
+			totalRanked: deps.xpLedger.countRanked(GUILD),
+		});
+		assert.deepEqual(board.userStanding(OTHER_GUILD, "activity", "month", USER_B), { rank: null, value: 0, totalRanked: 0 });
+	});
+
+	test("Contribution theo kỳ tách biệt với Activity; điểm âm trong kỳ không có hạng", () =>
+	{
+		const context = seed();
+		const { deps, clock } = context;
+		clock.current = WEEK_START + 1;
+		deps.contributionLedger.record({ guildId: GUILD, userId: USER_A, amount: 3, source: "vote" });
+		deps.contributionLedger.record({ guildId: GUILD, userId: USER_B, amount: -2, source: "admin" });
+		clock.current = NOW;
+		const board = new LeaderboardService(deps);
+
+		assert.deepEqual(rows(board.query(periodQuery({ kind: "contribution" }))), [[USER_A, 3, 1]]);
+		assert.deepEqual(board.userStanding(GUILD, "contribution", "week", USER_B), { rank: null, value: -2, totalRanked: 1 });
+		assert.deepEqual(rows(board.query(periodQuery({ kind: "activity" }))), [[USER_C, 7, 1], [USER_B, 3, 2]]);
+	});
+
+	test("kỳ không hợp lệ lúc chạy (dữ liệu sai kiểu từ Discord) bị từ chối", () =>
+	{
+		const board = new LeaderboardService(createTestContext().deps);
+		assert.throws(() => board.query(Object.assign(periodQuery(), { period: "year" })), /Kỳ xếp hạng không hợp lệ/);
 	});
 });
