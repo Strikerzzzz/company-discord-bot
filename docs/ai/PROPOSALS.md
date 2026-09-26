@@ -31,8 +31,8 @@
 | PROP-019 | Dọn code demo và viết lại README | LOW | PROPOSED |
 | PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
-| PROP-022 | Khai báo `@types/node` tường minh | LOW | PROPOSED |
-| PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | PROPOSED |
+| PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
+| PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | IMPLEMENTED |
 
 ---
 
@@ -921,7 +921,7 @@ Không đáng kể. Là thêm một devDependency, nên cần duyệt theo luậ
 
 ### Trạng thái
 
-PROPOSED
+IMPLEMENTED (2026-09-26, DEC-019). `@types/node` ^24.19.0; cả cây dependency dedupe về bản này (trước đó là 22.13 gián tiếp).
 
 ---
 
@@ -958,4 +958,4 @@ Commit normalize ban đầu có thể làm diff lớn nếu repo đang lẫn CRL
 
 ### Trạng thái
 
-PROPOSED
+IMPLEMENTED (2026-09-26, DEC-019). Không có diff chuẩn hoá (repo vốn lưu LF cả 38 file); working copy trên máy dev đã được checkout lại toàn bộ sang LF.

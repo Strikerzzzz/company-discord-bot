@@ -151,6 +151,16 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Người phụ trách duyệt xong thì merge vào `main`.
   - `main` luôn là trạng thái đã được duyệt.
 
+### DEC-019 — Duyệt PROP-022, PROP-023 và merge Phase 1 vào `main`
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("làm hết" các việc được đề xuất)
+- **Nội dung:**
+  - Duyệt PROP-022 (`@types/node` tường minh) và PROP-023 (`.gitattributes` eol=lf).
+  - Merge branch `phase-1/on-dinh-nen` vào `main`.
+- **Hệ quả:**
+  - Bước 6 của Phase 1 (chạy thật trên Discord) vẫn còn mở, vì chưa có bot và server test.
+  - Nếu bước 6 phát hiện lỗi, sửa trên branch mới tách từ `main`.
+
 ---
 
 ## Đang chờ quyết định

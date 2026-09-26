@@ -1,21 +1,21 @@
 # CURRENT STATE
 
 > Đọc file này đầu tiên ở mỗi phiên. Cập nhật sau mỗi phase hoặc task đáng kể.
-> Cập nhật lần cuối: **2026-09-24**
+> Cập nhật lần cuối: **2026-09-26**
 
 ## 1. Phase hiện tại
 
-**Phase 1 — Ổn định nền: ĐANG LÀM.** Bước 1–5 đã xong và đã kiểm chứng. **Bước 6 (chạy bot thật trên server test) đang chờ** người phụ trách cung cấp bot và server test.
+**Phase 1 — Ổn định nền: gần xong.** Bước 1–5 cùng PROP-022, PROP-023 đã xong, đã kiểm chứng và **đã merge vào `main`** (DEC-019). **Còn bước 6 (chạy bot thật trên server test)**, đang chờ người phụ trách cung cấp bot và server test.
 
-- Branch: `phase-1/on-dinh-nen`, chưa merge vào `main`. Theo DEC-018, chỉ merge sau khi người phụ trách duyệt.
 - Phase 0: hoàn thành, đã duyệt, đã merge vào `main`.
+- Nếu bước 6 phát hiện lỗi: sửa trên branch mới tách từ `main`.
 
 ## 2. Snapshot repository
 
 | Mục | Giá trị |
 | --- | --- |
-| `main` | `508abc5`: tài liệu Phase 0 (đã duyệt) |
-| Branch đang làm | `phase-1/on-dinh-nen`: các commit của Phase 1 |
+| `main` | Đã gồm toàn bộ Phase 0 và Phase 1 (trừ bước 6) |
+| Branch cũ | `phase-0/ai-os-init`, `phase-1/on-dinh-nen`: đã merge, giữ để tham khảo |
 | Remote | Chỉ có `upstream` → repo public của template (chỉ fetch, push bị vô hiệu hoá, DEC-013) |
 | Remote nội bộ | CHƯA XÁC ĐỊNH. Hiện chỉ làm việc local |
 | License | MIT, © 2022 Retr0-01 |
@@ -56,6 +56,8 @@ Kiểm chứng ngày 2026-09-24 trên **bản copy sạch** (`git archive`) và 
 | 4 | Hardening tầng Discord | `f7d03b4`, `5d828a7` | Xong |
 | 5 | ESLint 10 có dùng thông tin type | `b9c3200`, `68cc49f` | Xong |
 | — | `.npmrc ignore-scripts` (phát hiện khi kiểm chứng trên bản copy sạch) | `b9d8218` | Xong |
+| — | PROP-022 `@types/node` ^24 | `17d809d` | Xong |
+| — | PROP-023 `.gitattributes` eol=lf | `3d6c0e7` | Xong |
 | 6 | Chạy bot thật trên server test: login, deploy command, `/ping`, lỗi cố ý không làm sập bot | — | **Chờ bot và server test** |
 
 Ngoài repo: Node của máy dev đã được nâng 22.12.0 → 22.23.2 qua winget, theo chỉ thị "cần thì cập nhật" (DEC-016).
@@ -78,14 +80,14 @@ npm run build && npm run lint && npm audit
 
 Ghi chú khi chạy script trên máy dev (Windows):
 - Git Bash làm mất dấu `\` khi truyền đối số `node -e '...'` sang `node.exe`, nên script có regex hoặc escape phải viết ra file rồi chạy.
-- Working copy dùng CRLF (`core.autocrlf=true`); xem PROP-023.
+- Từ PROP-023, working copy dùng LF trên mọi máy.
 
 ## 7. Việc tiếp theo
 
 1. Người phụ trách chuẩn bị Discord Application test và server test, rồi tạo `.env` trên máy dev để chạy bước 6.
-2. Người phụ trách review branch `phase-1/on-dinh-nen`, duyệt thì merge vào `main`.
-3. Trả lời các PEND còn mở trước Phase 2: PEND-010, 011, 012, 013 và PEND-005 (máy chủ, process manager).
-4. Duyệt hoặc từ chối PROP-007, 009, 011 (phạm vi Phase 2) và PROP-022, 023.
+2. Người phụ trách xin cấp server Linux nội bộ (PEND-005).
+3. Trả lời các PEND còn mở trước Phase 2: PEND-010, 011, 012, 013, 014.
+4. Duyệt hoặc từ chối PROP-007, 009, 011 (phạm vi Phase 2).
 
 ## 8. Nhật ký cập nhật
 
@@ -94,3 +96,4 @@ Ghi chú khi chạy script trên máy dev (Windows):
 | 2026-09-24 | Khởi tạo: audit Phase 0, tạo AI Operating System. Không sửa code. |
 | 2026-09-24 | Phase 0 được duyệt. Remote `origin` → `upstream` (push bị vô hiệu hoá), bỏ tracking của `main`. Commit tài liệu lên `phase-0/ai-os-init`. |
 | 2026-09-24 | Merge Phase 0 vào `main`. Mở Phase 1 (DEC-014…018). Hoàn thành bước 1–5 cùng `.npmrc`; nâng Node máy dev lên 22.23.2. Chờ bước 6. |
+| 2026-09-26 | DEC-019: làm PROP-022, PROP-023; merge Phase 1 vào `main`. Bước 6 vẫn chờ bot và server test. |

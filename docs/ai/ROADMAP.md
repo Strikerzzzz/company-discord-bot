@@ -1,7 +1,7 @@
 # ROADMAP
 
-> Roadmap tổng thể. Cập nhật lần cuối: 2026-09-24.
-> **Phase 1 trở đi là BẢN NHÁP, chưa được duyệt.** Thứ tự và phạm vi có thể đổi theo quyết định của người phụ trách.
+> Roadmap tổng thể. Cập nhật lần cuối: 2026-09-26.
+> **Phase 2 trở đi là BẢN NHÁP, chưa được duyệt.** Thứ tự và phạm vi có thể đổi theo quyết định của người phụ trách.
 > Nguyên tắc: không xây feature trên nền chưa build được; viết test song song từ Phase 2, không dồn về cuối; mỗi phase nghiệp vụ chỉ bắt đầu khi các quyết định liên quan đã được chốt.
 
 ## Tổng quan
@@ -9,7 +9,7 @@
 | Phase | Tên | Trạng thái | Phụ thuộc quyết định |
 | --- | --- | --- | --- |
 | 0 | Audit và khởi tạo AI Operating System | **HOÀN THÀNH, đã duyệt** (2026-09-24) | — |
-| 1 | Ổn định nền | **ĐANG LÀM**: bước 1–5 xong, chờ bước 6 (chạy thật) | Đã duyệt (DEC-014…018) |
+| 1 | Ổn định nền | **Gần xong**: đã merge vào `main`, còn bước 6 (chạy thật) | Đã duyệt (DEC-014…019) |
 | 2 | Nền database và test | Nháp | PEND-010, 011, 012, 013 |
 | 3 | Phân quyền admin và cấu hình | Nháp | PROP-013 |
 | 4 | Activity XP | Nháp | PEND-006, 008 |
@@ -102,3 +102,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-24 | Tạo bản nháp đầu tiên từ kết quả audit Phase 0 |
 | 2026-09-24 | Phase 0 được duyệt. PROP-006 (git) đã triển khai; phần metadata tách thành PROP-021 và đưa vào Phase 1 |
 | 2026-09-24 | Phase 1 được duyệt và đang làm; bước 1–5 xong. Thêm `.npmrc ignore-scripts` vào Phase 1 (LL-008) |
+| 2026-09-26 | Thêm PROP-022, PROP-023 vào Phase 1 và làm xong; merge Phase 1 vào `main` (DEC-019). Còn bước 6 |
