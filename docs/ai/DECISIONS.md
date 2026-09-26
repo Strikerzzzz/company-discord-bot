@@ -203,6 +203,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Mỗi lần phát sinh điểm (XP hoặc contribution), lưu kèm các role team người đó có tại thời điểm đó.
   - Điểm team là tổng điểm theo snapshot này; người có nhiều role team thì điểm tính cho mọi team đó.
   - Chỉ hiển thị team đang được cấu hình.
+  - Riêng điểm của lượt ghi nhận contribution: dùng snapshot team của tác giả **lúc gửi** contribution, không phải lúc được ghi nhận (DEC-028, PROP-026).
 - **Hệ quả:** Không cần intent `GuildMembers`.
 
 ### DEC-025 — Quy tắc Contribution
@@ -233,6 +234,49 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Mọi biến động điểm lưu thành ledger append-only (PROP-014).
   - Reset hoặc gỡ không xoá dòng dữ liệu nào, chỉ đánh dấu `voided_at`, nên luôn truy vết được.
 
+### DEC-028 — Merge Phase 2–10; trả lời PEND-015 → PEND-020
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("duyệt tất cả vào main", trả lời 6 câu hỏi nghiệp vụ)
+- **Nội dung:**
+  - Merge `phase-2-10/hoan-thien-tinh-nang` vào `main` (fast-forward tới `cd007d0`).
+  - PEND-015: giữ như đang làm. Lượt ghi nhận đã bị admin reset thì không ghi nhận lại được.
+  - PEND-016 (PROP-024, phương án a): điểm contribution không bao giờ âm. Rút ghi nhận hoặc gỡ contribution làm tổng âm thì bot tự ghi một event bù (nguồn `admin`, `actor_id` null, `reference_id` null, lý do tự động) trong cùng transaction để tổng về 0. Event bù dùng snapshot team của contribution.
+  - PEND-017 (PROP-025): giữ tiêu đề cố định cho context menu "Ghi nhận đóng góp" (người phụ trách trả lời "cũng oke"; AI hiểu là đồng ý với cách đang làm).
+  - PEND-018 (PROP-026, phương án a): điểm của lượt ghi nhận tính cho team của tác giả **lúc gửi** contribution.
+  - PEND-019: đã xác nhận ảnh kèm chữ giải thích (từ 5 ký tự trở lên sau chuẩn hoá, không trùng) được XP. Riêng ảnh kèm chữ quá ngắn vẫn giữ như cũ (không được XP); PROP-027 còn mở.
+  - PEND-020 (PROP-028): admin đặt giới hạn **XP tối đa một người nhận từ vote trong một ngày** (giờ Việt Nam), cấu hình `pollXpDailyCap`, **mặc định 25**, 0 = không giới hạn. Vượt mức thì vẫn bỏ phiếu được, chỉ không được cộng thêm XP; phần XP bị cắt không được cộng bù về sau.
+
+### DEC-029 — Gamification: cảnh giới tu tiên, chuỗi ngày, huy hiệu, bảng xếp hạng theo kỳ
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (chọn phong cách "Tu tiên" và các tính năng thêm)
+- **Nội dung:**
+  - **Ngày, tuần, tháng** tính theo giờ Việt Nam (UTC+7). Tuần bắt đầu 00:00 thứ Hai (`src/shared/time.ts`).
+  - **Cảnh giới** chỉ để hiển thị, không đổi công thức XP hay level (DEC-022). Mốc level: Luyện Khí 0, Trúc Cơ 3, Kim Đan 6, Nguyên Anh 10, Hóa Thần 15, Luyện Hư 20, Hợp Thể 30, Độ Kiếp 40 (`src/modules/activity/tiers.ts`). Lên cảnh giới mới thì có thông báo "đột phá" riêng.
+  - **Chuỗi ngày hoạt động:** số ngày liên tiếp có ít nhất một tin nhắn được Activity XP. Hôm nay chưa nhắn thì chuỗi chưa mất; bỏ trọn một ngày thì về 0. Tính lại từ ledger (event `message` chưa huỷ), nên reset XP cũng xoá chuỗi. Chỉ hiển thị, không cộng XP.
+  - **Huy hiệu:** 15 huy hiệu (`src/modules/gamification/achievements.ts`), tính lại từ dữ liệu còn hiệu lực mỗi lần xem. Chỉ hiển thị, không cộng điểm.
+  - **Bảng xếp hạng theo kỳ** (PROP-020): tổng, tuần này, tháng này, cho cả Activity/Contribution × cá nhân/team. Điểm kỳ là tổng các event chưa huỷ phát sinh trong kỳ; không làm mất điểm tổng.
+
+### DEC-030 — Giao diện bằng ảnh thẻ, Bảng vàng, nút chuyển trang
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (chọn "Ảnh thẻ rank như MEE6", phương án ghi rõ là thêm dependency)
+- **Nội dung:**
+  - `/rank` và `/leaderboard` trả về **ảnh PNG** do bot vẽ.
+  - Thêm dependency `@napi-rs/canvas` **1.0.9** (pin chính xác; MIT; binary dựng sẵn cho từng nền tảng qua optionalDependencies; không có install script, nên chạy được với `ignore-scripts=true`). Đây là ngoại lệ đã duyệt của luật protected #7.
+  - Font **Be Vietnam Pro** (SIL OFL 1.1) nằm trong `assets/fonts/`, kèm `OFL.txt`. Ảnh không vẽ emoji; emoji nằm ở phần chữ của tin nhắn.
+  - **Tải avatar từ CDN của Discord** để vẽ lên ảnh. Đây là ngoại lệ có kiểm soát của nguyên tắc "chỉ gọi Discord API": chỉ chấp nhận host `cdn.discordapp.com` và `media.discordapp.net` qua HTTPS, có timeout, giới hạn dung lượng và cache trong bộ nhớ. Không gọi host nào khác.
+  - **Bảng vàng:** admin chọn một channel, bot giữ ở đó một message bảng xếp hạng dạng ảnh và tự cập nhật định kỳ.
+  - Bảng xếp hạng có **nút** chuyển loại điểm, phạm vi, kỳ và trang (PROP-029).
+  - Bot cần thêm quyền **Attach Files**.
+
+### DEC-031 — Tự gán role Discord theo cảnh giới
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (chọn "Tự gán role theo danh hiệu", phương án ghi rõ cần quyền Manage Roles)
+- **Nội dung:**
+  - Admin gán role cho từng cảnh giới bằng `/config`. Lên hoặc xuống cảnh giới thì bot thêm role của cảnh giới hiện tại và bỏ role của các cảnh giới khác (mỗi người chỉ giữ một role cảnh giới).
+  - Bot cần thêm quyền **Manage Roles** (nới least privilege đã được duyệt). Role của bot phải nằm trên các role cảnh giới.
+  - Không cho gán role nguy hiểm: `@everyone`, role do integration quản lý, role có quyền quản trị/kiểm duyệt (Administrator, Manage Server, Manage Roles, Manage Channels, Kick/Ban, Manage Messages, Mention Everyone, Manage Webhooks, Moderate Members...), và role không thấp hơn role cao nhất của bot.
+  - Đồng bộ role khi thành viên có tin nhắn được XP. Bot không đọc danh sách thành viên, vì không dùng intent `GuildMembers`.
+
 ---
 
 ## Đang chờ quyết định
@@ -242,11 +286,6 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
 | PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
 | PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
-| PEND-015 | Xác nhận ngữ nghĩa reset contribution. **Đang làm:** lượt ghi nhận đã bị admin reset không ghi nhận lại được (chống vượt reset); người chưa từng ghi nhận vẫn ghi nhận bình thường | Contribution | Review 2026-09-26 |
-| PEND-016 | Điểm contribution có được âm không? | Contribution | PROP-024 |
-| PEND-017 | Context menu "Ghi nhận đóng góp": dùng modal cho người ghi nhận tự viết tiêu đề? **Đang làm:** chỉ lưu link, tiêu đề cố định, không chép nội dung tin nhắn | Contribution | PROP-025 |
-| PEND-018 | Snapshot team của lượt ghi nhận: lúc gửi (**đang làm**) hay lúc được ghi nhận | Điểm team | PROP-026 |
-| PEND-019 | Ảnh kèm chữ ngắn có được XP không? | Activity XP | PROP-027 |
-| PEND-020 | Có giới hạn XP từ vote (người tạo tự vote, số vote mỗi ngày) không? | Vote | PROP-028 |
+| PEND-019 | Ảnh kèm chữ **quá ngắn** (ví dụ "ok") có được XP như ảnh không kèm chữ không? **Đang làm:** không. Ảnh kèm chữ từ 5 ký tự trở lên đã được XP (DEC-028) | Activity XP | PROP-027 |
 
-**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020.
+**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028.

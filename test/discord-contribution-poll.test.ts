@@ -221,7 +221,7 @@ class FakePolls
 	vote(input: { guildId: string; pollId: number; userId: string; optionIndex: number; roleIds: readonly string[] }): PollVoteResult
 	{
 		this.votes.push(input);
-		return { poll: makePoll([1, 1]), selected: [input.optionIndex], xpAwarded: 5 };
+		return { poll: makePoll([1, 1]), selected: [input.optionIndex], xpAwarded: 5, xpCapped: false, dailyCap: 25 };
 	}
 
 	close(input: { guildId: string; pollId: number; actorId: string; actorIsAdmin: boolean }): Poll
@@ -686,7 +686,7 @@ describe("view vote", () =>
 		const poll = makePoll([2, 1], { creatorId: USER_A });
 		const payload = pollMessage(poll);
 		const rendered = JSON.stringify([payload.embeds.map(embed => embed.toJSON()), payload.components.map(row => row.toJSON())]);
-		const feedback = pollSelectionText({ poll, selected: [0], xpAwarded: 0 });
+		const feedback = pollSelectionText({ poll, selected: [0], xpAwarded: 0, xpCapped: false, dailyCap: 25 });
 
 		for (const text of [rendered, feedback])
 		{
@@ -700,15 +700,15 @@ describe("view vote", () =>
 		const poll = makePoll([1, 1]);
 		poll.options[0].label = "[Có](https://evil.example)";
 		assert.ok(!(pollEmbed(poll).toJSON().description ?? "").includes("]("));
-		assert.ok(!pollSelectionText({ poll, selected: [0], xpAwarded: 0 }).includes("]("));
+		assert.ok(!pollSelectionText({ poll, selected: [0], xpAwarded: 0, xpCapped: false, dailyCap: 25 }).includes("]("));
 	});
 
 	test("phản hồi riêng cho người vote", () =>
 	{
 		const poll = makePoll([1, 1, 1]);
-		assert.equal(pollSelectionText({ poll, selected: [0, 2], xpAwarded: 5 }), "Bạn đang chọn: Lựa chọn 1, Lựa chọn 3 · +5 XP");
-		assert.equal(pollSelectionText({ poll, selected: [1], xpAwarded: 0 }), "Bạn đang chọn: Lựa chọn 2");
-		assert.equal(pollSelectionText({ poll, selected: [], xpAwarded: 0 }), "Bạn chưa chọn lựa chọn nào.");
+		assert.equal(pollSelectionText({ poll, selected: [0, 2], xpAwarded: 5, xpCapped: false, dailyCap: 25 }), "Bạn đang chọn: Lựa chọn 1, Lựa chọn 3 · +5 XP");
+		assert.equal(pollSelectionText({ poll, selected: [1], xpAwarded: 0, xpCapped: false, dailyCap: 25 }), "Bạn đang chọn: Lựa chọn 2");
+		assert.equal(pollSelectionText({ poll, selected: [], xpAwarded: 0, xpCapped: false, dailyCap: 25 }), "Bạn chưa chọn lựa chọn nào.");
 	});
 
 	test("danh sách vote: tối đa 15 dòng, phần còn lại gộp thành một dòng", () =>

@@ -177,6 +177,8 @@ export class PollService implements PollServiceApi
 				poll: this.load(pollId, now),
 				selected: this.repo.selectedOptions(pollId, userId),
 				xpAwarded,
+				xpCapped: false,
+				dailyCap: this.deps.guildConfig.getSettings(guildId).pollXpDailyCap,
 			};
 		})();
 	}

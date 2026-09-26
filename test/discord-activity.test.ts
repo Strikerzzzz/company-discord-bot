@@ -70,7 +70,7 @@ function contributionProfile(userId: string, score: number, rank: number | null,
 	return { userId, score, rank, totalRanked: rank === null ? 0 : 10, contributions };
 }
 
-const EMPTY_BOARD: LeaderboardPage = { entries: [], page: 1, totalPages: 1, totalEntries: 0 };
+const EMPTY_BOARD: LeaderboardPage = { entries: [], page: 1, totalPages: 1, totalEntries: 0, period: "all", since: null };
 
 function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 {
@@ -114,6 +114,8 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 			boardCalls.push({ scope: "team", guildId, kind, page });
 			return options.board ?? EMPTY_BOARD;
 		},
+		query: () => { throw new Error("không dùng trong test này"); },
+		userStanding: () => { throw new Error("không dùng trong test này"); },
 	};
 
 	const services = { activity, contributions, teams, guildConfig, leaderboard } as unknown as AppServices;
@@ -322,6 +324,8 @@ describe("views Activity", () =>
 				page: 1,
 				totalPages: 2,
 				totalEntries: 12,
+				period: "all",
+				since: null,
 			},
 		}).toJSON();
 
@@ -340,6 +344,8 @@ describe("views Activity", () =>
 			page: 2,
 			totalPages: 2,
 			totalEntries: 4,
+			period: "all",
+			since: null,
 		};
 
 		const activity = leaderboardEmbed({ kind: "activity", scope: "team", page }).toJSON();
@@ -357,7 +363,7 @@ describe("views Activity", () =>
 		const embed = leaderboardEmbed({
 			kind: "contribution",
 			scope: "individual",
-			page: { entries: [{ rank: 1, id: USER_A, value: 12 }], page: 1, totalPages: 1, totalEntries: 1 },
+			page: { entries: [{ rank: 1, id: USER_A, value: 12 }], page: 1, totalPages: 1, totalEntries: 1, period: "all", since: null },
 		}).toJSON();
 		assert.equal(embed.description, `🥇 <@${USER_A}> — 12 điểm`);
 	});
@@ -596,7 +602,7 @@ describe("/leaderboard", () =>
 	test("mặc định: bảng cá nhân, trang 1", async () =>
 	{
 		const fake = createFakeServices({
-			board: { entries: [{ rank: 1, id: USER_A, value: 1915 }], page: 1, totalPages: 1, totalEntries: 1 },
+			board: { entries: [{ rank: 1, id: USER_A, value: 1915 }], page: 1, totalPages: 1, totalEntries: 1, period: "all", since: null },
 		});
 		const { interaction, replies } = fakeInteraction({ strings: { loai: "activity" } });
 		await new LeaderboardCmd(fakeClient(fake.services)).execute(interaction);

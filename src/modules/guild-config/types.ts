@@ -11,6 +11,8 @@ export interface GuildSettings
 	levelUpAnnouncements: boolean;
 	/** XP mặc định cho người tham gia vote (DEC-026). */
 	defaultPollXp: number;
+	/** XP tối đa một người nhận từ vote trong một ngày giờ Việt Nam; 0 = không giới hạn (DEC-028). */
+	pollXpDailyCap: number;
 	/** Điểm cộng cho tác giả mỗi lượt ghi nhận contribution (DEC-025). */
 	contributionVotePoints: number;
 	/** Role có quyền admin bot, ngoài những người có quyền Manage Server. */
@@ -19,7 +21,7 @@ export interface GuildSettings
 	pollCreatorRoleId: string | null;
 }
 
-export type NumericSettingKey = "xpPerMessage" | "xpCooldownSeconds" | "minMessageLength" | "duplicateWindowSeconds" | "defaultPollXp" | "contributionVotePoints";
+export type NumericSettingKey = "xpPerMessage" | "xpCooldownSeconds" | "minMessageLength" | "duplicateWindowSeconds" | "defaultPollXp" | "pollXpDailyCap" | "contributionVotePoints";
 
 export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	xpPerMessage: 10,
@@ -28,6 +30,7 @@ export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	duplicateWindowSeconds: 300,
 	levelUpAnnouncements: true,
 	defaultPollXp: 5,
+	pollXpDailyCap: 25,
 	contributionVotePoints: 1,
 	adminRoleId: null,
 	pollCreatorRoleId: null,
@@ -40,6 +43,7 @@ export const SETTING_LIMITS: Readonly<Record<NumericSettingKey, { min: number; m
 	minMessageLength: { min: 0, max: 200, label: "Độ dài tin tối thiểu" },
 	duplicateWindowSeconds: { min: 0, max: 86400, label: "Khoảng chống trùng (giây)" },
 	defaultPollXp: { min: 0, max: 1000, label: "XP mặc định khi vote" },
+	pollXpDailyCap: { min: 0, max: 100000, label: "Giới hạn XP từ vote mỗi ngày" },
 	contributionVotePoints: { min: 0, max: 100, label: "Điểm mỗi lượt ghi nhận" },
 };
 

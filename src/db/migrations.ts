@@ -244,6 +244,40 @@ export const MIGRATIONS: readonly Migration[] = [
 				WHERE source_message_id IS NOT NULL AND status = 'active';
 		`,
 	},
+	{
+		version: 3,
+		name: "gamification",
+		sql: `
+			-- Giới hạn XP một người nhận từ vote trong một ngày giờ Việt Nam; 0 = không giới hạn (DEC-028).
+			ALTER TABLE guild_settings ADD COLUMN poll_xp_daily_cap INTEGER NOT NULL DEFAULT 25;
+
+			-- Role Discord tự gán theo cảnh giới (DEC-031). tier_key là khoá trong src/modules/activity/tiers.ts.
+			CREATE TABLE tier_roles (
+				guild_id TEXT NOT NULL,
+				tier_key TEXT NOT NULL,
+				role_id TEXT NOT NULL,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, tier_key)
+			);
+			CREATE UNIQUE INDEX idx_tier_roles_role ON tier_roles (guild_id, role_id);
+
+			-- "Bảng vàng": message bảng xếp hạng bot tự cập nhật trong một channel (DEC-030). message_id null = chưa đăng.
+			CREATE TABLE live_boards (
+				guild_id TEXT PRIMARY KEY,
+				channel_id TEXT NOT NULL,
+				message_id TEXT,
+				updated_at INTEGER NOT NULL
+			);
+
+			-- Bảng xếp hạng tuần/tháng: tổng theo khoảng thời gian chỉ cần đọc index (DEC-029).
+			CREATE INDEX idx_xp_events_period ON xp_events (guild_id, created_at, user_id, amount) WHERE voided_at IS NULL;
+			CREATE INDEX idx_contribution_events_period ON contribution_events (guild_id, created_at, user_id, amount) WHERE voided_at IS NULL;
+			-- Chuỗi ngày hoạt động, số tin được XP, XP từ vote trong ngày: theo người và nguồn.
+			CREATE INDEX idx_xp_events_user_source ON xp_events (guild_id, user_id, source, created_at) WHERE voided_at IS NULL;
+			CREATE INDEX idx_contribution_votes_voter ON contribution_votes (voter_id);
+			CREATE INDEX idx_poll_participants_user ON poll_participants (user_id);
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

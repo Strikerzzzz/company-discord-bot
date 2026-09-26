@@ -1,5 +1,6 @@
 // Hàm thuần dựng nội dung hiển thị cho lệnh quản trị (/admin, /config). Không truy cập service hay database.
 import { EmbedBuilder, escapeMarkdown, InteractionReplyOptions, MessageFlags } from "discord.js";
+import { isTierKey, tierByKey } from "../../modules/activity/tiers";
 import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activity/types";
 import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
 import { ChannelSettings, GuildSettings } from "../../modules/guild-config/types";
@@ -76,6 +77,7 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 	duplicateWindowSeconds: { label: "Chống trùng", format: seconds },
 	levelUpAnnouncements: { label: "Thông báo lên level", format: onOff },
 	defaultPollXp: { label: "XP mặc định khi vote", format: value => `${formatNumber(value)} XP` },
+	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP` },
 	pollCreatorRoleId: { label: "Role tạo vote", format: value => value === null ? "chưa đặt (chỉ admin)" : roleMention(value) },
 	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", format: value => `${formatNumber(value)} điểm` },
 	adminRoleId: { label: "Role admin bot", format: value => value === null ? "chưa đặt" : roleMention(value) },
@@ -88,6 +90,7 @@ const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
 	"duplicateWindowSeconds",
 	"levelUpAnnouncements",
 	"defaultPollXp",
+	"pollXpDailyCap",
 	"pollCreatorRoleId",
 	"contributionVotePoints",
 	"adminRoleId",
@@ -300,11 +303,16 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"contribution.reset_all": "Reset contribution toàn server",
 	"poll.create": "Tạo vote",
 	"poll.close": "Đóng vote",
+	"tier_role.set": "Gán role cho cảnh giới",
+	"tier_role.clear": "Bỏ role của cảnh giới",
+	"board.set": "Đặt kênh Bảng vàng",
+	"board.clear": "Tắt Bảng vàng",
 	"backup.manual": "Sao lưu thủ công",
 };
 
 // Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
-// poll.* không có target (mã vote nằm trong details).
+// poll.* không có target (mã vote nằm trong details), tier_role.* có target là role (khoá cảnh giới trong details.tierKey),
+// board.* có target là channel của Bảng vàng.
 type AuditTargetKind = "user" | "role" | "channel" | "none";
 
 const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
@@ -322,6 +330,10 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"contribution.reset_all": "none",
 	"poll.create": "none",
 	"poll.close": "none",
+	"tier_role.set": "role",
+	"tier_role.clear": "role",
+	"board.set": "channel",
+	"board.clear": "channel",
 	"backup.manual": "none",
 };
 
@@ -340,6 +352,8 @@ const DETAIL_LABELS = new Map<string, string>([
 	["totalXp", "Tổng XP"],
 	["score", "Tổng điểm"],
 	["xpReward", "XP khi tham gia"],
+	["tierKey", "Cảnh giới"],
+	["compensated", "Điểm bù tự động"],
 ]);
 
 /** Nhãn tiếng Việt của một hành động trong audit log. */
@@ -373,6 +387,11 @@ function detailValue(key: string, value: unknown): string
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);
 	if (typeof value === "string")
 	{
+		if (key === "tierKey" && isTierKey(value))
+		{
+			const tier = tierByKey(value);
+			return `${tier.emoji} ${tier.name}`;
+		}
 		if (/^\d{17,20}$/.test(value))
 		{
 			if (key.endsWith("RoleId")) return roleMention(value);

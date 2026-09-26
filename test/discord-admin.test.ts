@@ -66,6 +66,10 @@ const AUDIT_ACTIONS: Record<AuditAction, true> = {
 	"contribution.reset_all": true,
 	"poll.create": true,
 	"poll.close": true,
+	"tier_role.set": true,
+	"tier_role.clear": true,
+	"board.set": true,
+	"board.clear": true,
 	"backup.manual": true,
 };
 const ALL_ACTIONS = Object.keys(AUDIT_ACTIONS) as AuditAction[];

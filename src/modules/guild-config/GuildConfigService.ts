@@ -12,6 +12,7 @@ interface GuildRow
 	duplicate_window_seconds: number;
 	level_up_announcements: number;
 	default_poll_xp: number;
+	poll_xp_daily_cap: number;
 	contribution_vote_points: number;
 	admin_role_id: string | null;
 	poll_creator_role_id: string | null;
@@ -61,6 +62,7 @@ export class GuildConfigService
 			duplicateWindowSeconds: row.duplicate_window_seconds,
 			levelUpAnnouncements: row.level_up_announcements === 1,
 			defaultPollXp: row.default_poll_xp,
+			pollXpDailyCap: row.poll_xp_daily_cap,
 			contributionVotePoints: row.contribution_vote_points,
 			adminRoleId: row.admin_role_id,
 			pollCreatorRoleId: row.poll_creator_role_id,
@@ -80,8 +82,8 @@ export class GuildConfigService
 		{
 			this.db.prepare(`
 				INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
-					level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					level_up_announcements, default_poll_xp, poll_xp_daily_cap, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (guild_id) DO UPDATE SET
 					xp_per_message = excluded.xp_per_message,
 					xp_cooldown_seconds = excluded.xp_cooldown_seconds,
@@ -89,13 +91,14 @@ export class GuildConfigService
 					duplicate_window_seconds = excluded.duplicate_window_seconds,
 					level_up_announcements = excluded.level_up_announcements,
 					default_poll_xp = excluded.default_poll_xp,
+					poll_xp_daily_cap = excluded.poll_xp_daily_cap,
 					contribution_vote_points = excluded.contribution_vote_points,
 					admin_role_id = excluded.admin_role_id,
 					poll_creator_role_id = excluded.poll_creator_role_id,
 					updated_at = excluded.updated_at`,
 			).run(
 				guildId, next.xpPerMessage, next.xpCooldownSeconds, next.minMessageLength, next.duplicateWindowSeconds,
-				next.levelUpAnnouncements ? 1 : 0, next.defaultPollXp, next.contributionVotePoints, next.adminRoleId, next.pollCreatorRoleId,
+				next.levelUpAnnouncements ? 1 : 0, next.defaultPollXp, next.pollXpDailyCap, next.contributionVotePoints, next.adminRoleId, next.pollCreatorRoleId,
 				this.clock.now(),
 			);
 			this.audit.record(guildId, actorId, "config.update", null, { ...patch });

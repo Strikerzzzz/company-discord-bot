@@ -118,6 +118,7 @@ export class Ledger
 	private readonly selectTopTeams: Statement<[string, number, number], RankedEntry>;
 	private readonly countTeamsStmt: Statement<[string], { n: number }>;
 	private readonly selectRecent: Statement<[string, string, number], EventRow>;
+	private readonly selectSumSince: Statement<[string, string, string, number], { total: number }>;
 
 	constructor(private readonly db: Db, readonly kind: LedgerKind, private readonly clock: Clock)
 	{
@@ -172,6 +173,10 @@ export class Ledger
 			JOIN team_roles r ON r.guild_id = tt.guild_id AND r.role_id = tt.role_id
 			WHERE tt.guild_id = ? AND tt.total > 0`);
 		this.selectRecent = db.prepare(`SELECT * FROM ${t.events} WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`);
+		this.selectSumSince = db.prepare(`
+			SELECT COALESCE(SUM(amount), 0) AS total
+			FROM ${t.events}
+			WHERE guild_id = ? AND user_id = ? AND source = ? AND created_at >= ? AND voided_at IS NULL`);
 	}
 
 	/** Ghi một biến động điểm và cập nhật các tổng. Chạy trong transaction (lồng được vào transaction của nơi gọi). */
@@ -296,6 +301,12 @@ export class Ledger
 	countTeams(guildId: string): number
 	{
 		return this.countTeamsStmt.get(guildId)?.n ?? 0;
+	}
+
+	/** Tổng điểm từ các event chưa huỷ của một nguồn, phát sinh từ thời điểm `since` (ms, tính cả mốc) trở đi. */
+	sumSince(guildId: string, userId: string, source: string, since: number): number
+	{
+		return this.selectSumSince.get(guildId, userId, source, since)?.total ?? 0;
 	}
 
 	/** Các event gần nhất của một người (kể cả event đã huỷ), mới nhất trước. */

@@ -17,6 +17,10 @@ export type AuditAction =
 	| "contribution.reset_all"
 	| "poll.create"
 	| "poll.close"
+	| "tier_role.set"
+	| "tier_role.clear"
+	| "board.set"
+	| "board.clear"
 	| "backup.manual";
 
 export interface AuditEntry

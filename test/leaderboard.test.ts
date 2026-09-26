@@ -61,6 +61,8 @@ describe("LeaderboardService", () =>
 			page: 2,
 			totalPages: 2,
 			totalEntries: 2,
+			period: "all",
+			since: null,
 		});
 	});
 
@@ -68,7 +70,7 @@ describe("LeaderboardService", () =>
 	{
 		const { deps } = createTestContext();
 		const page = new LeaderboardService(deps).teams(GUILD, "contribution", 1);
-		assert.deepEqual(page, { entries: [], page: 1, totalPages: 1, totalEntries: 0 });
+		assert.deepEqual(page, { entries: [], page: 1, totalPages: 1, totalEntries: 0, period: "all", since: null });
 	});
 
 	test("Activity và Contribution tách biệt; bảng team dùng snapshot", () =>

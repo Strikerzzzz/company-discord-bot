@@ -29,16 +29,16 @@
 | PROP-017 | Chống gian lận vote contribution | MEDIUM | IMPLEMENTED |
 | PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | IMPLEMENTED |
 | PROP-019 | Dọn code demo và viết lại README | LOW | IMPLEMENTED |
-| PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
+| PROP-020 | Leaderboard theo kỳ | LOW | APPROVED |
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
 | PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
 | PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | IMPLEMENTED |
-| PROP-024 | Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ | MEDIUM | PROPOSED |
-| PROP-025 | Ghi nhận đóng góp qua modal (người ghi nhận tự viết tiêu đề, mô tả) | MEDIUM | PROPOSED |
-| PROP-026 | Snapshot team của lượt ghi nhận: lúc gửi hay lúc được ghi nhận | LOW | PROPOSED |
+| PROP-024 | Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ | MEDIUM | APPROVED |
+| PROP-025 | Ghi nhận đóng góp qua modal (người ghi nhận tự viết tiêu đề, mô tả) | MEDIUM | DEFERRED |
+| PROP-026 | Snapshot team của lượt ghi nhận: lúc gửi hay lúc được ghi nhận | LOW | IMPLEMENTED |
 | PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | PROPOSED |
-| PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | PROPOSED |
-| PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | PROPOSED |
+| PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | APPROVED |
+| PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | APPROVED |
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
 
 ---
@@ -851,7 +851,7 @@ LOW
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-029): bảng xếp hạng tuần/tháng theo giờ Việt Nam, làm trong Phase 12.
 
 ---
 
@@ -1006,7 +1006,7 @@ MEDIUM
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-028): phương án (a), tự ghi event bù để tổng về 0. Làm trong Phase 12.
 
 ---
 
@@ -1043,7 +1043,7 @@ Thêm một loại interaction cần test trên Discord thật.
 
 ### Trạng thái
 
-PROPOSED
+DEFERRED (2026-09-26, DEC-028): người phụ trách đồng ý giữ tiêu đề cố định.
 
 ---
 
@@ -1083,7 +1083,7 @@ LOW
 
 ### Trạng thái
 
-PROPOSED
+IMPLEMENTED (2026-09-26, DEC-028): phương án (a), giữ snapshot lúc gửi; đã sửa câu chữ DEC-024.
 
 ---
 
@@ -1121,7 +1121,7 @@ LOW
 
 ### Trạng thái
 
-PROPOSED
+PROPOSED. Ngày 2026-09-26 người phụ trách đã xác nhận ảnh kèm chữ giải thích (từ 5 ký tự trở lên) được XP (DEC-028); còn chờ quyết định cho ảnh kèm chữ quá ngắn (PEND-019).
 
 ---
 
@@ -1161,7 +1161,7 @@ LOW
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-028): admin đặt giới hạn XP từ vote mỗi ngày (mặc định 25, 0 = không giới hạn). Làm trong Phase 12.
 
 ---
 
@@ -1198,7 +1198,7 @@ Thấp.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-030): nút chuyển loại điểm, phạm vi, kỳ và trang trên ảnh bảng xếp hạng. Làm trong Phase 12.
 
 ---
 

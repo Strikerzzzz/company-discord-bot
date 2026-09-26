@@ -54,8 +54,15 @@ export interface PollVoteResult
 	poll: Poll;
 	/** Các lựa chọn hiện tại của người vote, tăng dần. */
 	selected: number[];
-	/** XP vừa được cộng ở lần bấm này (0 nếu đã nhận trước đó). */
+	/** XP vừa được cộng ở lần bấm này (0 nếu đã nhận trước đó, vote không có XP, hoặc đã chạm giới hạn ngày). */
 	xpAwarded: number;
+	/**
+	 * true nếu đây là lần tham gia đầu tiên, vote có XP, nhưng XP bị giảm (kể cả về 0) vì giới hạn XP từ vote trong ngày
+	 * (DEC-028). Lượt tham gia vẫn được tính; phần XP bị cắt không được cộng bù về sau.
+	 */
+	xpCapped: boolean;
+	/** Giới hạn XP từ vote mỗi ngày của guild tại thời điểm bấm; 0 = không giới hạn. */
+	dailyCap: number;
 }
 
 export interface PollServiceApi

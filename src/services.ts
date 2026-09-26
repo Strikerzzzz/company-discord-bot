@@ -7,9 +7,13 @@ import { AuditService } from "./modules/audit/AuditService";
 import { ContributionService } from "./modules/contribution/ContributionService";
 import { ContributionServiceApi } from "./modules/contribution/types";
 import { ServiceDeps } from "./modules/deps";
+import { GamificationService } from "./modules/gamification/GamificationService";
+import { TierRoleService } from "./modules/gamification/TierRoleService";
+import { GamificationServiceApi, TierRoleServiceApi } from "./modules/gamification/types";
 import { GuildConfigService } from "./modules/guild-config/GuildConfigService";
 import { LeaderboardService, LeaderboardServiceApi } from "./modules/leaderboard/LeaderboardService";
 import { Ledger } from "./modules/ledger/Ledger";
+import { LiveBoardService, LiveBoardServiceApi } from "./modules/live-board/LiveBoardService";
 import { PollService } from "./modules/poll/PollService";
 import { PollServiceApi } from "./modules/poll/types";
 import { StatisticsService } from "./modules/statistics/StatisticsService";
@@ -28,6 +32,12 @@ export interface AppServices
 	polls: PollServiceApi;
 	leaderboard: LeaderboardServiceApi;
 	statistics: StatisticsServiceApi;
+	/** Cảnh giới, chuỗi ngày hoạt động, huy hiệu (DEC-029). */
+	gamification: GamificationServiceApi;
+	/** Role tự gán theo cảnh giới (DEC-031). */
+	tierRoles: TierRoleServiceApi;
+	/** Bảng vàng tự cập nhật (DEC-030). */
+	liveBoards: LiveBoardServiceApi;
 	backup: BackupService;
 }
 
@@ -62,6 +72,9 @@ export function createServices(db: Db, options: ServiceOptions): AppServices
 		polls: new PollService(db, deps),
 		leaderboard: new LeaderboardService(deps),
 		statistics: new StatisticsService(db, deps),
+		gamification: new GamificationService(db, deps),
+		tierRoles: new TierRoleService(db, clock, audit),
+		liveBoards: new LiveBoardService(db, clock, audit),
 		backup: new BackupService(db, options.backupDir, options.backupKeep, clock),
 	};
 }

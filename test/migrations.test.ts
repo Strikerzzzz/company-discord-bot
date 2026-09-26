@@ -65,7 +65,7 @@ describe("migrations", () =>
 		]);
 		db.prepare("INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, created_at) VALUES ('g1', 'a', 'a', 'Cũ', 'Mô tả', 'khac', 0)").run();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 2)), 1);
 		assert.equal(currentSchemaVersion(db), 2);
 
 		const totals = (table: "xp_team_totals" | "contribution_team_totals"): [string, string, number][] =>
@@ -86,7 +86,7 @@ describe("migrations", () =>
 		ledger.voidEvent(1);
 		ledger.record({ guildId: "g1", userId: "d", amount: 6, source: "message", teamRoleIds: ["r2"] });
 		assert.deepEqual(ledger.teamTotals("g1", 10), [{ id: "r2", total: 6 }, { id: "r1", total: 2 }]);
-		assert.equal(runMigrations(db), 0);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 2)), 0);
 	});
 
 	test("chạy lại không làm gì (idempotent)", () =>
@@ -94,6 +94,25 @@ describe("migrations", () =>
 		const db = openDatabase(":memory:");
 		runMigrations(db);
 		assert.equal(runMigrations(db), 0);
+	});
+
+	test("DB đang ở version 2 có cấu hình: migration 3 thêm giới hạn XP vote mặc định 25 và các bảng gamification", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 2));
+		db.prepare(`
+			INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
+				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 3);
+		assert.deepEqual(db.prepare("SELECT poll_xp_daily_cap FROM guild_settings WHERE guild_id = 'g1'").get(), { poll_xp_daily_cap: 25 });
+		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tier_roles', 'live_boards') ORDER BY name").all();
+		assert.deepEqual(tables.map(table => table.name), ["live_boards", "tier_roles"]);
+
+		db.prepare("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES ('g1', 'kim-dan', 'r1', 0)").run();
+		assert.throws(() => db.prepare("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES ('g1', 'truc-co', 'r1', 0)").run(), /UNIQUE/);
 	});
 
 	test("từ chối database mới hơn code", () =>

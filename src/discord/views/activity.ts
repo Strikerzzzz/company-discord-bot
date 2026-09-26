@@ -2,7 +2,7 @@ import { EmbedBuilder } from "discord.js";
 import { levelInfo } from "../../modules/activity/levels";
 import { ActivityProfile } from "../../modules/activity/types";
 import { ContributionProfile } from "../../modules/contribution/types";
-import { LeaderboardEntry, LeaderboardPage, ScoreKind } from "../../modules/leaderboard/LeaderboardService";
+import { LeaderboardEntry, LeaderboardPage, LeaderboardScope, ScoreKind } from "../../modules/leaderboard/LeaderboardService";
 import { COLORS, formatNumber, progressBar, rankLabel, roleMention, truncate, userMention } from "../format";
 
 // Nội dung hiển thị cho Activity XP, /rank và /leaderboard.
@@ -11,7 +11,7 @@ import { COLORS, formatNumber, progressBar, rankLabel, roleMention, truncate, us
 const AUTHOR_NAME_MAX = 256;
 const DESCRIPTION_MAX = 4096;
 
-export type LeaderboardScope = "individual" | "team";
+export type { LeaderboardScope };
 
 const KIND_LABELS: Readonly<Record<ScoreKind, string>> = {
 	activity: "Activity XP",
