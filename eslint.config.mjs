@@ -4,7 +4,7 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-	{ ignores: ["build/", "build-test/", "node_modules/"] },
+	{ ignores: ["build/", "build-test/", "node_modules/", ".claude/"] },
 	eslint.configs.recommended,
 	{
 		// Lint có dùng thông tin type cho source TypeScript.

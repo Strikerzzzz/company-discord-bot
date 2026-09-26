@@ -29,5 +29,8 @@ lerna-debug.log*
 # Dependency directories
 node_modules/
 
+# Git worktree tạm của Claude Code (agent chạy song song)
+.claude/worktrees/
+
 # Optional npm cache directory
 .npm
