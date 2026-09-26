@@ -304,7 +304,9 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"backup.manual": "Sao lưu thủ công",
 };
 
-type AuditTargetKind = "user" | "role" | "channel" | "contribution" | "poll" | "none";
+// Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
+// poll.* không có target (mã vote nằm trong details).
+type AuditTargetKind = "user" | "role" | "channel" | "none";
 
 const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"config.update": "none",
@@ -315,12 +317,12 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"xp.adjust": "user",
 	"xp.reset_user": "user",
 	"xp.reset_all": "none",
-	"contribution.remove": "contribution",
+	"contribution.remove": "user",
 	"contribution.adjust": "user",
 	"contribution.reset_user": "user",
 	"contribution.reset_all": "none",
-	"poll.create": "poll",
-	"poll.close": "poll",
+	"poll.create": "none",
+	"poll.close": "none",
 	"backup.manual": "none",
 };
 
@@ -334,6 +336,10 @@ const DETAIL_LABELS = new Map<string, string>([
 	["title", "Tiêu đề"],
 	["question", "Câu hỏi"],
 	["authorId", "Tác giả"],
+	["contributionId", "Mã contribution"],
+	["pollId", "Mã vote"],
+	["totalXp", "Tổng XP"],
+	["score", "Tổng điểm"],
 ]);
 
 /** Nhãn tiếng Việt của một hành động trong audit log. */
@@ -350,8 +356,6 @@ function auditTarget(action: AuditAction, targetId: string | null): string | nul
 	case "user": return userMention(targetId);
 	case "role": return roleMention(targetId);
 	case "channel": return channelMention(targetId);
-	case "contribution": return `contribution #${inlineText(targetId, DETAIL_VALUE_MAX)}`;
-	case "poll": return `vote #${inlineText(targetId, DETAIL_VALUE_MAX)}`;
 	case "none": return inlineText(targetId, DETAIL_VALUE_MAX);
 	}
 }
