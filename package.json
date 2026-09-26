@@ -9,10 +9,12 @@
     "node": ">=22.14.0"
   },
   "scripts": {
-    "dev": "tsc && node --env-file=.env build/index.js",
-    "build": "tsc",
+    "dev": "npm run build && node --env-file=.env build/index.js",
+    "build": "node scripts/clean.cjs build && tsc",
     "prod": "node --env-file-if-exists=.env build/index.js",
     "lint": "eslint .",
+    "test": "node scripts/clean.cjs build-test && tsc -p test && node --test \"build-test/test/**/*.test.js\"",
+    "check": "npm run build && npm run lint && npm test",
     "pm2": "pm2 start ecosystem.config.js"
   },
   "dependencies": {

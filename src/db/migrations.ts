@@ -1,0 +1,238 @@
+import { Db } from "./connection";
+
+export interface Migration
+{
+	version: number;
+	name: string;
+	sql: string;
+}
+
+/**
+ * Migration nhúng trong code (không đọc file .sql lúc chạy) để deploy chỉ cần thư mục build/.
+ * Quy tắc: chỉ THÊM migration mới với version tăng dần; không bao giờ sửa migration đã phát hành.
+ */
+export const MIGRATIONS: readonly Migration[] = [
+	{
+		version: 1,
+		name: "init",
+		sql: `
+			DROP TABLE IF EXISTS notes;
+
+			CREATE TABLE guild_settings (
+				guild_id TEXT PRIMARY KEY,
+				xp_per_message INTEGER NOT NULL,
+				xp_cooldown_seconds INTEGER NOT NULL,
+				min_message_length INTEGER NOT NULL,
+				duplicate_window_seconds INTEGER NOT NULL,
+				level_up_announcements INTEGER NOT NULL,
+				default_poll_xp INTEGER NOT NULL,
+				contribution_vote_points INTEGER NOT NULL,
+				admin_role_id TEXT,
+				poll_creator_role_id TEXT,
+				updated_at INTEGER NOT NULL
+			);
+
+			CREATE TABLE channel_settings (
+				guild_id TEXT NOT NULL,
+				channel_id TEXT NOT NULL,
+				xp_enabled INTEGER NOT NULL,
+				xp_per_message INTEGER,
+				xp_cooldown_seconds INTEGER,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, channel_id)
+			);
+
+			CREATE TABLE team_roles (
+				guild_id TEXT NOT NULL,
+				role_id TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, role_id)
+			);
+
+			-- Activity XP: ledger append-only. Reset/gỡ chỉ đánh dấu voided_at (DEC-027).
+			CREATE TABLE xp_events (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				amount INTEGER NOT NULL,
+				source TEXT NOT NULL CHECK (source IN ('message', 'poll', 'admin')),
+				reference_id TEXT,
+				actor_id TEXT,
+				reason TEXT,
+				created_at INTEGER NOT NULL,
+				voided_at INTEGER
+			);
+			CREATE INDEX idx_xp_events_user ON xp_events (guild_id, user_id);
+			CREATE INDEX idx_xp_events_created ON xp_events (guild_id, created_at);
+			CREATE INDEX idx_xp_events_reference ON xp_events (guild_id, reference_id);
+
+			-- Snapshot role team của người nhận điểm tại thời điểm phát sinh (DEC-024).
+			CREATE TABLE xp_event_teams (
+				event_id INTEGER NOT NULL REFERENCES xp_events (id),
+				role_id TEXT NOT NULL,
+				PRIMARY KEY (event_id, role_id)
+			);
+			CREATE INDEX idx_xp_event_teams_role ON xp_event_teams (role_id);
+
+			-- Tổng XP (cache của ledger) và thời điểm được XP từ tin nhắn gần nhất (cooldown sống qua restart).
+			CREATE TABLE member_xp (
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				total INTEGER NOT NULL DEFAULT 0,
+				last_message_xp_at INTEGER,
+				PRIMARY KEY (guild_id, user_id)
+			);
+			CREATE INDEX idx_member_xp_rank ON member_xp (guild_id, total DESC);
+
+			-- Contribution: hoàn toàn tách biệt với Activity XP (DEC-004).
+			CREATE TABLE contributions (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				author_id TEXT NOT NULL,
+				submitted_by TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				category TEXT NOT NULL,
+				link TEXT,
+				channel_id TEXT,
+				message_id TEXT,
+				status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
+				created_at INTEGER NOT NULL,
+				removed_at INTEGER,
+				removed_by TEXT
+			);
+			CREATE INDEX idx_contributions_guild ON contributions (guild_id, created_at);
+			CREATE INDEX idx_contributions_author ON contributions (guild_id, author_id);
+
+			CREATE TABLE contribution_teams (
+				contribution_id INTEGER NOT NULL REFERENCES contributions (id),
+				role_id TEXT NOT NULL,
+				PRIMARY KEY (contribution_id, role_id)
+			);
+
+			CREATE TABLE contribution_events (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				amount INTEGER NOT NULL,
+				source TEXT NOT NULL CHECK (source IN ('vote', 'admin')),
+				reference_id TEXT,
+				actor_id TEXT,
+				reason TEXT,
+				created_at INTEGER NOT NULL,
+				voided_at INTEGER
+			);
+			CREATE INDEX idx_contribution_events_user ON contribution_events (guild_id, user_id);
+			CREATE INDEX idx_contribution_events_created ON contribution_events (guild_id, created_at);
+			CREATE INDEX idx_contribution_events_reference ON contribution_events (guild_id, reference_id);
+
+			CREATE TABLE contribution_event_teams (
+				event_id INTEGER NOT NULL REFERENCES contribution_events (id),
+				role_id TEXT NOT NULL,
+				PRIMARY KEY (event_id, role_id)
+			);
+			CREATE INDEX idx_contribution_event_teams_role ON contribution_event_teams (role_id);
+
+			CREATE TABLE member_contribution (
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				total INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (guild_id, user_id)
+			);
+			CREATE INDEX idx_member_contribution_rank ON member_contribution (guild_id, total DESC);
+
+			-- Mỗi người ghi nhận một contribution tối đa một lần; rút ghi nhận thì xoá dòng và void event.
+			CREATE TABLE contribution_votes (
+				contribution_id INTEGER NOT NULL REFERENCES contributions (id),
+				voter_id TEXT NOT NULL,
+				event_id INTEGER NOT NULL REFERENCES contribution_events (id),
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (contribution_id, voter_id)
+			);
+
+			-- Vote / bầu cử / lấy ý kiến (DEC-026). Phiếu ẩn danh: chỉ hiển thị số lượng.
+			CREATE TABLE polls (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				creator_id TEXT NOT NULL,
+				question TEXT NOT NULL,
+				multi_select INTEGER NOT NULL,
+				xp_reward INTEGER NOT NULL,
+				channel_id TEXT,
+				message_id TEXT,
+				closes_at INTEGER,
+				closed_at INTEGER,
+				created_at INTEGER NOT NULL
+			);
+			CREATE INDEX idx_polls_guild ON polls (guild_id, created_at);
+			CREATE INDEX idx_polls_due ON polls (closed_at, closes_at);
+
+			CREATE TABLE poll_options (
+				poll_id INTEGER NOT NULL REFERENCES polls (id),
+				option_index INTEGER NOT NULL,
+				label TEXT NOT NULL,
+				PRIMARY KEY (poll_id, option_index)
+			);
+
+			CREATE TABLE poll_votes (
+				poll_id INTEGER NOT NULL,
+				user_id TEXT NOT NULL,
+				option_index INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (poll_id, user_id, option_index),
+				FOREIGN KEY (poll_id, option_index) REFERENCES poll_options (poll_id, option_index)
+			);
+
+			-- Người đã tham gia vote: XP chỉ cộng một lần cho mỗi người ở mỗi vote.
+			CREATE TABLE poll_participants (
+				poll_id INTEGER NOT NULL REFERENCES polls (id),
+				user_id TEXT NOT NULL,
+				xp_event_id INTEGER REFERENCES xp_events (id),
+				first_voted_at INTEGER NOT NULL,
+				PRIMARY KEY (poll_id, user_id)
+			);
+
+			CREATE TABLE audit_log (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				actor_id TEXT NOT NULL,
+				action TEXT NOT NULL,
+				target_id TEXT,
+				details TEXT,
+				created_at INTEGER NOT NULL
+			);
+			CREATE INDEX idx_audit_log_guild ON audit_log (guild_id, created_at);
+		`,
+	},
+];
+
+export function currentSchemaVersion(db: Db): number
+{
+	return db.pragma("user_version", { simple: true }) as number;
+}
+
+/**
+ * Chạy các migration chưa áp dụng, mỗi migration trong một transaction; version lưu ở PRAGMA user_version.
+ * Từ chối chạy nếu database mới hơn code (tránh code cũ ghi đè schema mới).
+ */
+export function runMigrations(db: Db, migrations: readonly Migration[] = MIGRATIONS): number
+{
+	const latest = migrations.reduce((max, migration) => Math.max(max, migration.version), 0);
+	const current = currentSchemaVersion(db);
+	if (current > latest)
+	{
+		throw new Error(`Database đang ở schema version ${current}, mới hơn code (tối đa ${latest}). Hãy cập nhật code bot.`);
+	}
+
+	const pending = migrations.filter(migration => migration.version > current).sort((a, b) => a.version - b.version);
+	for (const migration of pending)
+	{
+		db.transaction(() =>
+		{
+			db.exec(migration.sql);
+			// version là số nguyên do code định nghĩa, không phải input người dùng.
+			db.pragma(`user_version = ${Math.trunc(migration.version)}`);
+		})();
+	}
+	return pending.length;
+}

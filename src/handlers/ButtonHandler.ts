@@ -1,6 +1,7 @@
 import DiscordClient from "../classes/DiscordClient";
 import Command from "../classes/Command";
 import { Collection } from "discord.js";
+import { logger } from "../shared/logger";
 
 /**
  * customId của button có dạng "<namespace>" hoặc "<namespace>:<payload>".
@@ -34,7 +35,7 @@ export default class ButtonHandler extends Collection<string, Command>
 				if (owner) throw new Error(`Namespace button "${namespace}" bị trùng giữa /${owner.data.name} và /${command.data.name}.`);
 
 				this.set(namespace, command);
-				console.log(`Loaded button "${namespace}"`);
+				logger.debug(`Loaded button "${namespace}"`);
 			});
 		});
 	}

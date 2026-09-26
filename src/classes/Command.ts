@@ -17,6 +17,9 @@ export default abstract class Command
 	abstract data: SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 	// Namespace của các button mà command này xử lý; xem ButtonHandler.
 	buttonIds: string[] = [];
+	// true: dispatcher kiểm tra quyền admin (lớp 2, PROP-013) trước khi chạy execute/autocomplete.
+	// Lớp 1 là setDefaultMemberPermissions(ManageGuild) trong `data`; command admin phải đặt cả hai.
+	adminOnly = false;
 
 	constructor(client: DiscordClient)
 	{

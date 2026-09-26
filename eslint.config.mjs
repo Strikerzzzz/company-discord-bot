@@ -4,7 +4,7 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-	{ ignores: ["build/", "node_modules/"] },
+	{ ignores: ["build/", "build-test/", "node_modules/"] },
 	eslint.configs.recommended,
 	{
 		// Lint có dùng thông tin type cho source TypeScript.
@@ -17,15 +17,31 @@ export default defineConfig(
 			},
 		},
 		rules: {
-			// Promise không được await từng làm sập bot (LL-001).
-			"@typescript-eslint/no-floating-promises": "error",
+			// Promise không được await từng làm sập bot (LL-001). test()/describe() của node:test là an toàn.
+			"@typescript-eslint/no-floating-promises": ["error", {
+				allowForKnownSafeCalls: [{ from: "package", name: ["test", "it", "describe", "suite"], package: "node:test" }],
+			}],
 			"@typescript-eslint/no-misused-promises": "error",
 			"@typescript-eslint/no-explicit-any": "error",
+			"@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+			// Bản TypeScript hiểu constructor chỉ có parameter property không phải hàm rỗng.
+			"no-empty-function": "off",
+			"@typescript-eslint/no-empty-function": "error",
 		},
 	},
 	{
-		files: ["ecosystem.config.js"],
-		languageOptions: { sourceType: "commonjs" },
+		// Business module, database và shared không được phụ thuộc discord.js (DEC-007).
+		files: ["src/modules/**/*.ts", "src/db/**/*.ts", "src/shared/**/*.ts"],
+		rules: {
+			"no-restricted-imports": ["error", {
+				patterns: [{ group: ["discord.js", "@discordjs/*"], message: "Business module không được import discord.js (DEC-007)." }],
+			}],
+		},
+	},
+	{
+		// File JS chạy trực tiếp bằng Node (CommonJS).
+		files: ["ecosystem.config.js", "scripts/**/*.cjs"],
+		languageOptions: { sourceType: "commonjs", globals: { process: "readonly" } },
 	},
 	{
 		// Quy tắc style giữ nguyên từ .eslintrc.cjs trước đây.
@@ -43,7 +59,6 @@ export default defineConfig(
 			"max-nested-callbacks": ["error", { "max": 4 }],
 			"max-statements-per-line": ["error", { "max": 2 }],
 			"no-console": "off",
-			"no-empty-function": "error",
 			"no-floating-decimal": "error",
 			"no-inline-comments": "error",
 			"no-lonely-if": "error",

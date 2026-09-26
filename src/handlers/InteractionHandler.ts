@@ -4,6 +4,7 @@ import ContextMenu from "../classes/ContextMenu";
 import { join } from "path";
 import { Collection, RESTPostAPIApplicationCommandsJSONBody } from "discord.js";
 import { loadModules } from "./loadModules";
+import { logger } from "../shared/logger";
 
 export default class InteractionHandler
 {
@@ -23,13 +24,13 @@ export default class InteractionHandler
 		for (const command of loadModules(join(__dirname, "..", "interactions", "commands"), Command, this.client))
 		{
 			this.commands.set(command.data.name, command);
-			console.log(`Loaded slash command "${command.data.name}"`);
+			logger.debug(`Loaded slash command "${command.data.name}"`);
 		}
 
 		for (const contextMenu of loadModules(join(__dirname, "..", "interactions", "contextMenus"), ContextMenu, this.client))
 		{
 			this.contextMenus.set(contextMenu.data.name, contextMenu);
-			console.log(`Loaded context menu "${contextMenu.data.name}"`);
+			logger.debug(`Loaded context menu "${contextMenu.data.name}"`);
 		}
 	}
 
@@ -51,11 +52,11 @@ export default class InteractionHandler
 			try
 			{
 				await application.commands.set(body, id);
-				console.log(`Đã đăng ký ${body.length} command cho guild "${id}".`);
+				logger.info(`Đã đăng ký ${body.length} command cho guild "${id}".`);
 			}
 			catch (error)
 			{
-				console.error(`Không đăng ký được command cho guild "${id}":`, error);
+				logger.error(`Không đăng ký được command cho guild "${id}":`, error);
 			}
 		}
 
@@ -66,7 +67,7 @@ export default class InteractionHandler
 		}
 		catch (error)
 		{
-			console.error("Không xoá được global command cũ:", error);
+			logger.error("Không xoá được global command cũ:", error);
 		}
 	}
 }

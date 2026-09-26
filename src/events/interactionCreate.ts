@@ -1,8 +1,12 @@
 import Event from "../classes/Event";
 import { Events, Interaction, InteractionReplyOptions, MessageFlags } from "discord.js";
+import { assertAdmin, checkAdmin } from "../discord/guards";
+import { UserError } from "../shared/errors";
+import { logger } from "../shared/logger";
 
 // Discord chỉ nhận tối đa 25 lựa chọn cho một autocomplete.
 const MAX_AUTOCOMPLETE_CHOICES = 25;
+const GENERIC_ERROR = "Đã có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại sau.";
 
 export default class InteractionCreate extends Event
 {
@@ -17,8 +21,16 @@ export default class InteractionCreate extends Event
 		}
 		catch (error)
 		{
-			console.error(`Lỗi khi xử lý interaction ${describe(interaction)}:`, error);
-			await replyWithError(interaction);
+			if (error instanceof UserError)
+			{
+				logger.debug(`Từ chối interaction ${describe(interaction)}: ${error.message}`);
+				await replyWith(interaction, error.message);
+			}
+			else
+			{
+				logger.error(`Lỗi khi xử lý interaction ${describe(interaction)}:`, error);
+				await replyWith(interaction, GENERIC_ERROR);
+			}
 		}
 	}
 
@@ -29,6 +41,8 @@ export default class InteractionCreate extends Event
 			const command = this.client.interactions.commands.get(interaction.commandName);
 			if (!command) return;
 
+			// Kiểm tra quyền tập trung (lớp 2, PROP-013).
+			if (command.adminOnly) assertAdmin(interaction, this.client.services);
 			await command.execute(interaction);
 		}
 		else if (interaction.isButton())
@@ -50,6 +64,12 @@ export default class InteractionCreate extends Event
 			const command = this.client.interactions.commands.get(interaction.commandName);
 			if (!command) return;
 
+			// Không gợi ý dữ liệu của lệnh admin cho người không có quyền.
+			if (command.adminOnly && !checkAdmin(interaction, this.client.services))
+			{
+				await interaction.respond([]);
+				return;
+			}
 			const choices = command.autocomplete(interaction).slice(0, MAX_AUTOCOMPLETE_CHOICES);
 			await interaction.respond(choices.map(choice => ({ name: choice, value: choice })));
 		}
@@ -63,15 +83,12 @@ function describe(interaction: Interaction): string
 	return `type ${interaction.type}`;
 }
 
-async function replyWithError(interaction: Interaction): Promise<void>
+async function replyWith(interaction: Interaction, content: string): Promise<void>
 {
 	// Autocomplete không reply được, chỉ ghi log.
 	if (!interaction.isRepliable()) return;
 
-	const payload: InteractionReplyOptions = {
-		content: "There was an error while executing this interaction.",
-		flags: MessageFlags.Ephemeral,
-	};
+	const payload: InteractionReplyOptions = { content, flags: MessageFlags.Ephemeral };
 
 	try
 	{
@@ -80,6 +97,6 @@ async function replyWithError(interaction: Interaction): Promise<void>
 	}
 	catch (replyError)
 	{
-		console.error("Không gửi được thông báo lỗi cho người dùng:", replyError);
+		logger.error("Không gửi được thông báo lỗi cho người dùng:", replyError);
 	}
 }
