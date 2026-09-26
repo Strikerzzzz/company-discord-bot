@@ -18,8 +18,23 @@ import { UserError } from "../../shared/errors";
 
 const NO_CHANGE_MESSAGE = "Hãy chọn ít nhất một giá trị để thay đổi.";
 
-/** Loại channel có tin nhắn tính XP. */
-const XP_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum] as const;
+/**
+ * /admin và /config có default_member_permissions = Manage Server, nên Discord ẩn và chặn lệnh với người thiếu quyền đó
+ * trước khi tới bot. Role admin bot chỉ dùng được hai lệnh khi server cho phép trong phần Integrations.
+ */
+const ADMIN_ROLE_INTEGRATION_HINT = "⚠️ Lưu ý: `/admin` và `/config` mặc định chỉ dành cho người có quyền Manage Server; "
+	+ "Discord chặn những người khác trước khi lệnh tới bot. Để role này dùng được, vào **Server Settings → Integrations → chọn bot** "
+	+ "rồi cho phép role này dùng `/admin` và `/config`.";
+
+/** Loại channel có tin nhắn tính XP (kể cả chat trong kênh voice/stage và bài đăng trong kênh media). */
+const XP_CHANNEL_TYPES = [
+	ChannelType.GuildText,
+	ChannelType.GuildAnnouncement,
+	ChannelType.GuildForum,
+	ChannelType.GuildVoice,
+	ChannelType.GuildStageVoice,
+	ChannelType.GuildMedia,
+] as const;
 
 interface SettingOption
 {
@@ -298,9 +313,10 @@ export default class ConfigCmd extends Command
 		{
 			assertAssignableRole(role, context.guildId, "làm role admin bot");
 			this.updateSettings(context, { adminRoleId: role.id });
-			await context.interaction.reply(ephemeral(
+			await context.interaction.reply(ephemeral([
 				`Đã đặt ${roleMention(role.id)} làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.`,
-			));
+				ADMIN_ROLE_INTEGRATION_HINT,
+			].join("\n")));
 			return;
 		}
 		this.updateSettings(context, { adminRoleId: null });

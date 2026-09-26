@@ -1,8 +1,9 @@
-import { Events, Message } from "discord.js";
+import { Events, Message, PermissionFlagsBits } from "discord.js";
 import Event from "../classes/Event";
 import { roleIdsOf } from "../discord/members";
 import { levelUpMessage } from "../discord/views/activity";
 import { MessageInput } from "../modules/activity/types";
+import { logger } from "../shared/logger";
 
 // Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023) và thông báo khi lên level.
 // Không ghi log nội dung tin nhắn; lỗi để EventHandler bắt và ghi log.
@@ -13,6 +14,8 @@ export default class MessageCreate extends Event
 	async execute(message: Message): Promise<void>
 	{
 		if (message.author.bot || message.webhookId || message.system || !message.inGuild()) return;
+		// Chỉ phục vụ các server đã cấu hình: bot bị mời vào server lạ thì không đọc, không ghi XP, không gửi gì.
+		if (!this.client.guildIds.includes(message.guildId)) return;
 
 		const { activity, guildConfig } = this.client.services;
 		const input: MessageInput = {
@@ -27,13 +30,31 @@ export default class MessageCreate extends Event
 		const result = activity.handleMessage(input);
 		if (!result.awarded || result.levelAfter <= result.levelBefore) return;
 		if (!guildConfig.getSettings(message.guildId).levelUpAnnouncements) return;
-		if (!message.channel.isSendable()) return;
+		if (!this.canAnnounceIn(message)) return;
 
-		// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level.
-		await message.channel.send({
-			content: levelUpMessage(message.author.id, result.levelAfter),
-			allowedMentions: { users: [message.author.id] },
-		});
+		// XP đã được cộng; gửi thông báo thất bại (ví dụ thread bị khoá) chỉ ghi cảnh báo.
+		try
+		{
+			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level.
+			await message.channel.send({
+				content: levelUpMessage(message.author.id, result.levelAfter),
+				allowedMentions: { users: [message.author.id] },
+			});
+		}
+		catch (error)
+		{
+			logger.warn(`Không gửi được thông báo lên level ở channel "${message.channelId}":`, error);
+		}
+	}
+
+	/** Bot có quyền gửi tin ở channel này không (isSendable() chỉ kiểm tra loại channel, không kiểm tra quyền). */
+	private canAnnounceIn(message: Message<true>): boolean
+	{
+		const me = this.client.user;
+		if (!me || !message.channel.isSendable()) return false;
+
+		const send = message.channel.isThread() ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages;
+		return message.channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, send]) ?? false;
 	}
 }
 

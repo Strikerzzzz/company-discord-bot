@@ -7,6 +7,7 @@ import {
 	ApplicationCommandOptionType,
 	ChannelType,
 	ChatInputCommandInteraction,
+	EmbedBuilder,
 	InteractionReplyOptions,
 	MessageFlags,
 	PermissionFlagsBits,
@@ -19,12 +20,12 @@ import {
 	buildStatsEmbed,
 	buildXpDetailEmbed,
 	describeChannelSettings,
-	fitLines,
 	formatAuditDetails,
 	formatXpEvent,
 	inlineText,
 	signed,
 } from "../src/discord/views/admin";
+import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
 import ConfigCmd from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
@@ -44,6 +45,8 @@ import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, ROLE_BAC
 
 const BOT_USER = "900000000000000001";
 const NOW = Date.UTC(2026, 0, 1);
+const MINUTE = 60_000;
+const PUBLIC_MESSAGE = "600000000000000001";
 const NO_CHANGE = "Hãy chọn ít nhất một giá trị để thay đổi.";
 const RESET_REFUSED = "Để reset toàn bộ, nhập chính xác: XAC NHAN";
 
@@ -90,7 +93,7 @@ function xpEvent(overrides: Partial<XpEventView>): XpEventView
 	return { id: 1, amount: 10, source: "message", referenceId: null, actorId: null, reason: null, createdAt: NOW, voided: false, ...overrides };
 }
 
-function sampleContribution(id: number): Contribution
+function sampleContribution(id: number, posted: boolean): Contribution
 {
 	return {
 		id,
@@ -101,8 +104,8 @@ function sampleContribution(id: number): Contribution
 		description: "Mô tả",
 		category: "tai-lieu",
 		link: null,
-		channelId: null,
-		messageId: null,
+		channelId: posted ? CHANNEL_GENERAL : null,
+		messageId: posted ? PUBLIC_MESSAGE : null,
 		status: "removed",
 		createdAt: NOW,
 		votes: 3,
@@ -160,6 +163,8 @@ class FakeContributions implements ContributionServiceApi
 	readonly removed: number[] = [];
 	readonly resetUserCalls: string[] = [];
 	resetAllCalls = 0;
+	/** Contribution bị gỡ đã có message công khai hay chưa. */
+	posted = true;
 
 	submit(): Contribution
 	{
@@ -189,7 +194,7 @@ class FakeContributions implements ContributionServiceApi
 	remove(_guildId: string, contributionId: number): Contribution
 	{
 		this.removed.push(contributionId);
-		return sampleContribution(contributionId);
+		return sampleContribution(contributionId, this.posted);
 	}
 
 	adjust(input: ContributionAdjustInput): { score: number }
@@ -216,12 +221,47 @@ class FakeContributions implements ContributionServiceApi
 	}
 }
 
+/** Backup giả: ghi lại loại bản sao lưu được yêu cầu; `latest` là thời điểm bản thủ công gần nhất. */
+class FakeBackup
+{
+	readonly created: BackupKind[] = [];
+	readonly latestQueries: BackupKind[] = [];
+	latest: number | null = null;
+
+	constructor(private readonly path: string)
+	{}
+
+	createBackup(kind: BackupKind): Promise<string>
+	{
+		this.created.push(kind);
+		return Promise.resolve(this.path);
+	}
+
+	latestBackupAt(kind: BackupKind): number | null
+	{
+		this.latestQueries.push(kind);
+		return this.latest;
+	}
+}
+
+interface MessageEdit
+{
+	channelId: string;
+	messageId: string;
+	payload: { embeds?: EmbedBuilder[]; components?: unknown[] };
+}
+
 interface Harness
 {
 	context: TestContext;
 	activity: FakeActivity;
 	contributions: FakeContributions;
+	backup: FakeBackup;
 	backupPath: string;
+	/** Các lần bot sửa message công khai. */
+	messageEdits: MessageEdit[];
+	/** Sửa message thì lỗi (ví dụ message đã bị xoá). */
+	failEdits: { value: boolean };
 	admin: AdminCmd;
 	config: ConfigCmd;
 }
@@ -232,7 +272,10 @@ function createHarness(): Harness
 	const context = createTestContext();
 	const activity = new FakeActivity();
 	const contributions = new FakeContributions();
-	const backupPath = join("/srv", "company-bot", "backups", "bot-2026-01-01T00-00-00-000Z.db");
+	const backupPath = join("/srv", "company-bot", "backups", "bot-manual-2026-01-01T00-00-00-000Z.db");
+	const backup = new FakeBackup(backupPath);
+	const messageEdits: MessageEdit[] = [];
+	const failEdits = { value: false };
 	const services = {
 		clock: context.clock,
 		guildConfig: context.deps.guildConfig,
@@ -241,10 +284,23 @@ function createHarness(): Harness
 		activity,
 		contributions,
 		statistics: { summary: (): GuildStatistics => SAMPLE_STATS },
-		backup: { createBackup: (): Promise<string> => Promise.resolve(backupPath) },
+		backup,
 	} as unknown as AppServices;
-	const client = { services } as unknown as DiscordClient;
-	return { context, activity, contributions, backupPath, admin: new AdminCmd(client), config: new ConfigCmd(client) };
+	const channels = {
+		fetch: (channelId: string) => Promise.resolve({
+			isTextBased: () => true,
+			messages: {
+				edit: (messageId: string, payload: MessageEdit["payload"]) =>
+				{
+					if (failEdits.value) return Promise.reject(new Error("Unknown Message"));
+					messageEdits.push({ channelId, messageId, payload });
+					return Promise.resolve();
+				},
+			},
+		}),
+	};
+	const client = { services, channels } as unknown as DiscordClient;
+	return { context, activity, contributions, backup, backupPath, messageEdits, failEdits, admin: new AdminCmd(client), config: new ConfigCmd(client) };
 }
 
 interface Invocation
@@ -439,7 +495,7 @@ describe("định nghĩa /admin và /config", () =>
 		assert.deepEqual(integerRange(optionAt(adminJson.options, "audit", "so-luong")), { min: 1, max: 25, required: false });
 	});
 
-	test("/config: min/max lấy theo SETTING_LIMITS, channel chỉ nhận text/announcement/forum", () =>
+	test("/config: min/max lấy theo SETTING_LIMITS; channel nhận text, announcement, forum, voice, stage, media", () =>
 	{
 		const expectRange = (key: NumericSettingKey, required: boolean, ...path: string[]): void =>
 		{
@@ -455,11 +511,19 @@ describe("định nghĩa /admin và /config", () =>
 		expectRange("defaultPollXp", false, "poll", "xp-mac-dinh");
 		expectRange("contributionVotePoints", true, "contribution", "diem-moi-luot");
 
-		const kenh = optionAt(configJson.options, "channel", "set", "kenh");
-		assert.equal(kenh.type, ApplicationCommandOptionType.Channel);
-		if (kenh.type === ApplicationCommandOptionType.Channel)
+		const expectedTypes = [
+			ChannelType.GuildText,
+			ChannelType.GuildAnnouncement,
+			ChannelType.GuildForum,
+			ChannelType.GuildVoice,
+			ChannelType.GuildStageVoice,
+			ChannelType.GuildMedia,
+		];
+		for (const subcommand of ["set", "reset"])
 		{
-			assert.deepEqual(kenh.channel_types, [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum]);
+			const kenh = optionAt(configJson.options, "channel", subcommand, "kenh");
+			assert.equal(kenh.type, ApplicationCommandOptionType.Channel);
+			if (kenh.type === ApplicationCommandOptionType.Channel) assert.deepEqual(kenh.channel_types, expectedTypes, subcommand);
 		}
 	});
 });
@@ -622,14 +686,9 @@ describe("views quản trị", () =>
 		assert.equal(describeChannelSettings({ ...base, xpEnabled: false, xpPerMessage: 5 }), "tắt XP");
 	});
 
-	test("fitLines cắt bớt dòng và báo số dòng bị ẩn", () =>
+	test("văn bản một dòng do người dùng nhập: masked link bị vô hiệu hoá", () =>
 	{
-		const lines = Array.from({ length: 10 }, (_, index) => `dòng ${index}...`);
-		assert.equal(fitLines(lines, 1000, () => "x"), lines.join("\n"));
-		const fitted = fitLines(lines, 50, hidden => `+${hidden}`);
-		assert.ok(fitted.length <= 50);
-		const kept = fitted.split("\n").length - 1;
-		assert.ok(fitted.endsWith(`+${10 - kept}`));
+		assert.equal(inlineText("Sửa [tài liệu](https://evil.example)", 100), "Sửa tài liệu (https://evil.example)");
 	});
 });
 
@@ -714,14 +773,36 @@ describe("/admin", () =>
 		assert.deepEqual(contributions.adjustCalls.map(call => [call.delta, call.reason, call.roleIds]), [[-5, null, [ROLE_BACKEND]], [5, "hỗ trợ", []]]);
 	});
 
-	test("contribution remove: gỡ theo id, tiêu đề được escape", async () =>
+	test("contribution remove: gỡ theo id, tiêu đề được escape; message công khai chuyển sang Đã bị gỡ, không còn nút", async () =>
 	{
-		const { admin, contributions } = createHarness();
+		const { admin, contributions, messageEdits } = createHarness();
 		const text = replyText(await run(admin, { group: "contribution", subcommand: "remove", options: { id: 12 } }));
 		assert.deepEqual(contributions.removed, [12]);
 		assert.ok(text.includes("#12"));
 		assert.ok(text.includes("Tài liệu \\*onboarding\\*"));
 		assert.ok(text.includes(`<@${USER_A}>`));
+
+		assert.equal(messageEdits.length, 1);
+		const [edit] = messageEdits;
+		assert.deepEqual([edit.channelId, edit.messageId], [CHANNEL_GENERAL, PUBLIC_MESSAGE]);
+		assert.deepEqual(edit.payload.components, []);
+		const embed = edit.payload.embeds?.[0]?.toJSON();
+		assert.match(embed?.fields?.find(field => field.name === "Trạng thái")?.value ?? "", /Đã bị gỡ/);
+	});
+
+	test("contribution remove: sửa message công khai lỗi chỉ ghi cảnh báo; chưa có message thì không sửa gì", async (t) =>
+	{
+		const warned = t.mock.method(console, "error", () => undefined);
+		const failing = createHarness();
+		failing.failEdits.value = true;
+		replyText(await run(failing.admin, { group: "contribution", subcommand: "remove", options: { id: 12 } }));
+		assert.equal(warned.mock.callCount(), 1);
+		assert.match(String(warned.mock.calls[0].arguments[0]), /\[WARN\].*contribution #12/);
+
+		const unposted = createHarness();
+		unposted.contributions.posted = false;
+		replyText(await run(unposted.admin, { group: "contribution", subcommand: "remove", options: { id: 13 } }));
+		assert.equal(unposted.messageEdits.length, 0);
 	});
 
 	test("contribution reset và reset-all", async () =>
@@ -763,19 +844,51 @@ describe("/admin", () =>
 		assert.equal(standard.footer?.text, "10 mục mới nhất");
 	});
 
-	test("backup: defer ephemeral, chỉ lộ tên file, ghi audit", async () =>
+	test("backup: tạo bản thủ công, defer ephemeral, chỉ lộ tên file, ghi audit", async () =>
 	{
-		const { admin, context, backupPath } = createHarness();
+		const { admin, context, backup, backupPath } = createHarness();
 		const fake = await run(admin, { subcommand: "backup" });
+		assert.deepEqual(backup.created, ["manual"]);
+		assert.deepEqual(backup.latestQueries, ["manual"]);
 		assert.deepEqual(fake.deferred, [{ flags: MessageFlags.Ephemeral }]);
-		assert.deepEqual(fake.edits, ["Đã sao lưu database: `bot-2026-01-01T00-00-00-000Z.db`."]);
+		assert.deepEqual(fake.edits, ["Đã sao lưu database: `bot-manual-2026-01-01T00-00-00-000Z.db`."]);
 		assert.ok(!String(fake.edits[0]).includes("backups"));
 		assert.ok(backupPath.includes("backups"));
 
 		const [entry] = context.deps.audit.list(GUILD, 1);
 		assert.equal(entry.action, "backup.manual");
 		assert.equal(entry.actorId, ADMIN);
-		assert.deepEqual(entry.details, { file: "bot-2026-01-01T00-00-00-000Z.db" });
+		assert.deepEqual(entry.details, { file: "bot-manual-2026-01-01T00-00-00-000Z.db" });
+	});
+
+	test("backup: bản thủ công gần nhất chưa đủ 10 phút thì từ chối, báo thời điểm thử lại", async () =>
+	{
+		const { admin, context, backup } = createHarness();
+		const now = context.clock.now();
+		backup.latest = now - 3 * MINUTE;
+
+		const fake = invoke({ subcommand: "backup" });
+		await assert.rejects(admin.execute(fake.interaction), (error: unknown) =>
+		{
+			assert.ok(error instanceof Error && error.name === "UserError");
+			assert.ok(error.message.includes(`<t:${Math.floor((now - 3 * MINUTE) / 1000)}:R>`));
+			assert.ok(error.message.includes(`<t:${Math.floor((now + 7 * MINUTE) / 1000)}:R>`));
+			return true;
+		});
+		assert.deepEqual(fake.deferred, [], "từ chối trước khi defer");
+		assert.deepEqual(backup.created, []);
+		assert.equal(context.deps.audit.list(GUILD, 5).length, 0);
+	});
+
+	test("backup: đủ 10 phút, chưa có bản nào, hoặc bản mang thời điểm tương lai thì cho phép", async () =>
+	{
+		for (const offset of [-10 * MINUTE, -60 * MINUTE, 5 * MINUTE, null])
+		{
+			const { admin, context, backup } = createHarness();
+			backup.latest = offset === null ? null : context.clock.now() + offset;
+			await run(admin, { subcommand: "backup" });
+			assert.deepEqual(backup.created, ["manual"], String(offset));
+		}
 	});
 });
 
@@ -890,8 +1003,11 @@ describe("/config", () =>
 			"Không thể dùng role do bot hoặc integration quản lý làm role admin bot.",
 		);
 
-		await run(config, { subcommand: "admin-role", options: { role: role(ROLE_BACKEND) } });
+		const set = replyText(await run(config, { subcommand: "admin-role", options: { role: role(ROLE_BACKEND) } }));
 		assert.equal(context.deps.guildConfig.getSettings(GUILD).adminRoleId, ROLE_BACKEND);
+		assert.ok(set.startsWith(`Đã đặt <@&${ROLE_BACKEND}> làm role admin bot.`));
+		assert.ok(set.includes("Server Settings → Integrations"), "phải nhắc cấp quyền dùng lệnh trong Integrations");
+		assert.ok(set.includes("`/admin`") && set.includes("`/config`"));
 		const cleared = await run(config, { subcommand: "admin-role" });
 		assert.equal(context.deps.guildConfig.getSettings(GUILD).adminRoleId, null);
 		assert.ok(replyText(cleared).startsWith("Đã xoá role admin bot."));

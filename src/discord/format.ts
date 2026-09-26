@@ -1,5 +1,13 @@
 // Tiện ích hiển thị dùng chung cho tầng Discord. Mọi chuỗi hiển thị là tiếng Việt (DEC-020).
 
+/** Giới hạn độ dài của Discord (đếm theo UTF-16). */
+export const DISCORD_LIMITS = {
+	embedTitle: 256,
+	embedDescription: 4096,
+	embedFieldValue: 1024,
+	buttonLabel: 80,
+} as const;
+
 export const COLORS = {
 	primary: 0x5865f2,
 	success: 0x57f287,
@@ -22,11 +30,65 @@ export function progressBar(current: number, max: number, width = 12): string
 	return "▰".repeat(filled) + "▱".repeat(width - filled);
 }
 
-/** Cắt chuỗi cho vừa giới hạn của Discord, thêm "…" nếu bị cắt. */
+const ELLIPSIS = "…";
+const graphemes = new Intl.Segmenter("vi", { granularity: "grapheme" });
+
+/**
+ * Cắt chuỗi cho vừa giới hạn của Discord, thêm "…" nếu bị cắt.
+ * Discord đếm giới hạn theo UTF-16 (`.length`), nên kết quả luôn có `.length <= max`.
+ * Chỉ cắt ở ranh giới ký tự hiển thị (grapheme): không cắt đôi surrogate pair, emoji ghép hay dấu tổ hợp.
+ */
 export function truncate(text: string, max: number): string
 {
-	const chars = Array.from(text);
-	return chars.length <= max ? text : `${chars.slice(0, Math.max(0, max - 1)).join("")}…`;
+	if (text.length <= max) return text;
+	if (max < ELLIPSIS.length) return "";
+
+	const budget = max - ELLIPSIS.length;
+	let end = 0;
+	for (const { segment } of graphemes.segment(text))
+	{
+		if (end + segment.length > budget) break;
+		end += segment.length;
+	}
+	return text.slice(0, end) + ELLIPSIS;
+}
+
+export interface FitLinesOptions
+{
+	separator?: string;
+	/** Tổng số mục, khi danh sách truyền vào đã bị cắt bớt từ trước (mặc định: số dòng). */
+	total?: number;
+}
+
+/**
+ * Nối các dòng trong giới hạn độ dài (UTF-16). Các mục không hiển thị được, gồm cả phần vượt `total`,
+ * được gộp thành một dòng cuối do `overflow` tạo.
+ */
+export function fitLines(lines: readonly string[], max: number, overflow: (hidden: number) => string, options: FitLinesOptions = {}): string
+{
+	const separator = options.separator ?? "\n";
+	const total = Math.max(options.total ?? lines.length, lines.length);
+	for (let kept = lines.length; kept >= 0; kept--)
+	{
+		const hidden = total - kept;
+		const parts = hidden > 0 ? [...lines.slice(0, kept), overflow(hidden)] : lines.slice(0, kept);
+		const text = parts.join(separator);
+		if (text.length <= max) return text;
+	}
+	return truncate(overflow(total), max);
+}
+
+// [chữ](url), kể cả dạng [chữ](<url>) hay [chữ](url "tiêu đề").
+const MASKED_LINK = /\[([^[\]\n]*)\]\(([^()\n]*)\)/g;
+
+/**
+ * Vô hiệu hoá masked link `[chữ](url)` trong văn bản do người dùng nhập, để không giả mạo được link
+ * (chữ hiển thị một địa chỉ nhưng link trỏ tới địa chỉ khác). Link hợp lệ thành `chữ (url)`;
+ * mọi chuỗi `](` còn sót lại (link lồng nhau, url có ngoặc) bị tách ra để Discord không dựng thành link.
+ */
+export function disableMaskedLinks(text: string): string
+{
+	return text.replace(MASKED_LINK, "$1 ($2)").replaceAll("](", "] (");
 }
 
 export function userMention(userId: string): string

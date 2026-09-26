@@ -5,11 +5,23 @@ import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
 import { ChannelSettings, GuildSettings } from "../../modules/guild-config/types";
 import { GuildStatistics } from "../../modules/statistics/types";
 import { MAX_TEAMS } from "../../modules/team/TeamService";
-import { channelMention, COLORS, dateTime, formatNumber, progressBar, relativeTime, roleMention, truncate, userMention } from "../format";
+import {
+	channelMention,
+	COLORS,
+	dateTime,
+	disableMaskedLinks,
+	DISCORD_LIMITS,
+	fitLines,
+	formatNumber,
+	progressBar,
+	relativeTime,
+	roleMention,
+	truncate,
+	userMention,
+} from "../format";
 
-// Giới hạn của Discord cho embed.
-const EMBED_DESCRIPTION_MAX = 4096;
-const EMBED_FIELD_MAX = 1024;
+const EMBED_DESCRIPTION_MAX = DISCORD_LIMITS.embedDescription;
+const EMBED_FIELD_MAX = DISCORD_LIMITS.embedFieldValue;
 
 const REASON_DISPLAY_MAX = 100;
 const DETAIL_VALUE_MAX = 80;
@@ -25,23 +37,10 @@ export function ephemeralEmbed(embed: EmbedBuilder): InteractionReplyOptions
 	return { embeds: [embed], flags: MessageFlags.Ephemeral };
 }
 
-/** Nối các dòng trong giới hạn độ dài; phần không vừa được thay bằng một dòng báo số dòng bị ẩn. */
-export function fitLines(lines: readonly string[], max: number, overflow: (hidden: number) => string, separator = "\n"): string
-{
-	const full = lines.join(separator);
-	if (full.length <= max) return full;
-	for (let kept = lines.length - 1; kept > 0; kept--)
-	{
-		const text = [...lines.slice(0, kept), overflow(lines.length - kept)].join(separator);
-		if (text.length <= max) return text;
-	}
-	return truncate(overflow(lines.length), max);
-}
-
-/** Văn bản do người dùng nhập, hiển thị trên một dòng: gộp khoảng trắng/xuống dòng, cắt ngắn, escape markdown. */
+/** Văn bản do người dùng nhập, hiển thị trên một dòng: gộp khoảng trắng/xuống dòng, bỏ masked link, cắt ngắn, escape markdown. */
 export function inlineText(text: string, max: number): string
 {
-	return escapeMarkdown(truncate(text.replace(/\s+/g, " ").trim(), max));
+	return escapeMarkdown(truncate(disableMaskedLinks(text.replace(/\s+/g, " ").trim()), max));
 }
 
 /** Số có dấu: "+1.234" hoặc "−1.234" (dấu trừ U+2212). */
@@ -409,7 +408,7 @@ export function formatAuditEntry(entry: AuditEntry): string
 export function buildAuditEmbed(entries: readonly AuditEntry[]): EmbedBuilder
 {
 	const description = entries.length > 0
-		? fitLines(entries.map(formatAuditEntry), EMBED_DESCRIPTION_MAX, hidden => `… và ${hidden} mục khác (vượt giới hạn độ dài của Discord)`, "\n\n")
+		? fitLines(entries.map(formatAuditEntry), EMBED_DESCRIPTION_MAX, hidden => `… và ${hidden} mục khác (vượt giới hạn độ dài của Discord)`, { separator: "\n\n" })
 		: "Chưa có thao tác quản trị nào được ghi lại.";
 
 	return new EmbedBuilder()

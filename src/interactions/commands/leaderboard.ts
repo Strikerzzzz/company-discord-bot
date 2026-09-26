@@ -1,6 +1,6 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
+import { ChatInputCommandInteraction, MessageFlags, SlashCommandBuilder } from "discord.js";
 import Command from "../../classes/Command";
-import { requireGuildId } from "../../discord/guards";
+import { canSendMessages, requireGuildId } from "../../discord/guards";
 import { LeaderboardScope, leaderboardEmbed } from "../../discord/views/activity";
 import { ScoreKind } from "../../modules/leaderboard/LeaderboardService";
 import { UserError } from "../../shared/errors";
@@ -47,7 +47,11 @@ export default class LeaderboardCmd extends Command
 			? leaderboard.teams(guildId, kind, page)
 			: leaderboard.individual(guildId, kind, page);
 
-		await interaction.reply({ embeds: [leaderboardEmbed({ kind, scope, page: result })] });
+		// Người không được gửi tin ở kênh này chỉ nhận kết quả riêng, không đăng công khai qua bot.
+		await interaction.reply({
+			embeds: [leaderboardEmbed({ kind, scope, page: result })],
+			flags: canSendMessages(interaction) ? undefined : MessageFlags.Ephemeral,
+		});
 	}
 }
 

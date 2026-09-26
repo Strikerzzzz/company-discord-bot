@@ -1,9 +1,10 @@
 import { basename } from "path";
 import { ChatInputCommandInteraction, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, SlashCommandSubcommandBuilder } from "discord.js";
 import Command from "../../classes/Command";
-import { formatNumber, userMention } from "../../discord/format";
+import { formatNumber, relativeTime, userMention } from "../../discord/format";
 import { requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
+import { refreshContributionMessage } from "../../discord/messages";
 import { buildAuditEmbed, buildStatsEmbed, buildXpDetailEmbed, ephemeral, ephemeralEmbed, inlineText } from "../../discord/views/admin";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
@@ -16,6 +17,8 @@ const RECENT_XP_EVENTS = 10;
 const AUDIT_DEFAULT = 10;
 const AUDIT_MAX = 25;
 const TITLE_DISPLAY_MAX = 100;
+/** Khoảng tối thiểu giữa hai lần sao lưu thủ công, chống spam lệnh làm đầy ổ đĩa. */
+const MANUAL_BACKUP_COOLDOWN_MS = 10 * 60 * 1000;
 
 interface AdminContext
 {
@@ -287,6 +290,8 @@ export default class AdminCmd extends Command
 		await interaction.reply(ephemeral(
 			`Đã gỡ contribution #${removed.id} "${inlineText(removed.title, TITLE_DISPLAY_MAX)}" của ${userMention(removed.authorId)}. Toàn bộ điểm của contribution này đã bị huỷ.`,
 		));
+		// Sau khi trả lời mới sửa message công khai sang "Đã bị gỡ" và bỏ nút; lỗi chỉ ghi cảnh báo.
+		await refreshContributionMessage(this.client, removed);
 	}
 
 	private async resetUserContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
@@ -320,9 +325,20 @@ export default class AdminCmd extends Command
 
 	private async backup({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
+		const { backup, clock } = this.services;
+		const latest = backup.latestBackupAt("manual");
+		const now = clock.now();
+		// Bản mang thời điểm tương lai (đồng hồ từng bị lệch) không chặn lệnh.
+		if (latest !== null && latest <= now && now - latest < MANUAL_BACKUP_COOLDOWN_MS)
+		{
+			throw new UserError(
+				`Vừa có bản sao lưu thủ công ${relativeTime(latest)}. Mỗi 10 phút chỉ tạo được một bản, vui lòng thử lại ${relativeTime(latest + MANUAL_BACKUP_COOLDOWN_MS)}.`,
+			);
+		}
+
 		// Sao lưu có thể mất vài giây: defer trước để không quá hạn 3 giây của interaction.
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		const file = basename(await this.services.backup.createBackup());
+		const file = basename(await backup.createBackup("manual"));
 		this.services.audit.record(guildId, actorId, "backup.manual", null, { file });
 		await interaction.editReply(`Đã sao lưu database: \`${file}\`.`);
 	}

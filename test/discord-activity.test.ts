@@ -1,6 +1,15 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { APIEmbed, ApplicationCommandOptionType, ChatInputCommandInteraction, EmbedBuilder, Message } from "discord.js";
+import {
+	APIEmbed,
+	ApplicationCommandOptionType,
+	ChatInputCommandInteraction,
+	EmbedBuilder,
+	Message,
+	MessageFlags,
+	PermissionFlagsBits,
+	PermissionsBitField,
+} from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
 import { leaderboardEmbed, levelUpMessage, rankEmbed, RankView } from "../src/discord/views/activity";
 import MessageCreate from "../src/events/messageCreate";
@@ -15,9 +24,10 @@ import { LeaderboardPage, LeaderboardServiceApi, ScoreKind } from "../src/module
 import { TeamService } from "../src/modules/team/TeamService";
 import { AppServices } from "../src/services";
 import { UserError } from "../src/shared/errors";
-import { CHANNEL_GENERAL, GUILD, ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER, USER_A, USER_B } from "./helpers";
+import { CHANNEL_GENERAL, GUILD, OTHER_GUILD, ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER, USER_A, USER_B } from "./helpers";
 
 const THREAD = "400000000000000009";
+const BOT_ID = "900000000000000001";
 const AVATAR = "https://cdn.discordapp.com/embed/avatars/0.png";
 const EMPTY_BAR = "▱".repeat(12);
 const HALF_BAR = "▰".repeat(6) + "▱".repeat(6);
@@ -110,9 +120,10 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 	return { services, messages, profileCalls, boardCalls };
 }
 
+/** Client giả: chỉ phục vụ GUILD; `user` là tài khoản bot (dùng khi kiểm tra quyền gửi tin của bot). */
 function fakeClient(services: AppServices): DiscordClient
 {
-	return { services } as unknown as DiscordClient;
+	return { services, guildIds: [GUILD], user: { id: BOT_ID } } as unknown as DiscordClient;
 }
 
 // ---------- Fake message ----------
@@ -123,31 +134,46 @@ interface FakeMessageOptions
 	webhookId?: string | null;
 	system?: boolean;
 	inGuild?: boolean;
+	guildId?: string;
 	inThread?: boolean;
 	sendable?: boolean;
+	/** Quyền của bot ở channel; null = không tính được quyền. Mặc định: View Channel, Send Messages, Send Messages in Threads. */
+	botPermissions?: bigint[] | null;
+	/** Gửi thông báo thất bại (ví dụ thread bị khoá). */
+	sendFails?: boolean;
 	content?: string;
 	attachments?: number;
 	roleIds?: string[];
 }
 
-function fakeMessage(options: FakeMessageOptions = {}): { message: Message; sent: unknown[] }
+const BOT_CAN_SEND = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads];
+
+function fakeMessage(options: FakeMessageOptions = {}): { message: Message; sent: unknown[]; permissionChecks: unknown[] }
 {
 	const sent: unknown[] = [];
+	const permissionChecks: unknown[] = [];
 	const inThread = options.inThread ?? false;
 	const inGuild = options.inGuild ?? true;
+	const botPermissions = options.botPermissions === undefined ? BOT_CAN_SEND : options.botPermissions;
 	const message = {
 		author: { id: USER_A, bot: options.bot ?? false },
 		webhookId: options.webhookId ?? null,
 		system: options.system ?? false,
 		inGuild: () => inGuild,
-		guildId: inGuild ? GUILD : null,
+		guildId: inGuild ? options.guildId ?? GUILD : null,
 		channelId: inThread ? THREAD : CHANNEL_GENERAL,
 		channel: {
 			isThread: () => inThread,
 			parentId: inThread ? CHANNEL_GENERAL : null,
 			isSendable: () => options.sendable ?? true,
+			permissionsFor: (user: unknown) =>
+			{
+				permissionChecks.push(user);
+				return botPermissions === null ? null : new PermissionsBitField(botPermissions);
+			},
 			send: (payload: unknown) =>
 			{
+				if (options.sendFails) return Promise.reject(new Error("Thread is locked"));
 				sent.push(payload);
 				return Promise.resolve();
 			},
@@ -156,7 +182,7 @@ function fakeMessage(options: FakeMessageOptions = {}): { message: Message; sent
 		attachments: { size: options.attachments ?? 0 },
 		member: inGuild ? { roles: options.roleIds ?? [] } : null,
 	};
-	return { message: message as unknown as Message, sent };
+	return { message: message as unknown as Message, sent, permissionChecks };
 }
 
 const LEVEL_UP: MessageXpResult = { awarded: true, amount: 10, totalXp: 480, levelBefore: 2, levelAfter: 3 };
@@ -183,11 +209,14 @@ interface InteractionOptions
 	member?: { nick: string | null; roles: string[] } | null;
 	strings?: Record<string, string>;
 	integers?: Record<string, number>;
+	/** Người gọi có quyền gửi tin ở kênh hiện tại không (mặc định có). */
+	canSend?: boolean;
 }
 
 interface Reply
 {
 	embeds: EmbedBuilder[];
+	flags?: number;
 }
 
 function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatInputCommandInteraction; replies: Reply[] }
@@ -198,6 +227,8 @@ function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatI
 		guildId: GUILD,
 		user: fakeUser(USER_A, "Người A"),
 		member: { nick: "Anh A", roles: [ROLE_BACKEND, ROLE_OTHER] },
+		memberPermissions: new PermissionsBitField(options.canSend === false ? [] : [PermissionFlagsBits.SendMessages]),
+		channel: { isThread: () => false },
 		options: {
 			getUser: () => options.user ?? null,
 			getMember: () => options.member ?? null,
@@ -346,6 +377,7 @@ describe("event messageCreate", () =>
 		["webhook", { webhookId: "600000000000000001" }],
 		["tin hệ thống", { system: true }],
 		["tin nhắn riêng (DM)", { inGuild: false }],
+		["tin ở server không có trong DISCORD_GUILD_IDS", { guildId: OTHER_GUILD }],
 	];
 	for (const [label, options] of skipped)
 	{
@@ -385,12 +417,49 @@ describe("event messageCreate", () =>
 		assert.equal(fake.messages[0].hasAttachments, false);
 	});
 
-	test("lên level thì thông báo và chỉ ping đúng người đó", async () =>
+	test("lên level thì thông báo và chỉ ping đúng người đó; kiểm tra quyền của chính bot", async () =>
 	{
 		const fake = createFakeServices({ xpResult: LEVEL_UP });
-		const { message, sent } = fakeMessage();
+		const { message, sent, permissionChecks } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 		assert.deepEqual(sent, [{ content: levelUpMessage(USER_A, 3), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(permissionChecks, [{ id: BOT_ID }]);
+	});
+
+	test("bot không có quyền gửi tin ở channel: bỏ qua thông báo, không gây lỗi", async () =>
+	{
+		const cases: [string, FakeMessageOptions][] = [
+			["thiếu Send Messages", { botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads] }],
+			["thread: thiếu Send Messages in Threads", { inThread: true, botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }],
+			["không tính được quyền", { botPermissions: null }],
+		];
+		for (const [label, options] of cases)
+		{
+			const fake = createFakeServices({ xpResult: LEVEL_UP });
+			const { message, sent } = fakeMessage(options);
+			await new MessageCreate(fakeClient(fake.services)).execute(message);
+			assert.equal(fake.messages.length, 1, label);
+			assert.equal(sent.length, 0, label);
+		}
+	});
+
+	test("thread: bot có Send Messages in Threads thì thông báo được", async () =>
+	{
+		const fake = createFakeServices({ xpResult: LEVEL_UP });
+		const { message, sent } = fakeMessage({ inThread: true, botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads] });
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+		assert.equal(sent.length, 1);
+	});
+
+	test("gửi thông báo thất bại chỉ ghi cảnh báo, XP vẫn đã được cộng", async (t) =>
+	{
+		const warned = t.mock.method(console, "error", () => undefined);
+		const fake = createFakeServices({ xpResult: LEVEL_UP });
+		const { message } = fakeMessage({ sendFails: true });
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+		assert.equal(fake.messages.length, 1);
+		assert.equal(warned.mock.callCount(), 1);
+		assert.match(String(warned.mock.calls[0].arguments[0]), /\[WARN\]/);
 	});
 
 	test("không thông báo khi admin tắt levelUpAnnouncements", async () =>
@@ -452,6 +521,16 @@ describe("/rank", () =>
 		assert.equal(embed.author?.name, "Anh A");
 		assert.match(fieldValue(embed, "⚡ Activity XP"), /\*\*Level 6\*\*/);
 		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_BACKEND}>`);
+		assert.equal(replies[0].flags, undefined, "có quyền gửi tin thì trả lời công khai");
+	});
+
+	test("người không được gửi tin ở kênh chỉ nhận kết quả riêng", async () =>
+	{
+		const fake = createFakeServices();
+		const { interaction, replies } = fakeInteraction({ canSend: false });
+		await new RankCmd(fakeClient(fake.services)).execute(interaction);
+		assert.equal(onlyEmbed(replies).author?.name, "Anh A");
+		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
 	});
 
 	test("xem thành viên khác: dùng member được chọn", async () =>
@@ -526,6 +605,16 @@ describe("/leaderboard", () =>
 		const embed = onlyEmbed(replies);
 		assert.equal(embed.title, "🏆 Bảng xếp hạng Activity XP — Cá nhân");
 		assert.equal(embed.description, `🥇 <@${USER_A}> — Level 6 · 1.915 XP`);
+		assert.equal(replies[0].flags, undefined, "có quyền gửi tin thì trả lời công khai");
+	});
+
+	test("người không được gửi tin ở kênh chỉ nhận bảng xếp hạng riêng", async () =>
+	{
+		const fake = createFakeServices();
+		const { interaction, replies } = fakeInteraction({ strings: { loai: "activity" }, canSend: false });
+		await new LeaderboardCmd(fakeClient(fake.services)).execute(interaction);
+		assert.equal(onlyEmbed(replies).title, "🏆 Bảng xếp hạng Activity XP — Cá nhân");
+		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
 	});
 
 	test("bảng team Contribution, trang được chọn", async () =>

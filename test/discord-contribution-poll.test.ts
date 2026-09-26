@@ -6,6 +6,8 @@ import {
 	APIEmbed,
 	ButtonBuilder,
 	ButtonInteraction,
+	ButtonStyle,
+	ChannelType,
 	ChatInputCommandInteraction,
 	EmbedBuilder,
 	MessageContextMenuCommandInteraction,
@@ -17,15 +19,16 @@ import type DiscordClient from "../src/classes/DiscordClient";
 import { progressBar } from "../src/discord/format";
 import { refreshPollMessage, runPollSweep, startPollScheduler } from "../src/discord/pollScheduler";
 import {
+	contributionDetailMessage,
 	contributionEmbed,
 	contributionListEmbed,
 	contributionListLine,
 	contributionMessage,
-	descriptionFromMessage,
+	MESSAGE_CONTRIBUTION_DESCRIPTION,
+	messageContributionTitle,
 	parseContributionButtonId,
-	titleFromMessage,
 } from "../src/discord/views/contribution";
-import { parsePollButtonId, parsePollOptions, pollEmbed, pollMessage, pollSelectionText } from "../src/discord/views/poll";
+import { parsePollButtonId, parsePollOptions, pollEmbed, pollListEmbed, pollMessage, pollSelectionText } from "../src/discord/views/poll";
 import ContributionCmd from "../src/interactions/commands/contribution";
 import PollCmd from "../src/interactions/commands/poll";
 import RecognizeContribution from "../src/interactions/contextMenus/RecognizeContribution";
@@ -42,11 +45,16 @@ import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, GUILD, ROLE_BACKEND, ROLE_FRONTEND
 
 const MESSAGE_ID = "600000000000000001";
 const OTHER_MESSAGE_ID = "600000000000000002";
+const REPLY_MESSAGE_ID = "600000000000000003";
+/** Kênh riêng tư: chỉ USER_A xem được. */
+const CHANNEL_PRIVATE = "400000000000000003";
 const CREATED_AT = Date.UTC(2026, 0, 1, 8, 0, 0);
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const SEND = [PermissionFlagsBits.SendMessages];
 
 type Rows = ActionRowBuilder<ButtonBuilder>[];
 
-/** Payload mà command truyền cho reply/update/followUp (ép kiểu cho gọn trong test). */
+/** Payload mà command truyền cho reply/update/followUp/editReply (ép kiểu cho gọn trong test). */
 interface Payload
 {
 	content?: string;
@@ -62,6 +70,12 @@ interface Attached
 	id: number;
 	channelId: string;
 	messageId: string;
+}
+
+interface Edit
+{
+	messageId: string;
+	payload: Payload;
 }
 
 function makeContribution(overrides: Partial<Contribution> = {}): Contribution
@@ -121,9 +135,24 @@ function buttonsOf(rows: Rows | undefined): { customId: string; label: string; d
 	});
 }
 
+function linkButtonsOf(rows: Rows | undefined): { url: string; label: string }[]
+{
+	return (rows ?? []).flatMap(row => row.components.map(button => button.toJSON())).map(json =>
+	{
+		assert.equal(json.style, ButtonStyle.Link, "chỉ được có nút link");
+		assert.ok("url" in json);
+		return { url: json.url, label: json.label ?? "" };
+	});
+}
+
 function field(embed: APIEmbed, name: string): string | undefined
 {
 	return embed.fields?.find(item => item.name === name)?.value;
+}
+
+function messageUrl(channelId: string, messageId: string): string
+{
+	return `https://discord.com/channels/${GUILD}/${channelId}/${messageId}`;
 }
 
 class FakeContributions
@@ -174,6 +203,8 @@ class FakePolls
 	attached: Attached[] = [];
 	votes: { guildId: string; pollId: number; userId: string; optionIndex: number; roleIds: readonly string[] }[] = [];
 	closes: { guildId: string; pollId: number; actorId: string; actorIsAdmin: boolean }[] = [];
+	stored = new Map<number, Poll>([[5, makePoll([3, 1])]]);
+	open: Poll[] = [makePoll([1, 0])];
 	closedPoll = makePoll([2, 1], { open: false, closedAt: CREATED_AT + 60_000, channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID });
 
 	create(input: CreatePollInput): Poll
@@ -201,31 +232,54 @@ class FakePolls
 
 	get(_guildId: string, pollId: number): Poll | null
 	{
-		return pollId === 5 ? makePoll([3, 1]) : null;
+		return this.stored.get(pollId) ?? null;
 	}
 
 	listOpen(_guildId: string): Poll[]
 	{
-		return [makePoll([1, 0])];
+		return this.open;
 	}
 }
 
 interface FakeChannel
 {
+	guildId: string;
+	type: ChannelType;
+	isDMBased: () => boolean;
 	isTextBased: () => boolean;
+	permissionsFor: (subject: unknown) => PermissionsBitField | null;
 	messages: { edit: (messageId: string, payload: Payload) => Promise<void> };
 }
 
-/** Kênh giả ghi lại các lần sửa message; sửa message nằm trong `failFor` thì lỗi. */
-function fakeChannel(edits: { messageId: string; payload: Payload }[], failFor: string[] = []): FakeChannel
+interface ChannelSpec
+{
+	edits?: Edit[];
+	/** Sửa các message này thì lỗi. */
+	failFor?: string[];
+	/** Người có View Channel; mặc định mọi người. */
+	viewers?: string[];
+	textBased?: boolean;
+}
+
+/** Kênh giả: tính quyền xem theo `viewers`, ghi lại các lần sửa message. */
+function fakeChannel(spec: ChannelSpec = {}): FakeChannel
 {
 	return {
-		isTextBased: () => true,
+		guildId: GUILD,
+		type: ChannelType.GuildText,
+		isDMBased: () => false,
+		isTextBased: () => spec.textBased ?? true,
+		permissionsFor: subject =>
+		{
+			if (typeof subject !== "string") return null;
+			const canView = spec.viewers === undefined || spec.viewers.includes(subject);
+			return new PermissionsBitField(canView ? [PermissionFlagsBits.ViewChannel] : []);
+		},
 		messages: {
 			edit: (messageId, payload) =>
 			{
-				if (failFor.includes(messageId)) return Promise.reject(new Error("Missing Access"));
-				edits.push({ messageId, payload });
+				if (spec.failFor?.includes(messageId)) return Promise.reject(new Error("Missing Access"));
+				spec.edits?.push({ messageId, payload });
 				return Promise.resolve();
 			},
 		},
@@ -237,15 +291,19 @@ interface Setup
 	client: DiscordClient;
 	contributions: FakeContributions;
 	polls: FakePolls;
-	edits: { messageId: string; payload: Payload }[];
+	edits: Edit[];
 }
 
 function setup(settings: Partial<GuildSettings> = {}, channels: Record<string, FakeChannel> = {}): Setup
 {
 	const contributions = new FakeContributions();
 	const polls = new FakePolls();
-	const edits: { messageId: string; payload: Payload }[] = [];
-	const allChannels: Record<string, FakeChannel> = { [CHANNEL_GENERAL]: fakeChannel(edits), ...channels };
+	const edits: Edit[] = [];
+	const allChannels: Record<string, FakeChannel> = {
+		[CHANNEL_GENERAL]: fakeChannel({ edits }),
+		[CHANNEL_PRIVATE]: fakeChannel({ edits, viewers: [USER_A] }),
+		...channels,
+	};
 	const services = {
 		guildConfig: { getSettings: (): GuildSettings => ({ ...DEFAULT_GUILD_SETTINGS, ...settings }) },
 		contributions,
@@ -263,6 +321,14 @@ interface MemberSpec
 	userId?: string;
 	roleIds?: string[];
 	manageGuild?: boolean;
+	/** Quyền gửi tin ở kênh hiện tại; mặc định có Send Messages. */
+	send?: bigint[];
+	inThread?: boolean;
+}
+
+function permissionsOf(member: MemberSpec): PermissionsBitField
+{
+	return new PermissionsBitField([...(member.send ?? SEND), ...(member.manageGuild ? [PermissionFlagsBits.ManageGuild] : [])]);
 }
 
 type OptionValues = Record<string, string | number | boolean>;
@@ -270,11 +336,14 @@ type OptionValues = Record<string, string | number | boolean>;
 function chatInput(subcommand: string, values: OptionValues = {}, member: MemberSpec = {})
 {
 	const replies: Payload[] = [];
+	const deferred: Payload[] = [];
+	const edits: Payload[] = [];
 	const interaction = {
 		guildId: GUILD,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
-		memberPermissions: new PermissionsBitField(member.manageGuild ? PermissionFlagsBits.ManageGuild : 0n),
+		memberPermissions: permissionsOf(member),
+		channel: { isThread: () => member.inThread ?? false },
 		inGuild: () => true,
 		options: {
 			getSubcommand: () => subcommand,
@@ -288,8 +357,18 @@ function chatInput(subcommand: string, values: OptionValues = {}, member: Member
 			replies.push(payload);
 			return Promise.resolve({ resource: { message: { id: MESSAGE_ID, channelId: CHANNEL_GENERAL } } });
 		},
+		deferReply: (payload: Payload) =>
+		{
+			deferred.push(payload);
+			return Promise.resolve();
+		},
+		editReply: (payload: Payload) =>
+		{
+			edits.push(payload);
+			return Promise.resolve({ id: REPLY_MESSAGE_ID, channelId: CHANNEL_GENERAL });
+		},
 	};
-	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies };
+	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies, deferred, edits };
 }
 
 function buttonPress(customId: string, member: MemberSpec = {}, messageId = MESSAGE_ID)
@@ -321,41 +400,71 @@ interface TargetSpec
 {
 	authorId?: string;
 	bot?: boolean;
-	content: string;
+	content?: string;
 	cachedRoles?: string[];
+	/** Role lấy qua REST; bỏ trống = tác giả đã rời server (REST báo lỗi). */
 	fetchedRoles?: string[];
+	/** Tên kênh trong cache; null = kênh không có trong cache. */
+	channelName?: string | null;
+	send?: bigint[];
+	inThread?: boolean;
 }
 
 function messageMenu(target: TargetSpec)
 {
+	const calls: string[] = [];
+	const fetchOptions: unknown[] = [];
 	const replies: Payload[] = [];
+	const deferred: unknown[] = [];
+	const edits: Payload[] = [];
 	const authorId = target.authorId ?? USER_A;
+	const channelName = target.channelName === undefined ? "general" : target.channelName;
 	const interaction = {
 		guildId: GUILD,
 		user: { id: USER_B },
+		memberPermissions: new PermissionsBitField(target.send ?? SEND),
+		channel: channelName === null ? null : { name: channelName, isDMBased: () => false, isThread: () => target.inThread ?? false },
 		inGuild: () => true,
 		isMessageContextMenuCommand: () => true,
 		targetMessage: {
 			id: OTHER_MESSAGE_ID,
+			channelId: CHANNEL_GENERAL,
 			author: { id: authorId, bot: target.bot ?? false },
-			content: target.content,
-			url: `https://discord.com/channels/${GUILD}/${CHANNEL_GENERAL}/${OTHER_MESSAGE_ID}`,
+			content: target.content ?? "Nội dung bí mật không được lưu",
+			url: `https://discord.com/channels/@me/${CHANNEL_GENERAL}/${OTHER_MESSAGE_ID}`,
 			member: target.cachedRoles ? { roles: target.cachedRoles } : null,
 		},
 		guild: {
 			members: {
-				fetch: (id: string) => (target.fetchedRoles && id === authorId
-					? Promise.resolve({ roles: target.fetchedRoles })
-					: Promise.reject(new Error("Unknown Member"))),
+				fetch: (options: { user: string; force?: boolean }) =>
+				{
+					calls.push("fetchMember");
+					fetchOptions.push(options);
+					return target.fetchedRoles && options.user === authorId
+						? Promise.resolve({ roles: target.fetchedRoles })
+						: Promise.reject(new Error("Unknown Member"));
+				},
 			},
 		},
 		reply: (payload: Payload) =>
 		{
 			replies.push(payload);
-			return Promise.resolve({ resource: { message: { id: MESSAGE_ID, channelId: CHANNEL_GENERAL } } });
+			return Promise.resolve();
+		},
+		deferReply: (payload?: unknown) =>
+		{
+			calls.push("deferReply");
+			deferred.push(payload);
+			return Promise.resolve();
+		},
+		editReply: (payload: Payload) =>
+		{
+			calls.push("editReply");
+			edits.push(payload);
+			return Promise.resolve({ id: REPLY_MESSAGE_ID, channelId: CHANNEL_GENERAL });
 		},
 	};
-	return { interaction: interaction as unknown as MessageContextMenuCommandInteraction, replies };
+	return { interaction: interaction as unknown as MessageContextMenuCommandInteraction, calls, fetchOptions, replies, deferred, edits };
 }
 
 /** Kiểm tra lỗi là UserError với đúng thông báo hiển thị cho người dùng. */
@@ -363,6 +472,8 @@ function userError(message: string): (error: unknown) => boolean
 {
 	return error => error instanceof UserError && error.message === message;
 }
+
+const NO_SEND = "Bạn không có quyền gửi tin nhắn trong kênh này.";
 
 // ---------------------------------------------------------------------------------------------
 // View: Contribution
@@ -406,13 +517,39 @@ describe("view contribution", () =>
 		assert.notEqual(embedJson(removed).color, embedJson(active).color);
 	});
 
+	test("masked link trong mô tả, link và tiêu đề danh sách bị vô hiệu hoá", () =>
+	{
+		const contribution = makeContribution({
+			title: "Xem [hướng dẫn](https://evil.example/a)",
+			description: "Đăng nhập tại [portal nội bộ](https://evil.example/login) để xem.",
+			link: "https://good.example/[bấm](https://evil.example/b)",
+		});
+		const embed = contributionEmbed(contribution).toJSON();
+
+		assert.equal(embed.description, "Đăng nhập tại portal nội bộ (https://evil.example/login) để xem.");
+		assert.ok(!(field(embed, "Link") ?? "").includes("]("));
+		assert.ok(!contributionListLine(contribution).replace(/^\[#7\]\([^)]*\)/, "").includes("]("));
+	});
+
+	test("bản xem riêng: không có nút ghi nhận, có nút link tới message công khai nếu biết vị trí", () =>
+	{
+		const posted = contributionDetailMessage(makeContribution({ channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
+		assert.equal(embedJson(posted).footer?.text, "Contribution #7");
+		assert.deepEqual(linkButtonsOf(posted.components), [{ url: messageUrl(CHANNEL_GENERAL, MESSAGE_ID), label: "Mở bài đăng để ghi nhận" }]);
+
+		const removed = contributionDetailMessage(makeContribution({ status: "removed", channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
+		assert.deepEqual(linkButtonsOf(removed.components).map(button => button.label), ["Mở bài đăng gốc"]);
+
+		assert.deepEqual(contributionDetailMessage(makeContribution()).components, []);
+	});
+
 	test("dòng danh sách đúng định dạng, có link tới message nếu biết vị trí; danh sách rỗng", () =>
 	{
 		const line = contributionListLine(makeContribution({ title: "Sửa **lỗi**" }));
 		assert.equal(line, `#7 · **Sửa \\*\\*lỗi\\*\\*** · 👍 3 · <t:${CREATED_AT / 1000}:R>`);
 
 		const linked = contributionListLine(makeContribution({ channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
-		assert.ok(linked.startsWith(`[#7](https://discord.com/channels/${GUILD}/${CHANNEL_GENERAL}/${MESSAGE_ID}) · `));
+		assert.ok(linked.startsWith(`[#7](${messageUrl(CHANNEL_GENERAL, MESSAGE_ID)}) · `));
 
 		const empty = contributionListEmbed([], USER_A).toJSON();
 		assert.equal(empty.description, `Của <@${USER_A}>\n\nChưa có đóng góp nào.`);
@@ -429,18 +566,19 @@ describe("view contribution", () =>
 		}
 	});
 
-	test("tiêu đề và mô tả khi ghi nhận từ tin nhắn", () =>
+	test("tiêu đề khi ghi nhận từ tin nhắn chỉ dùng tên kênh, tối đa 100 ký tự", () =>
 	{
-		assert.equal(titleFromMessage("  Viết tài liệu onboarding\nChi tiết ở dưới"), "Viết tài liệu onboarding");
-		assert.equal(titleFromMessage("ok"), "Đóng góp từ tin nhắn");
-		assert.equal(titleFromMessage(""), "Đóng góp từ tin nhắn");
+		assert.equal(messageContributionTitle("general"), "Đóng góp từ tin nhắn trong #general");
+		assert.equal(messageContributionTitle(null), "Đóng góp từ tin nhắn");
+		assert.equal(messageContributionTitle("   "), "Đóng góp từ tin nhắn");
 
-		const longTitle = titleFromMessage("a".repeat(150));
-		assert.equal(Array.from(longTitle).length, 100);
-		assert.ok(longTitle.endsWith("…"));
+		const long = messageContributionTitle("k".repeat(200));
+		assert.equal(long.length, 100);
+		assert.ok(long.endsWith("…"));
 
-		assert.equal(descriptionFromMessage("   "), "(Tin nhắn không có nội dung văn bản)");
-		assert.equal(Array.from(descriptionFromMessage("b".repeat(2000))).length, 1500);
+		const emoji = messageContributionTitle("🎉".repeat(100));
+		assert.ok(emoji.length <= 100);
+		assert.ok(!LONE_SURROGATE.test(emoji));
 	});
 });
 
@@ -494,15 +632,39 @@ describe("view vote", () =>
 		assert.deepEqual(pollMessage(makePoll(Array.from({ length: 10 }, () => 0))).components.map(row => row.components.length), [5, 5]);
 	});
 
-	test("label dài bị cắt để vừa giới hạn 80 ký tự của nút", () =>
+	test("label dài bị cắt để cả nhãn (kể cả số thứ tự) vừa giới hạn 80 ký tự của nút", () =>
 	{
-		const poll = makePoll([0, 0]);
+		const poll = makePoll(Array.from({ length: 10 }, () => 0));
 		poll.options[1].label = "x".repeat(80);
-		const label = buttonsOf(pollMessage(poll).components)[1].label;
+		poll.options[9].label = "y".repeat(80);
+		const buttons = buttonsOf(pollMessage(poll).components);
 
-		assert.ok(Array.from(label).length <= 80);
-		assert.ok(label.startsWith("2. x"));
-		assert.ok(label.endsWith("…"));
+		assert.equal(buttons[1].label.length, 80);
+		assert.ok(buttons[1].label.startsWith("2. x"));
+		assert.ok(buttons[1].label.endsWith("…"));
+		assert.equal(buttons[9].label.length, 80);
+		assert.ok(buttons[9].label.startsWith("10. y"));
+	});
+
+	test("nhãn và câu hỏi toàn emoji: builder không ném lỗi, nhãn vừa 80 ký tự UTF-16, không cắt đôi emoji", () =>
+	{
+		const poll = makePoll(Array.from({ length: 10 }, () => 1), { question: "🎉".repeat(200) });
+		poll.options.forEach(option =>
+		{
+			option.label = "😀".repeat(80);
+		});
+
+		const payload = pollMessage(poll);
+		const json = payload.components.map(row => row.toJSON());
+		assert.equal(json.length, 2);
+		for (const button of buttonsOf(payload.components))
+		{
+			assert.ok(button.label.length <= 80, `${button.label.length}`);
+			assert.ok(!LONE_SURROGATE.test(button.label));
+		}
+		const embed = embedJson(payload);
+		assert.ok((embed.title ?? "").length <= 256);
+		assert.ok(!LONE_SURROGATE.test(embed.title ?? ""));
 	});
 
 	test("vote đã đóng: tiêu đề [Đã đóng], Thời hạn Đã đóng, mọi nút bị vô hiệu hoá", () =>
@@ -531,12 +693,43 @@ describe("view vote", () =>
 		}
 	});
 
+	test("masked link trong lựa chọn bị vô hiệu hoá ở embed và phản hồi riêng", () =>
+	{
+		const poll = makePoll([1, 1]);
+		poll.options[0].label = "[Có](https://evil.example)";
+		assert.ok(!(pollEmbed(poll).toJSON().description ?? "").includes("]("));
+		assert.ok(!pollSelectionText({ poll, selected: [0], xpAwarded: 0 }).includes("]("));
+	});
+
 	test("phản hồi riêng cho người vote", () =>
 	{
 		const poll = makePoll([1, 1, 1]);
 		assert.equal(pollSelectionText({ poll, selected: [0, 2], xpAwarded: 5 }), "Bạn đang chọn: Lựa chọn 1, Lựa chọn 3 · +5 XP");
 		assert.equal(pollSelectionText({ poll, selected: [1], xpAwarded: 0 }), "Bạn đang chọn: Lựa chọn 2");
 		assert.equal(pollSelectionText({ poll, selected: [], xpAwarded: 0 }), "Bạn chưa chọn lựa chọn nào.");
+	});
+
+	test("danh sách vote: tối đa 15 dòng, phần còn lại gộp thành một dòng", () =>
+	{
+		const polls = Array.from({ length: 20 }, (_, index) => makePoll([0, 0], { id: index + 1 }));
+		const description = pollListEmbed(polls).toJSON().description ?? "";
+		assert.equal(description.split("\n").length, 16);
+		assert.ok(description.endsWith("… và 5 vote khác"));
+		assert.equal(pollListEmbed([]).toJSON().description, "Không có vote nào đang mở.");
+	});
+
+	test("danh sách vote dài (câu hỏi toàn ký tự markdown, có link) vẫn trong giới hạn 4096", () =>
+	{
+		const polls = Array.from({ length: 15 }, (_, index) => makePoll([0, 0], {
+			id: 100000 + index,
+			question: "*_".repeat(100),
+			channelId: CHANNEL_GENERAL,
+			messageId: MESSAGE_ID,
+			closesAt: CREATED_AT,
+		}));
+		const description = pollListEmbed(polls).toJSON().description ?? "";
+		assert.ok(description.length <= 4096, `${description.length}`);
+		assert.match(description, /… và \d+ vote khác$/);
 	});
 
 	test("parse customId poll:<pollId>:<optionIndex>; sai định dạng thì UserError", () =>
@@ -582,6 +775,22 @@ describe("/poll", () =>
 
 		await assert.rejects(new PollCmd(client).execute(interaction), userError("Chỉ admin mới đặt được XP riêng cho vote."));
 		assert.equal(polls.created.length, 0);
+	});
+
+	test("create: không có quyền gửi tin ở kênh (kênh chỉ đọc) thì không đăng được vote qua bot", async () =>
+	{
+		const { client, polls } = setup();
+		const readOnly = chatInput("create", createValues, { manageGuild: true, send: [] });
+		await assert.rejects(new PollCmd(client).execute(readOnly.interaction), userError(NO_SEND));
+		assert.equal(readOnly.replies.length, 0);
+
+		const threadWithoutPermission = chatInput("create", createValues, { manageGuild: true, inThread: true, send: SEND });
+		await assert.rejects(new PollCmd(client).execute(threadWithoutPermission.interaction), userError(NO_SEND));
+		assert.equal(polls.created.length, 0);
+
+		const thread = chatInput("create", createValues, { manageGuild: true, inThread: true, send: [PermissionFlagsBits.SendMessagesInThreads] });
+		await new PollCmd(client).execute(thread.interaction);
+		assert.equal(polls.created.length, 1);
 	});
 
 	test("create: role tạo vote dùng XP mặc định của guild; trả lời công khai rồi lưu vị trí message", async () =>
@@ -647,17 +856,17 @@ describe("/poll", () =>
 		assert.equal(updates.length, 0);
 	});
 
-	test("close: truyền quyền admin, trả lời riêng kèm kết quả, sửa message gốc sang trạng thái đóng", async () =>
+	test("close: defer riêng, truyền quyền admin, trả lời kèm kết quả, sửa message gốc sang trạng thái đóng", async () =>
 	{
 		const { client, polls, edits } = setup();
-		const { interaction, replies } = chatInput("close", { id: 5 }, { userId: ADMIN, manageGuild: true });
+		const { interaction, deferred, edits: answers } = chatInput("close", { id: 5 }, { userId: ADMIN, manageGuild: true });
 
 		await new PollCmd(client).execute(interaction);
 
+		assert.deepEqual(deferred, [{ flags: MessageFlags.Ephemeral }]);
 		assert.deepEqual(polls.closes, [{ guildId: GUILD, pollId: 5, actorId: ADMIN, actorIsAdmin: true }]);
-		assert.equal(replies[0].content, "Đã đóng vote.");
-		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
-		assert.equal(embedJson(replies[0]).title, "🗳️ [Đã đóng] Team building ở đâu?");
+		assert.equal(answers[0].content, "Đã đóng vote.");
+		assert.equal(embedJson(answers[0]).title, "🗳️ [Đã đóng] Team building ở đâu?");
 		assert.equal(edits.length, 1);
 		assert.equal(edits[0].messageId, MESSAGE_ID);
 		assert.ok(buttonsOf(edits[0].payload.components).every(button => button.disabled));
@@ -666,35 +875,98 @@ describe("/poll", () =>
 	test("close: sửa message gốc lỗi thì chỉ ghi log, lệnh vẫn thành công", async (t) =>
 	{
 		const logged = t.mock.method(console, "error", () => undefined);
-		const edits: { messageId: string; payload: Payload }[] = [];
-		const { client, polls } = setup({}, { [CHANNEL_GENERAL]: fakeChannel(edits, [MESSAGE_ID]) });
-		const { interaction, replies } = chatInput("close", { id: 5 }, { userId: USER_A });
+		const edits: Edit[] = [];
+		const { client, polls } = setup({}, { [CHANNEL_GENERAL]: fakeChannel({ edits, failFor: [MESSAGE_ID] }) });
+		const { interaction, edits: answers } = chatInput("close", { id: 5 }, { userId: USER_A });
 
 		await new PollCmd(client).execute(interaction);
 
 		assert.equal(polls.closes[0].actorIsAdmin, false);
-		assert.equal(replies[0].content, "Đã đóng vote.");
+		assert.equal(answers[0].content, "Đã đóng vote.");
 		assert.equal(edits.length, 0);
 		assert.equal(logged.mock.callCount(), 1);
 	});
 
-	test("results và list trả lời riêng; vote không tồn tại thì UserError", async () =>
+	test("close: vote ở kênh người gọi không xem được thì báo không tìm thấy, không đóng", async () =>
+	{
+		const { client, polls } = setup();
+		polls.stored.set(5, makePoll([3, 1], { channelId: CHANNEL_PRIVATE, messageId: MESSAGE_ID }));
+
+		await assert.rejects(
+			new PollCmd(client).execute(chatInput("close", { id: 5 }, { userId: ADMIN, manageGuild: true }).interaction),
+			userError("Không tìm thấy vote #5."),
+		);
+		await assert.rejects(new PollCmd(client).execute(chatInput("close", { id: 99 }).interaction), userError("Không tìm thấy vote #99."));
+		assert.equal(polls.closes.length, 0);
+	});
+
+	test("results và list trả lời riêng (defer trước); vote không tồn tại thì UserError", async () =>
 	{
 		const { client } = setup();
 		const command = new PollCmd(client);
 
 		const results = chatInput("results", { id: 5 });
 		await command.execute(results.interaction);
-		assert.equal(results.replies[0].flags, MessageFlags.Ephemeral);
-		assert.equal(results.replies[0].components, undefined);
-		assert.ok(embedJson(results.replies[0]).description?.includes("3 phiếu (75%)"));
+		assert.deepEqual(results.deferred, [{ flags: MessageFlags.Ephemeral }]);
+		assert.equal(results.edits[0].components, undefined);
+		assert.ok(embedJson(results.edits[0]).description?.includes("3 phiếu (75%)"));
 
 		await assert.rejects(command.execute(chatInput("results", { id: 99 }).interaction), userError("Không tìm thấy vote #99."));
 
 		const list = chatInput("list");
 		await command.execute(list.interaction);
-		assert.equal(list.replies[0].flags, MessageFlags.Ephemeral);
-		assert.equal(embedJson(list.replies[0]).title, "🗳️ Vote đang mở");
+		assert.deepEqual(list.deferred, [{ flags: MessageFlags.Ephemeral }]);
+		assert.equal(embedJson(list.edits[0]).title, "🗳️ Vote đang mở");
+	});
+
+	test("results: vote ở kênh riêng tư chỉ người xem được kênh mới thấy; người khác nhận thông báo như không tồn tại", async () =>
+	{
+		const { client, polls } = setup();
+		polls.stored.set(5, makePoll([3, 1], { channelId: CHANNEL_PRIVATE, messageId: MESSAGE_ID }));
+		const command = new PollCmd(client);
+
+		const insider = chatInput("results", { id: 5 }, { userId: USER_A });
+		await command.execute(insider.interaction);
+		assert.ok(embedJson(insider.edits[0]).description?.includes("3 phiếu (75%)"));
+
+		const outsider = chatInput("results", { id: 5 }, { userId: USER_B, manageGuild: true });
+		await assert.rejects(command.execute(outsider.interaction), userError("Không tìm thấy vote #5."));
+		assert.equal(outsider.edits.length, 0);
+	});
+
+	test("results: kênh của vote không còn thì chỉ admin xem được", async () =>
+	{
+		const { client, polls } = setup({ adminRoleId: ROLE_BACKEND });
+		polls.stored.set(5, makePoll([3, 1], { channelId: "400000000000000404", messageId: MESSAGE_ID }));
+		const command = new PollCmd(client);
+
+		await assert.rejects(command.execute(chatInput("results", { id: 5 }, { userId: USER_B }).interaction), userError("Không tìm thấy vote #5."));
+		const admin = chatInput("results", { id: 5 }, { userId: USER_C, roleIds: [ROLE_BACKEND] });
+		await command.execute(admin.interaction);
+		assert.equal(admin.edits.length, 1);
+	});
+
+	test("list: chỉ hiện vote thuộc kênh người gọi xem được", async () =>
+	{
+		const { client, polls } = setup();
+		polls.open = [
+			makePoll([0, 0], { id: 1, question: "Vote công khai", channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }),
+			makePoll([0, 0], { id: 2, question: "Vote ban giám đốc", channelId: CHANNEL_PRIVATE, messageId: OTHER_MESSAGE_ID }),
+			makePoll([0, 0], { id: 3, question: "Vote chưa gắn kênh" }),
+		];
+		const command = new PollCmd(client);
+
+		const outsider = chatInput("list", {}, { userId: USER_B });
+		await command.execute(outsider.interaction);
+		const outsiderText = embedJson(outsider.edits[0]).description ?? "";
+		assert.ok(outsiderText.includes("Vote công khai"));
+		assert.ok(outsiderText.includes("Vote chưa gắn kênh"));
+		assert.ok(!outsiderText.includes("ban giám đốc"));
+		assert.ok(!outsiderText.includes("vote khác"), "không được lộ số vote bị ẩn");
+
+		const insider = chatInput("list", {}, { userId: USER_A });
+		await command.execute(insider.interaction);
+		assert.ok((embedJson(insider.edits[0]).description ?? "").includes("Vote ban giám đốc"));
 	});
 });
 
@@ -704,11 +976,12 @@ describe("/poll", () =>
 
 describe("/contribution", () =>
 {
+	const submitValues = { "tieu-de": "Viết tài liệu deploy", "noi-dung": "Tài liệu từng bước", loai: "tai-lieu", link: "https://example.com/doc" };
+
 	test("submit: tác giả là người gửi, kèm role; trả lời công khai rồi lưu vị trí message", async () =>
 	{
 		const { client, contributions } = setup();
-		const values = { "tieu-de": "Viết tài liệu deploy", "noi-dung": "Tài liệu từng bước", loai: "tai-lieu", link: "https://example.com/doc" };
-		const { interaction, replies } = chatInput("submit", values, { userId: USER_A, roleIds: [ROLE_BACKEND, ROLE_FRONTEND] });
+		const { interaction, replies } = chatInput("submit", submitValues, { userId: USER_A, roleIds: [ROLE_BACKEND, ROLE_FRONTEND] });
 
 		await new ContributionCmd(client).execute(interaction);
 
@@ -727,6 +1000,16 @@ describe("/contribution", () =>
 		assert.equal(field(embedJson(replies[0]), "Loại"), "Tài liệu");
 		assert.deepEqual(buttonsOf(replies[0].components).map(button => button.customId), ["contrib:7"]);
 		assert.deepEqual(contributions.attached, [{ guildId: GUILD, id: 7, channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }]);
+	});
+
+	test("submit: không có quyền gửi tin ở kênh thì không đăng được qua bot, không tạo contribution", async () =>
+	{
+		const { client, contributions } = setup();
+		const { interaction, replies } = chatInput("submit", submitValues, { userId: USER_A, send: [] });
+
+		await assert.rejects(new ContributionCmd(client).execute(interaction), userError(NO_SEND));
+		assert.equal(contributions.submitted.length, 0);
+		assert.equal(replies.length, 0);
 	});
 
 	test("submit: loại không hợp lệ thì UserError", async () =>
@@ -755,18 +1038,13 @@ describe("/contribution", () =>
 		assert.deepEqual(second.followUps, [{ content: "↩️ Bạn đã rút ghi nhận.", flags: MessageFlags.Ephemeral }]);
 	});
 
-	test("nút ghi nhận ở bản xem riêng: cập nhật cả message công khai gốc; bấm trên message gốc thì không sửa thêm", async () =>
+	test("nút ghi nhận chỉ cập nhật message được bấm, không sửa message nào khác", async () =>
 	{
 		const { client, contributions, edits } = setup();
 		contributions.location = { channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID };
-		const command = new ContributionCmd(client);
 
-		await command.executeButton(buttonPress("contrib:7", { userId: USER_B }, OTHER_MESSAGE_ID).interaction);
-		assert.deepEqual(edits.map(edit => edit.messageId), [MESSAGE_ID]);
-		assert.equal(buttonsOf(edits[0].payload.components)[0].label, "👍 Ghi nhận (4)");
-
-		await command.executeButton(buttonPress("contrib:7", { userId: USER_B }, MESSAGE_ID).interaction);
-		assert.equal(edits.length, 1);
+		await new ContributionCmd(client).executeButton(buttonPress("contrib:7", { userId: USER_B }, OTHER_MESSAGE_ID).interaction);
+		assert.equal(edits.length, 0);
 	});
 
 	test("nút ghi nhận sai định dạng: UserError, không gọi service", async () =>
@@ -778,82 +1056,159 @@ describe("/contribution", () =>
 		assert.equal(contributions.toggles.length, 0);
 	});
 
-	test("view: active có nút, đã gỡ thì không có nút; không tìm thấy thì UserError", async () =>
+	test("view: trả lời riêng, không có nút ghi nhận, có link tới bài đăng; đã gỡ thì ghi rõ; không tìm thấy thì UserError", async () =>
 	{
 		const { client, contributions } = setup();
-		contributions.stored.set(7, makeContribution());
+		contributions.stored.set(7, makeContribution({ channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
 		contributions.stored.set(8, makeContribution({ id: 8, status: "removed" }));
 		const command = new ContributionCmd(client);
 
 		const active = chatInput("view", { id: 7 });
 		await command.execute(active.interaction);
-		assert.equal(active.replies[0].flags, MessageFlags.Ephemeral);
-		assert.equal(buttonsOf(active.replies[0].components).length, 1);
+		assert.deepEqual(active.deferred, [{ flags: MessageFlags.Ephemeral }]);
+		assert.equal(active.replies.length, 0);
+		assert.equal(embedJson(active.edits[0]).footer?.text, "Contribution #7");
+		assert.deepEqual(linkButtonsOf(active.edits[0].components).map(button => button.url), [messageUrl(CHANNEL_GENERAL, MESSAGE_ID)]);
 
 		const removed = chatInput("view", { id: 8 });
 		await command.execute(removed.interaction);
-		assert.deepEqual(removed.replies[0].components, []);
-		assert.match(field(embedJson(removed.replies[0]), "Trạng thái") ?? "", /Đã bị gỡ/);
+		assert.deepEqual(removed.edits[0].components, []);
+		assert.match(field(embedJson(removed.edits[0]), "Trạng thái") ?? "", /Đã bị gỡ/);
 
 		await assert.rejects(command.execute(chatInput("view", { id: 99 }).interaction), userError("Không tìm thấy đóng góp #99."));
 	});
 
-	test("list: lọc theo thành viên, tối đa 10, trả lời riêng", async () =>
+	test("view: đóng góp ở kênh riêng tư chỉ người xem được kênh mới thấy; người khác nhận thông báo như không tồn tại", async () =>
+	{
+		const { client, contributions } = setup({ adminRoleId: ROLE_BACKEND });
+		contributions.stored.set(7, makeContribution({ title: "Kế hoạch tái cấu trúc", channelId: CHANNEL_PRIVATE, messageId: MESSAGE_ID }));
+		const command = new ContributionCmd(client);
+
+		const insider = chatInput("view", { id: 7 }, { userId: USER_A });
+		await command.execute(insider.interaction);
+		assert.equal(embedJson(insider.edits[0]).title, "Kế hoạch tái cấu trúc");
+
+		for (const member of [{ userId: USER_B }, { userId: USER_C, roleIds: [ROLE_BACKEND] }, { userId: ADMIN, manageGuild: true }])
+		{
+			const outsider = chatInput("view", { id: 7 }, member);
+			await assert.rejects(command.execute(outsider.interaction), userError("Không tìm thấy đóng góp #7."));
+			assert.equal(outsider.edits.length, 0);
+		}
+	});
+
+	test("list: lọc theo thành viên, lấy đủ để lọc quyền, hiện tối đa 10, trả lời riêng", async () =>
 	{
 		const { client, contributions } = setup();
 		contributions.stored.set(7, makeContribution());
-		const { interaction, replies } = chatInput("list", { "thanh-vien": USER_A });
+		const { interaction, deferred, edits } = chatInput("list", { "thanh-vien": USER_A });
 
 		await new ContributionCmd(client).execute(interaction);
 
-		assert.deepEqual(contributions.listCalls, [{ guildId: GUILD, authorId: USER_A, limit: 10 }]);
-		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
-		assert.ok(embedJson(replies[0]).description?.includes("#7 · **Tối ưu thời gian build** · 👍 3"));
+		assert.deepEqual(contributions.listCalls, [{ guildId: GUILD, authorId: USER_A, limit: 50 }]);
+		assert.deepEqual(deferred, [{ flags: MessageFlags.Ephemeral }]);
+		assert.ok(embedJson(edits[0]).description?.includes("#7 · **Tối ưu thời gian build** · 👍 3"));
+	});
+
+	test("list: bỏ đóng góp ở kênh không xem được, rồi mới cắt còn 10", async () =>
+	{
+		const { client, contributions } = setup();
+		for (let id = 1; id <= 12; id++)
+		{
+			contributions.stored.set(id, makeContribution({ id, title: `Bí mật ${id}`, channelId: CHANNEL_PRIVATE, messageId: MESSAGE_ID }));
+		}
+		for (let id = 13; id <= 25; id++)
+		{
+			contributions.stored.set(id, makeContribution({ id, title: `Công khai ${id}`, channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
+		}
+		const command = new ContributionCmd(client);
+
+		const outsider = chatInput("list", {}, { userId: USER_B });
+		await command.execute(outsider.interaction);
+		const text = embedJson(outsider.edits[0]).description ?? "";
+		assert.ok(!text.includes("Bí mật"));
+		assert.equal((text.match(/Công khai \d+/g) ?? []).length, 10);
+
+		const insider = chatInput("list", {}, { userId: USER_A });
+		await command.execute(insider.interaction);
+		assert.equal(((embedJson(insider.edits[0]).description ?? "").match(/Bí mật \d+/g) ?? []).length, 10);
 	});
 });
 
 describe("context menu Ghi nhận đóng góp", () =>
 {
-	test("tin nhắn của bot bị từ chối", async () =>
+	test("tin nhắn của bot bị từ chối, trước khi defer", async () =>
 	{
 		const { client, contributions } = setup();
-		const { interaction } = messageMenu({ content: "Tôi là bot", bot: true });
+		const { interaction, deferred } = messageMenu({ bot: true });
 
 		await assert.rejects(new RecognizeContribution(client).execute(interaction), userError("Không thể ghi nhận tin nhắn của bot."));
 		assert.equal(contributions.submitted.length, 0);
+		assert.equal(deferred.length, 0);
 	});
 
-	test("điểm thuộc về tác giả tin nhắn, người bấm là người ghi nhận; trả lời công khai rồi lưu vị trí", async () =>
+	test("không có quyền gửi tin ở kênh thì bị từ chối trước khi defer; trong thread cần Send Messages in Threads", async () =>
 	{
 		const { client, contributions } = setup();
-		const { interaction, replies } = messageMenu({ content: "Script backup tự động\nChạy mỗi đêm lúc 2h", cachedRoles: [ROLE_BACKEND] });
+		const command = new RecognizeContribution(client);
 
-		await new RecognizeContribution(client).execute(interaction);
+		const readOnly = messageMenu({ send: [], fetchedRoles: [] });
+		await assert.rejects(command.execute(readOnly.interaction), userError(NO_SEND));
+		assert.equal(readOnly.deferred.length, 0);
 
+		const thread = messageMenu({ send: SEND, inThread: true, fetchedRoles: [] });
+		await assert.rejects(command.execute(thread.interaction), userError(NO_SEND));
+		assert.equal(contributions.submitted.length, 0);
+
+		const allowed = messageMenu({ send: [PermissionFlagsBits.SendMessagesInThreads], inThread: true, fetchedRoles: [] });
+		await command.execute(allowed.interaction);
+		assert.equal(contributions.submitted.length, 1);
+	});
+
+	test("defer công khai, lấy role mới qua REST, rồi mới ghi; điểm thuộc về tác giả; lưu vị trí message trả về từ editReply", async () =>
+	{
+		const { client, contributions } = setup();
+		const menu = messageMenu({ content: "Script backup tự động\nChạy mỗi đêm lúc 2h", fetchedRoles: [ROLE_BACKEND] });
+
+		await new RecognizeContribution(client).execute(menu.interaction);
+
+		assert.deepEqual(menu.calls, ["deferReply", "fetchMember", "editReply"]);
+		assert.deepEqual(menu.deferred, [undefined], "defer công khai (không ephemeral)");
+		assert.deepEqual(menu.fetchOptions, [{ user: USER_A, force: true }]);
 		assert.deepEqual(contributions.submitted, [{
 			guildId: GUILD,
 			authorId: USER_A,
 			submittedBy: USER_B,
-			title: "Script backup tự động",
-			description: "Script backup tự động\nChạy mỗi đêm lúc 2h",
+			title: "Đóng góp từ tin nhắn trong #general",
+			description: MESSAGE_CONTRIBUTION_DESCRIPTION,
 			category: "khac",
-			link: `https://discord.com/channels/${GUILD}/${CHANNEL_GENERAL}/${OTHER_MESSAGE_ID}`,
+			link: messageUrl(CHANNEL_GENERAL, OTHER_MESSAGE_ID),
 			authorRoleIds: [ROLE_BACKEND],
+			sourceMessageId: OTHER_MESSAGE_ID,
 		}]);
-		assert.equal(replies[0].flags, undefined);
-		assert.equal(field(embedJson(replies[0]), "Người ghi nhận"), `<@${USER_B}>`);
-		assert.deepEqual(contributions.attached, [{ guildId: GUILD, id: 7, channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }]);
+		assert.equal(menu.replies.length, 0);
+		assert.equal(field(embedJson(menu.edits[0]), "Người ghi nhận"), `<@${USER_B}>`);
+		assert.deepEqual(buttonsOf(menu.edits[0].components).map(button => button.customId), ["contrib:7"]);
+		assert.deepEqual(contributions.attached, [{ guildId: GUILD, id: 7, channelId: CHANNEL_GENERAL, messageId: REPLY_MESSAGE_ID }]);
 	});
 
-	test("tin nhắn rỗng hoặc quá ngắn dùng tiêu đề và mô tả mặc định; member chưa có trong cache thì lấy qua REST", async () =>
+	test("không chép nội dung tin nhắn vào contribution và không ghi nội dung ra log", async (t) =>
+	{
+		const logs: unknown[] = [];
+		t.mock.method(console, "log", (...args: unknown[]) => logs.push(...args));
+		t.mock.method(console, "error", (...args: unknown[]) => logs.push(...args));
+		const { client, contributions } = setup();
+		const secret = "Mật khẩu wifi phòng họp là 123456";
+
+		await new RecognizeContribution(client).execute(messageMenu({ content: secret }).interaction);
+
+		assert.ok(!JSON.stringify(contributions.submitted).includes("Mật khẩu"));
+		assert.ok(!JSON.stringify(logs).includes("Mật khẩu"));
+	});
+
+	test("role trong cache có thể cũ: luôn dùng role lấy mới qua REST", async () =>
 	{
 		const { client, contributions } = setup();
-		const { interaction } = messageMenu({ content: "", fetchedRoles: [ROLE_FRONTEND] });
-
-		await new RecognizeContribution(client).execute(interaction);
-
-		assert.equal(contributions.submitted[0].title, "Đóng góp từ tin nhắn");
-		assert.equal(contributions.submitted[0].description, "(Tin nhắn không có nội dung văn bản)");
+		await new RecognizeContribution(client).execute(messageMenu({ cachedRoles: [ROLE_BACKEND], fetchedRoles: [ROLE_FRONTEND] }).interaction);
 		assert.deepEqual(contributions.submitted[0].authorRoleIds, [ROLE_FRONTEND]);
 	});
 
@@ -861,11 +1216,35 @@ describe("context menu Ghi nhận đóng góp", () =>
 	{
 		t.mock.method(console, "log", () => undefined);
 		const { client, contributions } = setup();
-		const { interaction } = messageMenu({ content: "Hướng dẫn dùng VPN mới" });
 
-		await new RecognizeContribution(client).execute(interaction);
+		await new RecognizeContribution(client).execute(messageMenu({ cachedRoles: [ROLE_BACKEND] }).interaction);
 
 		assert.deepEqual(contributions.submitted[0].authorRoleIds, []);
+		assert.equal(contributions.attached.length, 1);
+	});
+
+	test("kênh không có trong cache: tiêu đề mặc định; link vẫn đúng guild (không dùng message.url)", async () =>
+	{
+		const { client, contributions } = setup();
+		await new RecognizeContribution(client).execute(messageMenu({ channelName: null, fetchedRoles: [] }).interaction);
+
+		assert.equal(contributions.submitted[0].title, "Đóng góp từ tin nhắn");
+		assert.equal(contributions.submitted[0].link, messageUrl(CHANNEL_GENERAL, OTHER_MESSAGE_ID));
+		assert.ok(!(contributions.submitted[0].link ?? "").includes("@me"));
+	});
+
+	test("service từ chối sau khi defer (tin nhắn đã được ghi nhận): lỗi được ném cho dispatcher, không lưu vị trí", async () =>
+	{
+		const { client, contributions } = setup();
+		contributions.submit = (): Contribution =>
+		{
+			throw new UserError("Tin nhắn này đã được ghi nhận.");
+		};
+		const menu = messageMenu({ fetchedRoles: [] });
+
+		await assert.rejects(new RecognizeContribution(client).execute(menu.interaction), userError("Tin nhắn này đã được ghi nhận."));
+		assert.deepEqual(menu.calls, ["deferReply", "fetchMember"]);
+		assert.equal(contributions.attached.length, 0);
 	});
 });
 
@@ -903,8 +1282,7 @@ describe("pollScheduler", () =>
 	{
 		t.mock.method(console, "log", () => undefined);
 		const logged = t.mock.method(console, "error", () => undefined);
-		const edits: { messageId: string; payload: Payload }[] = [];
-		const notText: FakeChannel = { isTextBased: () => false, messages: { edit: () => Promise.reject(new Error("không được gọi")) } };
+		const edits: Edit[] = [];
 		const client = schedulerClient(() => [
 			closedPoll(1, CHANNEL_GENERAL, "700000000000000001"),
 			closedPoll(2, CHANNEL_GENERAL, "700000000000000002"),
@@ -913,8 +1291,8 @@ describe("pollScheduler", () =>
 			closedPoll(5, CHANNEL_BOT, "700000000000000005"),
 			closedPoll(6, CHANNEL_GENERAL, "700000000000000006"),
 		], fetchFrom({
-			[CHANNEL_GENERAL]: fakeChannel(edits, ["700000000000000002"]),
-			[CHANNEL_BOT]: notText,
+			[CHANNEL_GENERAL]: fakeChannel({ edits, failFor: ["700000000000000002"] }),
+			[CHANNEL_BOT]: fakeChannel({ edits, textBased: false }),
 			"800000000000000404": "throw",
 		}));
 
@@ -955,8 +1333,8 @@ describe("pollScheduler", () =>
 		{
 			release = resolve;
 		});
-		const edits: { messageId: string; payload: Payload }[] = [];
-		const channel = fakeChannel(edits);
+		const edits: Edit[] = [];
+		const channel = fakeChannel({ edits });
 		let sweeps = 0;
 		const client = schedulerClient(() =>
 		{
