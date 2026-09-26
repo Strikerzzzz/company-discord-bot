@@ -20,6 +20,7 @@ const MAX_LIST_LIMIT = 50;
 const NOT_FOUND = "Không tìm thấy contribution này.";
 const ALREADY_REMOVED = "Contribution này đã bị gỡ.";
 const VOTE_RESET = "Lượt ghi nhận của bạn cho đóng góp này đã bị admin reset nên không thể ghi nhận lại.";
+const COMPENSATION_REASON = "Tự động bù để điểm không âm (PROP-024)";
 
 function isContributionCategory(value: string): value is ContributionCategory
 {
@@ -113,6 +114,7 @@ function toContribution(row: ContributionRow): Contribution
  * Chỉ dùng contributionLedger, không bao giờ đụng tới Activity XP (DEC-004).
  * Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
  * Lượt ghi nhận có điểm đã bị admin reset vẫn tính là đã dùng: người đó không ghi nhận lại được contribution ấy.
+ * Điểm không bao giờ âm (DEC-028, PROP-024): rút ghi nhận hoặc gỡ contribution làm tổng âm thì tự ghi event bù trong cùng transaction.
  */
 export class ContributionService implements ContributionServiceApi
 {
@@ -187,6 +189,7 @@ export class ContributionService implements ContributionServiceApi
 				if (existing.voided) throw new UserError(VOTE_RESET);
 				this.deps.contributionLedger.voidEvent(existing.eventId);
 				this.repo.deleteVote(contributionId, voterId);
+				this.compensateNegative(guildId, contribution.authorId, contributionId);
 				return { voted: false, contribution: this.require(guildId, contributionId) };
 			}
 
@@ -211,9 +214,11 @@ export class ContributionService implements ContributionServiceApi
 			const contribution = this.requireActive(guildId, contributionId);
 			this.repo.markRemoved(guildId, contributionId, this.deps.clock.now(), actorId);
 			this.deps.contributionLedger.voidByReference(guildId, String(contributionId));
+			const compensated = this.compensateNegative(guildId, contribution.authorId, contributionId);
 			this.deps.audit.record(guildId, actorId, "contribution.remove", contribution.authorId, {
 				contributionId,
 				title: contribution.title,
+				...(compensated > 0 ? { compensated } : {}),
 			});
 			return this.require(guildId, contributionId);
 		})();
@@ -280,6 +285,31 @@ export class ContributionService implements ContributionServiceApi
 			totalRanked,
 			contributions: this.repo.countActiveByAuthor(guildId, userId),
 		};
+	}
+
+	/**
+	 * PROP-024: gọi ngay sau khi huỷ điểm của một contribution, trong cùng transaction. Tổng của tác giả âm thì ghi một
+	 * event bù (nguồn admin, không có actor) để tổng về đúng 0; trả về số điểm đã bù (0 nếu không cần bù).
+	 * reference_id để null để lần gỡ hay rút ghi nhận sau (void theo reference) không huỷ nhầm event bù.
+	 * Dùng snapshot team của contribution, nên điểm team chỉ mất đúng phần tác giả thực sự mất.
+	 */
+	private compensateNegative(guildId: string, authorId: string, contributionId: number): number
+	{
+		const ledger = this.deps.contributionLedger;
+		const total = ledger.total(guildId, authorId);
+		if (total >= 0) return 0;
+
+		ledger.record({
+			guildId,
+			userId: authorId,
+			amount: -total,
+			source: "admin",
+			referenceId: null,
+			actorId: null,
+			reason: COMPENSATION_REASON,
+			teamRoleIds: this.repo.teamRoleIds(contributionId),
+		});
+		return -total;
 	}
 
 	/** Contribution chắc chắn tồn tại (vừa ghi trong cùng transaction). */

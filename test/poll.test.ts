@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { SETTING_LIMITS } from "../src/modules/guild-config/types";
 import { PollService } from "../src/modules/poll/PollService";
-import { CreatePollInput, Poll, POLL_LIMITS } from "../src/modules/poll/types";
+import { CreatePollInput, Poll, POLL_LIMITS, PollVoteResult } from "../src/modules/poll/types";
 import { UserError } from "../src/shared/errors";
 import {
 	ADMIN,
@@ -517,5 +517,155 @@ describe("PollService: guild và message", () =>
 
 		assertUserError(() => polls.attachMessage(OTHER_GUILD, id, CHANNEL_GENERAL, MESSAGE_ID), "Không tìm thấy vote này.");
 		assertUserError(() => polls.attachMessage(GUILD, id + 1, CHANNEL_GENERAL, MESSAGE_ID), "Không tìm thấy vote này.");
+	});
+});
+
+describe("PollService: giới hạn XP từ vote mỗi ngày (PROP-028)", () =>
+{
+	/** 00:00 ngày 02/01/2026 giờ Việt Nam = 17:00 UTC ngày 01/01. Đồng hồ test bắt đầu lúc 07:00 giờ Việt Nam ngày 01/01. */
+	const NEXT_VN_DAY = Date.UTC(2026, 0, 1, 17, 0, 0);
+
+	type PollContext = ReturnType<typeof setup>;
+
+	/** Tạo một vote mới rồi cho userId bấm lựa chọn đầu tiên. */
+	function voteNew(context: PollContext, overrides: Partial<CreatePollInput> = {}, userId = USER_A): PollVoteResult
+	{
+		const poll = context.polls.create(pollInput(overrides));
+		return context.polls.vote({ guildId: poll.guildId, pollId: poll.id, userId, optionIndex: 0, roleIds: [] });
+	}
+
+	function revote(context: PollContext, pollId: number, optionIndex: number): PollVoteResult
+	{
+		return context.polls.vote({ guildId: GUILD, pollId, userId: USER_A, optionIndex, roleIds: [] });
+	}
+
+	function summary(result: PollVoteResult): [number, boolean, number]
+	{
+		return [result.xpAwarded, result.xpCapped, result.dailyCap];
+	}
+
+	function participantEventId(context: PollContext, pollId: number, userId: string): number | null | undefined
+	{
+		return context.db.prepare<[number, string], { xp_event_id: number | null }>("SELECT xp_event_id FROM poll_participants WHERE poll_id = ? AND user_id = ?")
+			.get(pollId, userId)?.xp_event_id;
+	}
+
+	test("mặc định 25 XP mỗi ngày: XP 5 mỗi vote thì vote thứ 6 trong ngày không được XP nhưng vẫn tính là đã tham gia", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		assert.equal(deps.guildConfig.getSettings(GUILD).pollXpDailyCap, 25);
+
+		for (let i = 0; i < 5; i++) assert.deepEqual(summary(voteNew(context)), [5, false, 25]);
+		const sixth = voteNew(context);
+		assert.deepEqual(summary(sixth), [0, true, 25]);
+		assert.deepEqual(sixth.selected, [0]);
+		assert.equal(sixth.poll.participants, 1);
+		assert.equal(participantEventId(context, sixth.poll.id, USER_A), null);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 25);
+		assert.equal(countRows(context, "xp_events"), 5, "bị cắt về 0 thì không ghi event XP");
+
+		assert.deepEqual(summary(voteNew(context, {}, USER_B)), [5, false, 25], "giới hạn tính riêng từng người");
+	});
+
+	test("cắt một phần: XP 20 với giới hạn 25 thì được 20, rồi 5, rồi 0", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		const first = voteNew(context, { xpReward: 20 });
+		const second = voteNew(context, { xpReward: 20 });
+		const third = voteNew(context, { xpReward: 20 });
+
+		assert.deepEqual(summary(first), [20, false, 25]);
+		assert.deepEqual(summary(second), [5, true, 25]);
+		assert.deepEqual(summary(third), [0, true, 25]);
+		const events = deps.xpLedger.recent(GUILD, USER_A, 10).reverse();
+		assert.deepEqual(events.map(event => [event.amount, event.source, event.referenceId]), [
+			[20, "poll", String(first.poll.id)],
+			[5, "poll", String(second.poll.id)],
+		]);
+		assert.equal(participantEventId(context, second.poll.id, USER_A), events[1].id);
+		assert.equal(participantEventId(context, third.poll.id, USER_A), null);
+	});
+
+	test("sang ngày mới (00:00 giờ Việt Nam = 17:00 UTC) được nhận lại; phần bị cắt hôm trước không được cộng bù", () =>
+	{
+		const context = setup();
+		const { deps, clock } = context;
+		const big = voteNew(context, { xpReward: 30, multiSelect: true });
+		const small = voteNew(context, { multiSelect: true });
+		assert.deepEqual(summary(big), [25, true, 25]);
+		assert.deepEqual(summary(small), [0, true, 25]);
+
+		clock.current = NEXT_VN_DAY - 1;
+		assert.deepEqual(summary(voteNew(context)), [0, true, 25], "23:59:59.999 giờ Việt Nam vẫn là ngày cũ");
+
+		clock.current = NEXT_VN_DAY;
+		assert.deepEqual(summary(revote(context, big.poll.id, 1)), [0, false, 25]);
+		assert.deepEqual(summary(revote(context, small.poll.id, 1)), [0, false, 25]);
+		assert.deepEqual(summary(voteNew(context, { xpReward: 30 })), [25, true, 25]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 50);
+	});
+
+	test("giới hạn 0 là không giới hạn", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		deps.guildConfig.updateSettings(GUILD, { pollXpDailyCap: 0 }, ADMIN);
+
+		for (let i = 0; i < 10; i++) assert.deepEqual(summary(voteNew(context)), [5, false, 0]);
+		assert.deepEqual(summary(voteNew(context, { xpReward: SETTING_LIMITS.defaultPollXp.max })), [SETTING_LIMITS.defaultPollXp.max, false, 0]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 50 + SETTING_LIMITS.defaultPollXp.max);
+	});
+
+	test("XP từ vote đã bị admin reset (event đã huỷ) không tính vào phần đã dùng", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		const first = voteNew(context);
+		for (let i = 0; i < 4; i++) voteNew(context);
+		assert.equal(voteNew(context).xpAwarded, 0);
+
+		const firstEventId = participantEventId(context, first.poll.id, USER_A);
+		assert.ok(typeof firstEventId === "number");
+		deps.xpLedger.voidEvent(firstEventId);
+		assert.deepEqual(summary(voteNew(context)), [5, false, 25]);
+		assert.deepEqual(summary(voteNew(context)), [0, true, 25]);
+
+		deps.xpLedger.voidUser(GUILD, USER_A);
+		assert.deepEqual(summary(voteNew(context, { xpReward: 30 })), [25, true, 25]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 25);
+	});
+
+	test("XP từ tin nhắn, từ admin và từ vote ở guild khác không tính vào giới hạn", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		deps.xpLedger.record({ guildId: GUILD, userId: USER_A, amount: 100, source: "message" });
+		deps.xpLedger.record({ guildId: GUILD, userId: USER_A, amount: 50, source: "admin", actorId: ADMIN });
+		assert.deepEqual(summary(voteNew(context, { guildId: OTHER_GUILD, xpReward: 25 })), [25, false, 25]);
+
+		assert.deepEqual(summary(voteNew(context, { xpReward: 25 })), [25, false, 25]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 175);
+		assert.equal(deps.xpLedger.total(OTHER_GUILD, USER_A), 25);
+	});
+
+	test("xpCapped chỉ true ở lần tham gia đầu của vote có XP; dailyCap luôn là giới hạn hiện tại", () =>
+	{
+		const context = setup();
+		const { deps } = context;
+		const first = voteNew(context, { xpReward: 20, multiSelect: true });
+		assert.deepEqual(summary(revote(context, first.poll.id, 1)), [0, false, 25]);
+
+		deps.guildConfig.updateSettings(GUILD, { pollXpDailyCap: 10 }, ADMIN);
+		const lowered = voteNew(context, { multiSelect: true });
+		assert.deepEqual(summary(lowered), [0, true, 10], "đã dùng 20, vượt giới hạn mới 10");
+		assert.deepEqual(summary(revote(context, lowered.poll.id, 1)), [0, false, 10]);
+		assert.deepEqual(summary(voteNew(context, { xpReward: 0 })), [0, false, 10], "vote không có XP thì không bị coi là bị cắt");
+
+		deps.guildConfig.updateSettings(GUILD, { pollXpDailyCap: 30 }, ADMIN);
+		assert.deepEqual(summary(revote(context, lowered.poll.id, 2)), [0, false, 30], "nới giới hạn cũng không cộng bù cho vote đã tham gia");
+		assert.deepEqual(summary(voteNew(context, { xpReward: 20 })), [10, true, 30]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 30);
 	});
 });

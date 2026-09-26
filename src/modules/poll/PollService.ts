@@ -1,5 +1,6 @@
 import { Db } from "../../db/connection";
 import { UserError } from "../../shared/errors";
+import { startOfVnDay } from "../../shared/time";
 import { ServiceDeps } from "../deps";
 import { SETTING_LIMITS } from "../guild-config/types";
 import { PollRepository, PollRow } from "./PollRepository";
@@ -76,6 +77,8 @@ function validateDuration(durationMinutes: number | null): void
  * - Phiếu ẩn danh: chỉ trả số lượng mỗi lựa chọn, không bao giờ trả danh sách người chọn.
  * - Được đổi phiếu tới khi vote đóng.
  * - Người tham gia được XP một lần cho mỗi vote, cộng vào Activity XP (không đụng tới Contribution, DEC-004).
+ * - Tổng XP từ vote của một người trong một ngày (giờ Việt Nam) không vượt `pollXpDailyCap` (DEC-028, PROP-028); phần bị cắt
+ *   không được cộng bù về sau.
  */
 export class PollService implements PollServiceApi
 {
@@ -152,23 +155,30 @@ export class PollService implements PollServiceApi
 				this.repo.addVote(pollId, userId, optionIndex, now);
 			}
 
-			// Trạng thái "đã tham gia" giữ nguyên kể cả khi bỏ hết lựa chọn, nên XP chỉ được cộng một lần.
+			// Trạng thái "đã tham gia" giữ nguyên kể cả khi bỏ hết lựa chọn, nên XP chỉ được xét một lần.
+			// Vì vậy phần XP bị giới hạn ngày cắt đi cũng không bao giờ được cộng lại (bấm lại hay đổi phiếu hôm sau).
+			const dailyCap = this.deps.guildConfig.getSettings(guildId).pollXpDailyCap;
 			let xpAwarded = 0;
+			let xpCapped = false;
 			if (!this.repo.hasParticipant(pollId, userId))
 			{
 				let xpEventId: number | null = null;
 				if (row.xp_reward > 0)
 				{
+					xpAwarded = this.cappedPollXp(guildId, userId, row.xp_reward, dailyCap, now);
+					xpCapped = xpAwarded < row.xp_reward;
+				}
+				if (xpAwarded > 0)
+				{
 					const event = this.deps.xpLedger.record({
 						guildId,
 						userId,
-						amount: row.xp_reward,
+						amount: xpAwarded,
 						source: "poll",
 						referenceId: String(pollId),
 						teamRoleIds: this.deps.teams.resolveTeams(guildId, input.roleIds),
 					});
 					xpEventId = event.id;
-					xpAwarded = row.xp_reward;
 				}
 				this.repo.insertParticipant(pollId, userId, xpEventId, now);
 			}
@@ -177,8 +187,8 @@ export class PollService implements PollServiceApi
 				poll: this.load(pollId, now),
 				selected: this.repo.selectedOptions(pollId, userId),
 				xpAwarded,
-				xpCapped: false,
-				dailyCap: this.deps.guildConfig.getSettings(guildId).pollXpDailyCap,
+				xpCapped,
+				dailyCap,
 			};
 		})();
 	}
@@ -221,6 +231,17 @@ export class PollService implements PollServiceApi
 	{
 		const now = this.deps.clock.now();
 		return this.repo.findOpen(guildId, now).map(row => this.toPoll(row, now));
+	}
+
+	/**
+	 * XP được cộng cho một lượt tham gia sau khi áp giới hạn ngày (PROP-028): phần còn lại của giới hạn trong ngày giờ Việt Nam
+	 * chứa `now`, tính từ các event nguồn "poll" chưa huỷ (XP bị admin reset không tính là đã dùng). dailyCap = 0 là không giới hạn.
+	 */
+	private cappedPollXp(guildId: string, userId: string, xpReward: number, dailyCap: number, now: number): number
+	{
+		if (dailyCap <= 0) return xpReward;
+		const used = this.deps.xpLedger.sumSince(guildId, userId, "poll", startOfVnDay(now));
+		return Math.max(0, Math.min(xpReward, dailyCap - used));
 	}
 
 	/** Dòng poll thuộc guild, hoặc null nếu không có (kể cả khi id không phải số nguyên). */
