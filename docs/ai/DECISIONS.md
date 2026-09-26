@@ -161,6 +161,78 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Bước 6 của Phase 1 (chạy thật trên Discord) vẫn còn mở, vì chưa có bot và server test.
   - Nếu bước 6 phát hiện lỗi, sửa trên branch mới tách từ `main`.
 
+### DEC-020 — Bot trả lời người dùng bằng tiếng Việt
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-014)
+- **Nội dung:**
+  - Mọi nội dung bot hiển thị trên Discord (reply, embed, nút, mô tả command, option) viết bằng tiếng Việt.
+  - Tên command và subcommand giữ ngắn gọn bằng tiếng Anh (ví dụ `/rank`, `/leaderboard`) để dễ gõ; tên option dùng tiếng Việt không dấu (ví dụ `thanh-vien`).
+
+### DEC-021 — Hoàn thiện toàn bộ tính năng trước khi chạy thật
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("code hoàn thiện tất cả mọi tính năng tôi yêu cầu và thử nghiệm")
+- **Nội dung:**
+  - Làm Phase 2–10 liên tục trên một branch `phase-2-10/hoan-thien-tinh-nang`, commit theo từng phần. Kiểm chứng bằng test tự động.
+  - Chạy bot thật sau khi có server Linux.
+  - Duyệt các proposal kỹ thuật cần cho việc này: PROP-007, 009, 011, 013, 014, 018, 019.
+- **Hệ quả:**
+  - Ngoại lệ so với DEC-018 (mỗi phase một branch): gộp các phase vào một branch.
+  - Người phụ trách review một lần trước khi merge vào `main`.
+
+### DEC-022 — Công thức Activity XP và Level
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-008)
+- **Nội dung:**
+  - Mỗi tin nhắn hợp lệ được một lượng XP cố định do admin đặt (mặc định **10**, có thể đặt riêng theo channel).
+  - Cooldown mặc định **60 giây** mỗi người, admin chỉnh được, có thể đặt riêng theo channel.
+  - Level: cần **5n² + 50n + 100** XP để lên từ level n lên level n+1 (level bắt đầu từ 0).
+
+### DEC-023 — Chống spam bằng nội dung tin nhắn, không lưu nội dung
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-006; duyệt PROP-015)
+- **Nội dung:**
+  - Bật intent `GuildMessages` và privileged intent `MessageContent`.
+  - Tin nhắn không được XP nếu: quá ngắn (mặc định dưới **5** ký tự sau khi chuẩn hoá, admin chỉnh), hoặc trùng với tin trước đó của chính người đó trong một khoảng thời gian (mặc định **300 giây**, admin chỉnh), hoặc đang trong cooldown.
+  - Tin chỉ có file đính kèm vẫn được xét (chỉ áp dụng cooldown).
+  - Nội dung chỉ xử lý trong bộ nhớ; **không ghi nội dung hay hash vào database**.
+
+### DEC-024 — Điểm team là tổng, tính theo team lúc kiếm điểm
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-007 và phần team của PEND-008; duyệt PROP-016)
+- **Nội dung:**
+  - Mỗi lần phát sinh điểm (XP hoặc contribution), lưu kèm các role team người đó có tại thời điểm đó.
+  - Điểm team là tổng điểm theo snapshot này; người có nhiều role team thì điểm tính cho mọi team đó.
+  - Chỉ hiển thị team đang được cấu hình.
+- **Hệ quả:** Không cần intent `GuildMembers`.
+
+### DEC-025 — Quy tắc Contribution
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (trả lời PEND-009; duyệt PROP-017)
+- **Nội dung:**
+  - Ai cũng gửi được contribution: qua `/contribution submit`, hoặc chuột phải vào một tin nhắn và chọn "Ghi nhận đóng góp" (điểm thuộc về tác giả tin nhắn).
+  - Người khác bấm nút 👍 để ghi nhận. Mỗi người 1 lần mỗi contribution; không tự ghi nhận cho mình; bấm lại để rút.
+  - Mỗi lượt ghi nhận cộng cho tác giả một số điểm do admin đặt (mặc định **1**).
+  - Admin gỡ được contribution (điểm của nó bị huỷ) và điều chỉnh hoặc reset điểm; mọi thao tác ghi vào audit log.
+- **Hệ quả:** Giới hạn số contribution mỗi ngày và thống kê vote qua lại (trong PROP-017) chưa làm.
+
+### DEC-026 — Tính năng vote / bầu cử / lấy ý kiến
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (yêu cầu tính năng mới và chọn quy tắc)
+- **Nội dung:**
+  - Admin, hoặc người có role được admin cấp quyền, tạo vote: câu hỏi + 2–10 lựa chọn, chọn 1 hoặc nhiều, thời hạn tự đóng (tuỳ chọn).
+  - Phiếu **ẩn danh**: chỉ hiển thị số lượng. Được đổi phiếu tới khi vote đóng.
+  - Người vote được XP **một lần** cho mỗi vote; XP cộng vào **Activity XP**.
+  - XP mặc định do admin cấu hình (mặc định **5**). Admin đặt được XP riêng khi tạo vote; người tạo không phải admin chỉ dùng mức mặc định.
+  - Người tạo vote hoặc admin đóng được vote.
+
+### DEC-027 — Dữ liệu tách theo guild, reset không xoá dữ liệu
+
+- **Ngày:** 2026-09-26 · **Trạng thái:** CHỐT · **Nguồn:** quyết định kỹ thuật trong phạm vi DEC-021 (trả lời PEND-010)
+- **Nội dung:**
+  - Mọi bảng đều có `guild_id`; cấu hình và điểm của từng guild độc lập.
+  - Mọi biến động điểm lưu thành ledger append-only (PROP-014).
+  - Reset hoặc gỡ không xoá dòng dữ liệu nào, chỉ đánh dấu `voided_at`, nên luôn truy vết được.
+
 ---
 
 ## Đang chờ quyết định
@@ -168,15 +240,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | Mã | Câu hỏi | Ảnh hưởng tới | Liên quan |
 | --- | --- | --- | --- |
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
-| PEND-005 | Máy chủ Linux cụ thể (xin cấp server nội bộ?) và process manager (đề xuất systemd) | Phase 2 (backup), Phase 11 | DEC-016, PROP-018 |
-| PEND-006 | Có bật privileged intent `MessageContent` cho anti-spam không? | Phase 4 | PROP-015 |
-| PEND-007 | Thành viên team tính theo role tại thời điểm ghi điểm (snapshot) hay role hiện tại (cần intent `GuildMembers`)? | Phase 6 | PROP-016 |
-| PEND-008 | Công thức: XP mỗi tin nhắn, đường cong level, team score, contribution score | Phase 4–9 | DEC-012 |
-| PEND-009 | Contribution được tạo bằng cách nào (slash command, context menu trên message)? Quy tắc vote: tự vote, số vote mỗi người, trọng số? | Phase 7–8 | PROP-017 |
-| PEND-010 | Bot phục vụ một guild hay nhiều guild? | Phase 2 (thiết kế schema) | — |
-| PEND-011 | Chọn test framework | Phase 2 | PROP-009 |
-| PEND-012 | Duyệt cấu trúc module mục tiêu | Phase 2 | PROP-011 |
-| PEND-013 | Chính sách lưu và giữ dữ liệu (nội dung tin nhắn, thời gian giữ log/audit) | Phase 2, 4 | PROP-014, 015 |
-| PEND-014 | Ngôn ngữ bot hiển thị cho người dùng Discord (tiếng Việt hay tiếng Anh)? Hiện code demo dùng tiếng Anh | Phase 3 trở đi | — |
+| PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
+| PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
 
-**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016.
+**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020.

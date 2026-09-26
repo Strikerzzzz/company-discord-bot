@@ -16,19 +16,19 @@
 | PROP-004 | Cập nhật dependency runtime, bỏ dependency trùng | HIGH | IMPLEMENTED |
 | PROP-005 | Quản lý secret bằng environment variable | HIGH | IMPLEMENTED |
 | PROP-006 | Tách git khỏi repo upstream public | MEDIUM | IMPLEMENTED (2026-09-24) |
-| PROP-007 | Nền tảng database | HIGH | PROPOSED |
+| PROP-007 | Nền tảng database | HIGH | APPROVED |
 | PROP-008 | Backup và restore SQLite | MEDIUM | APPROVED |
-| PROP-009 | Chiến lược test không thêm dependency | MEDIUM | PROPOSED |
+| PROP-009 | Chiến lược test không thêm dependency | MEDIUM | APPROVED |
 | PROP-010 | ESLint dùng thông tin type | MEDIUM | IMPLEMENTED |
-| PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | PROPOSED |
+| PROP-011 | Cấu trúc module mục tiêu và composition root | HIGH | APPROVED |
 | PROP-012 | Hardening tầng Discord | MEDIUM | IMPLEMENTED |
-| PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | PROPOSED |
-| PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | PROPOSED |
-| PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | PROPOSED |
-| PROP-016 | Snapshot team tại thời điểm ghi điểm | MEDIUM | PROPOSED |
-| PROP-017 | Chống gian lận vote contribution | MEDIUM | PROPOSED |
-| PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | PROPOSED |
-| PROP-019 | Dọn code demo và viết lại README | LOW | PROPOSED |
+| PROP-013 | Phân quyền admin hai lớp và audit log | HIGH | APPROVED |
+| PROP-014 | Sổ cái (ledger) cho mọi biến động điểm | MEDIUM | APPROVED |
+| PROP-015 | Anti-spam không lưu nội dung tin nhắn | MEDIUM | APPROVED |
+| PROP-016 | Snapshot team tại thời điểm ghi điểm | MEDIUM | APPROVED |
+| PROP-017 | Chống gian lận vote contribution | MEDIUM | APPROVED |
+| PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | APPROVED |
+| PROP-019 | Dọn code demo và viết lại README | LOW | APPROVED |
 | PROP-020 | Leaderboard theo kỳ | LOW | PROPOSED |
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
 | PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
@@ -318,7 +318,7 @@ HIGH
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
@@ -400,7 +400,7 @@ Phương án (a) phải tránh đưa file test vào build production. Phương �
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
@@ -479,7 +479,7 @@ Nếu làm quá tay thì thành over-engineering. Chỉ tạo module khi có fea
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
@@ -566,7 +566,7 @@ Cấu hình role admin sai có thể khoá hết admin. Cần có đường dự
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
@@ -605,7 +605,7 @@ Bảng ledger tăng dần theo thời gian; cần chính sách giữ hoặc gộ
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021, DEC-027)
 
 ---
 
@@ -644,7 +644,7 @@ Trạng thái trong bộ nhớ mất khi restart, dẫn tới một khoảng ng�
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-023)
 
 ---
 
@@ -681,7 +681,7 @@ MEDIUM
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-024)
 
 ---
 
@@ -725,7 +725,7 @@ Quy tắc quá chặt làm giảm việc sử dụng. Đây là business rule, c
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-025)
 
 ---
 
@@ -766,7 +766,7 @@ Thấp.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
@@ -807,7 +807,7 @@ Không.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-26, DEC-021)
 
 ---
 
