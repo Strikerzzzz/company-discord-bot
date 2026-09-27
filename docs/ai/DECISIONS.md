@@ -286,6 +286,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Người gán role cảnh giới phải có Manage Roles, và role phải thấp hơn role cao nhất của họ (trừ chủ server). Đây đúng là phép kiểm tra Discord áp cho người thường khi gán role, nên bot không thành đường vòng để tự cấp role.
   - Không nhận role có quyền nguy hiểm ở cấp server **hoặc** qua permission overwrite của bất kỳ kênh nào. Danh sách quyền nguy hiểm thêm Pin Messages, Bypass Slowmode, View Server Insights.
   - Tên lệnh theo DEC-020: `/config tier set-role|clear-role|list`, `/config board`.
+  - Bổ sung sau review Phase 13: không nhận role bật "cho phép mọi người @mention", vì role danh hiệu bậc thấp gần như ai cũng có. Danh sách quyền nguy hiểm thêm Create Expressions, Create Events, View Creator Monetization Analytics.
 
 ### DEC-032 — Duyệt Phase 12; chặn xoá hình phạt; giữ nguyên quy tắc ảnh kèm chữ ngắn
 
@@ -308,6 +309,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Component (nút, menu, form) của lệnh admin được kiểm tra quyền admin ở dispatcher, giống lệnh gõ (lớp quyền 2).
   - Hai huy hiệu mang tên tu tiên đổi sang tên trung tính cho hợp mọi bộ: "Bế Quan Tu Luyện" → "Chuyên Cần", "Bách Nhật Trúc Cơ" → "Bách Nhật Bền Bỉ".
 - **Hệ quả:** migration 4 (khoá bậc mới, `tier_roles.created_by_bot`, `tier_set_config`, `tier_name_overrides`); audit mới `tier_set.set`, `tier_name.set`, `tier_name.reset`, `tier_role.setup`.
+- **Bổ sung sau review độc lập** (2026-09-27, sửa lỗi bảo mật/hiển thị; không nới quyền):
+  - Nút tạo/đồng bộ role **chỉ tự đổi tên/màu role do bot tạo**. Role do admin tự gán thì giữ nguyên tên, bot chỉ báo lại, để không lặng lẽ đổi tên một role có sẵn.
+  - Bỏ gán một role do bot tạo thì bot **xoá role đó**, nếu người thao tác có Manage Roles. Nhờ vậy không tích tụ role mồ côi.
+  - Tên bậc không được chứa link hay invite, ký tự vô hình hoặc giả chữ, hay chuỗi dấu kết hợp (Zalgo). Tối đa 32 ký tự và 48 đơn vị UTF-16. Emoji phải là một emoji Unicode chuẩn (RGI). Thông báo công khai tắt xem trước link.
+  - Bậc đã đổi tên thì thông báo lên bậc dùng vế trung tính "vượt mốc Level N" thay cho vế có tên mặc định, để câu không tự mâu thuẫn.
 
 ---
 

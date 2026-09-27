@@ -41,6 +41,7 @@
 | PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | IMPLEMENTED |
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
+| PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | PROPOSED |
 
 ---
 
@@ -1285,3 +1286,39 @@ MEDIUM
 ### Trạng thái
 
 IMPLEMENTED (2026-09-27, DEC-032): phương án (a). Lần rút làm phát sinh điểm bù thì giữ dòng vote (event đã huỷ), người rút không ghi nhận lại được; phản hồi báo rõ lý do.
+
+---
+
+## PROP-032 — `/config admin-role` chỉ người có Manage Server đặt được
+
+### Vấn đề
+
+Người có role admin bot, kể cả khi không có quyền Manage Server, dùng được `/config admin-role` để trỏ role admin bot sang bất kỳ role nào. Ví dụ, họ có thể bỏ gán một role danh hiệu mà gần như mọi thành viên đang giữ, rồi đặt role đó làm role admin bot. Cách này biến nhiều người thành admin bot. Reviewer bảo mật Phase 13 ghi nhận vấn đề này (có từ Phase 3, Phase 13 không mở thêm đường mới).
+
+### Đề xuất
+
+Chỉ người có Manage Server cấp server (`member.permissions`, LL-019), hoặc chủ server, mới đổi được `/config admin-role`. Người chỉ có role admin bot vẫn dùng được các lệnh cấu hình khác.
+
+### Lý do
+
+Quyền "chỉ định ai là admin bot" nên thuộc người quản trị server thật, không thuộc chính admin bot.
+
+### Tác động
+
+- **Code:** `config.ts` (`updateAdminRole`).
+- **Database:** Không.
+- **Security:** Đóng một đường tự mở rộng quyền trong bot.
+- **UX:** Admin bot không tự đổi được role admin.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Đổi quy tắc phân quyền (PROP-013, DEC-021), nên cần người phụ trách duyệt.
+
+### Trạng thái
+
+PROPOSED
