@@ -13,6 +13,7 @@ const USERS = 300;
 const DAYS = 60;
 const ROLES = 12;
 const CONFIGURED_TEAMS = 10;
+const TIED = 2000;
 const DAY = 86_400_000;
 // 23:00 Chủ nhật 27/09/2026 giờ Việt Nam: bảng tuần gần đủ 7 ngày, bảng tháng gần đủ 27 ngày (~45% số event).
 const NOW = Date.UTC(2026, 8, 27, 16, 0);
@@ -53,6 +54,33 @@ function seed(db: Db): void
 		INSERT INTO member_xp (guild_id, user_id, total)
 		SELECT guild_id, user_id, SUM(amount) FROM xp_events WHERE voided_at IS NULL GROUP BY guild_id, user_id;
 	`);
+}
+
+/**
+ * Thêm `count` người cùng có đúng 10 XP trong tháng (một event mỗi người, hôm qua), user ID "t0000"…: nhóm hoà điểm
+ * tràn qua hàng trăm trang (điểm thấp hơn mọi người của seed nên đứng cuối bảng).
+ */
+function seedTied(db: Db, count: number): string[]
+{
+	// Các hằng số là số do test định nghĩa, không phải input.
+	db.exec(`
+		WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < ${count - 1})
+		INSERT INTO xp_events (guild_id, user_id, amount, source, created_at)
+		SELECT '${GUILD}', 't' || printf('%04d', n), 10, 'message', ${NOW - DAY} FROM seq;
+		INSERT INTO member_xp (guild_id, user_id, total) SELECT guild_id, user_id, amount FROM xp_events WHERE user_id LIKE 't%';
+	`);
+	return Array.from({ length: count }, (_, n) => `t${String(n).padStart(4, "0")}`);
+}
+
+/** Vị trí 0-based của một người trong bảng cá nhân của kỳ, tính bằng cách đọc cả bảng rồi tìm (để đối chiếu). */
+function naivePosition(db: Db, since: number, userId: string): number
+{
+	const rows = db.prepare<[string, number], { id: string }>(`
+		SELECT user_id AS id FROM xp_events
+		WHERE guild_id = ? AND created_at >= ? AND voided_at IS NULL
+		GROUP BY user_id HAVING SUM(amount) > 0
+		ORDER BY SUM(amount) DESC, user_id ASC`).all(GUILD, since);
+	return rows.findIndex(row => row.id === userId);
 }
 
 /** Top 10 cá nhân của kỳ tính bằng câu SQL đơn giản nhất (không INDEXED BY) để đối chiếu. */
@@ -108,6 +136,50 @@ describe("Bảng xếp hạng theo kỳ: hiệu năng", () =>
 				teamMonth: medianMs(() => board.query(q("team", "month"))),
 				standingMonth: medianMs(() => board.userStanding(GUILD, "activity", "month", "u7")),
 				profile: medianMs(() => gamification.profile(GUILD, "u7")),
+			};
+			t.diagnostic(Object.entries(timings).map(([name, ms]) => `${name}=${ms.toFixed(1)}ms`).join(" "));
+			for (const [name, ms] of Object.entries(timings))
+			{
+				assert.ok(ms < MAX_MS, `${name} mất ${ms.toFixed(2)} ms (ngưỡng ${MAX_MS} ms)`);
+			}
+		}
+		finally
+		{
+			db.close();
+		}
+	});
+
+	test(`"Hạng của tôi" ở kỳ tháng khi nhóm ${TIED} người hoà điểm tràn trang (trên ${EVENTS} event): tìm vị trí và lấy trang dưới ${MAX_MS} ms`, t =>
+	{
+		const context = createTestContext();
+		const { db, deps, clock } = context;
+		try
+		{
+			seed(db);
+			const tied = seedTied(db, TIED);
+			clock.current = NOW;
+			const board = new LeaderboardService(deps);
+			const monthStart = startOfVnMonth(NOW);
+			const viewer = tied[TIED - 1];
+
+			const position = board.userPosition(GUILD, "activity", "month", viewer);
+			assert.equal(position, naivePosition(db, monthStart, viewer));
+			assert.equal(position, USERS + TIED - 1, "người cuối của nhóm hoà điểm đứng cuối bảng");
+			assert.equal(board.userPosition(GUILD, "activity", "all", viewer), USERS + TIED - 1);
+			const click = (): number =>
+			{
+				const found = board.userPosition(GUILD, "activity", "month", viewer);
+				assert.ok(found !== null);
+				const page = board.query({ guildId: GUILD, kind: "activity", scope: "individual", period: "month", page: Math.floor(found / 10) + 1, pageSize: 10 });
+				assert.ok(page.entries.some(entry => entry.id === viewer));
+				return page.page;
+			};
+			assert.equal(click(), Math.floor((USERS + TIED - 1) / 10) + 1);
+
+			const timings = {
+				positionMonth: medianMs(() => board.userPosition(GUILD, "activity", "month", viewer)),
+				positionAll: medianMs(() => board.userPosition(GUILD, "activity", "all", viewer)),
+				meClickMonth: medianMs(click),
 			};
 			t.diagnostic(Object.entries(timings).map(([name, ms]) => `${name}=${ms.toFixed(1)}ms`).join(" "));
 			for (const [name, ms] of Object.entries(timings))

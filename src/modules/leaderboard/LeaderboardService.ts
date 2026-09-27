@@ -8,7 +8,8 @@ export type LeaderboardScope = "individual" | "team";
 
 /**
  * Kỳ xếp hạng (DEC-029): "all" = tổng từ trước tới nay; "week" = từ 00:00 thứ Hai; "month" = từ 00:00 ngày 1,
- * theo giờ Việt Nam (src/shared/time.ts). Điểm của kỳ = tổng các event chưa huỷ phát sinh trong kỳ.
+ * theo giờ Việt Nam (src/shared/time.ts). Điểm của kỳ = điểm kiếm được trong kỳ: tổng các event chưa huỷ phát sinh
+ * trong kỳ, không tính event bù tự động của PROP-024 (xem Ledger.topSince).
  */
 export type LeaderboardPeriod = "all" | "week" | "month";
 
@@ -68,6 +69,12 @@ export interface LeaderboardServiceApi
 	query(query: LeaderboardQuery): LeaderboardPage;
 	/** Hạng và điểm của một người trong bảng cá nhân của một kỳ (kỳ "all" khớp với Ledger.rank). */
 	userStanding(guildId: string, kind: ScoreKind, period: LeaderboardPeriod, userId: string): LeaderboardStanding;
+	/**
+	 * Vị trí 0-based của một người trong đúng thứ tự hiển thị của bảng cá nhân của một kỳ (điểm giảm dần, hoà điểm theo
+	 * user ID tăng dần, chỉ điểm dương); null nếu người đó không có trên bảng. Trang có người đó (bắt đầu từ 1) là
+	 * floor(position / pageSize) + 1. Kỳ "all" đọc bảng cache; kỳ tuần/tháng quét ledger của kỳ đúng một lần.
+	 */
+	userPosition(guildId: string, kind: ScoreKind, period: LeaderboardPeriod, userId: string): number | null;
 }
 
 export const DEFAULT_PAGE_SIZE = 10;
@@ -133,6 +140,13 @@ export class LeaderboardService implements LeaderboardServiceApi
 		}
 		const { rank, total, totalRanked } = ledger.rankSince(guildId, userId, since);
 		return { rank, value: total, totalRanked };
+	}
+
+	userPosition(guildId: string, kind: ScoreKind, period: LeaderboardPeriod, userId: string): number | null
+	{
+		const ledger = this.ledger(kind);
+		const since = this.periodStart(period);
+		return since === null ? ledger.position(guildId, userId) : ledger.positionSince(guildId, userId, since);
 	}
 
 	/** Mốc bắt đầu kỳ theo giờ Việt Nam tại thời điểm hiện tại; null với kỳ "all". */

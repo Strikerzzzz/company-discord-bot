@@ -5,6 +5,7 @@ import { discordErrorCode, MemberDirectory, UNKNOWN_MEMBER_NAME } from "../src/d
 import { GUILD, OTHER_GUILD, USER_A, USER_B, USER_C } from "./helpers";
 
 const MINUTE = 60_000;
+const NO_CACHE = { cache: false, force: true };
 
 interface FakeProfile
 {
@@ -36,6 +37,7 @@ type Outcome = FakeProfile | Error | (() => Promise<FakeProfile>);
 interface FakeGuildOptions
 {
 	id?: string;
+	/** Thành viên nằm sẵn trong cache của discord.js (có thể đã cũ). */
 	cached?: FakeProfile[];
 	members?: Record<string, Outcome>;
 	users?: Record<string, Outcome>;
@@ -46,6 +48,11 @@ interface FakeGuild
 	guild: Guild;
 	memberFetches: string[];
 	userFetches: string[];
+	/** Tham số của từng lần gọi guild.members.fetch và client.users.fetch (để kiểm tra cache: false, force: true). */
+	memberOptions: unknown[];
+	userOptions: unknown[];
+	/** Số lần đọc cache thành viên của discord.js. */
+	cacheReads: string[];
 }
 
 function settle(outcome: Outcome | undefined, fallback: Error): Promise<FakeProfile>
@@ -58,51 +65,60 @@ function settle(outcome: Outcome | undefined, fallback: Error): Promise<FakeProf
 
 function fakeGuild(options: FakeGuildOptions = {}): FakeGuild
 {
-	const memberFetches: string[] = [];
-	const userFetches: string[] = [];
-	const cache = new Map((options.cached ?? []).map(member => [member.id, member]));
+	const fake: Omit<FakeGuild, "guild"> = { memberFetches: [], userFetches: [], memberOptions: [], userOptions: [], cacheReads: [] };
+	const cached = new Map((options.cached ?? []).map(member => [member.id, member]));
 	const guild = {
 		id: options.id ?? GUILD,
 		members: {
-			cache,
-			fetch: (userId: unknown) =>
+			cache: {
+				get: (userId: string) =>
+				{
+					fake.cacheReads.push(userId);
+					return cached.get(userId);
+				},
+			},
+			fetch: (request: { user?: unknown; cache?: unknown; force?: unknown }) =>
 			{
-				assert.equal(typeof userId, "string", "phải gọi REST từng người bằng user ID, không dùng fetch({ user: [...] })");
-				memberFetches.push(String(userId));
-				return settle(options.members?.[String(userId)], discordError(10007));
+				fake.memberOptions.push(request);
+				const userId = String(request.user);
+				fake.memberFetches.push(userId);
+				return settle(options.members?.[userId], discordError(10007));
 			},
 		},
 		client: {
 			users: {
-				fetch: (userId: string) =>
+				fetch: (userId: string, request?: unknown) =>
 				{
-					userFetches.push(userId);
+					fake.userOptions.push(request);
+					fake.userFetches.push(userId);
 					return settle(options.users?.[userId], discordError(10013));
 				},
 			},
 		},
 	};
-	return { guild: guild as unknown as Guild, memberFetches, userFetches };
+	return { guild: guild as unknown as Guild, ...fake };
 }
 
 describe("MemberDirectory", () =>
 {
-	test("member có trong cache của discord.js: không gọi REST, avatar PNG tĩnh 128 px", async () =>
+	test("luôn tra REST từng người với cache: false, force: true (không đọc cache của discord.js trước); avatar PNG tĩnh 128 px", async () =>
 	{
 		const avatarOptions: (ImageURLOptions | undefined)[] = [];
-		const fake = fakeGuild({ cached: [profile(USER_A, "Anh A", avatarOptions)] });
+		const fake = fakeGuild({ cached: [profile(USER_A, "Tên cũ")], members: { [USER_A]: profile(USER_A, "Tên mới", avatarOptions) } });
 		const result = await new MemberDirectory().resolve(fake.guild, [USER_A]);
 
 		assert.deepEqual(result.get(USER_A), {
-			displayName: "Anh A",
+			displayName: "Tên mới",
 			avatarUrl: `https://cdn.discordapp.com/avatars/${USER_A}/a.png?size=128`,
 			inGuild: true,
 		});
 		assert.deepEqual(avatarOptions, [{ extension: "png", size: 128, forceStatic: true }]);
-		assert.deepEqual(fake.memberFetches, []);
+		assert.deepEqual(fake.memberFetches, [USER_A]);
+		assert.deepEqual(fake.memberOptions, [{ user: USER_A, ...NO_CACHE }], "một user ID (không phải mảng qua gateway), không ghi và không đọc cache của discord.js");
+		assert.deepEqual(fake.cacheReads, [], "REST thành công thì không cần cache của discord.js");
 	});
 
-	test("không có trong cache: gọi REST từng người, kết quả được giữ trong cache riêng tới khi hết hạn", async () =>
+	test("kết quả REST được giữ trong cache riêng tới khi hết hạn", async () =>
 	{
 		let now = 1_000_000;
 		const directory = new MemberDirectory({ now: () => now, ttlMs: 10 * MINUTE });
@@ -131,7 +147,7 @@ describe("MemberDirectory", () =>
 		assert.equal((await directory.resolve(two.guild, [USER_A])).get(USER_A)?.displayName, "A ở server 2");
 	});
 
-	test("đã rời server (10007): lấy tên và avatar của user, inGuild false", async () =>
+	test("đã rời server (10007): lấy tên và avatar của user qua REST (cache: false, force: true), inGuild false", async () =>
 	{
 		const avatarOptions: (ImageURLOptions | undefined)[] = [];
 		const fake = fakeGuild({ members: { [USER_B]: discordError(10007) }, users: { [USER_B]: profile(USER_B, "Người B", avatarOptions) } });
@@ -144,6 +160,7 @@ describe("MemberDirectory", () =>
 		});
 		assert.deepEqual(avatarOptions, [{ extension: "png", size: 128, forceStatic: true }]);
 		assert.deepEqual(fake.userFetches, [USER_B]);
+		assert.deepEqual(fake.userOptions, [NO_CACHE]);
 	});
 
 	test("không tra được user: \"Người dùng không rõ\", không có avatar", async () =>
@@ -157,7 +174,7 @@ describe("MemberDirectory", () =>
 		assert.deepEqual(fake.memberFetches, [USER_C], "user không tồn tại được giữ trong cache như kết quả bình thường");
 	});
 
-	test("lỗi khác (mạng, 5xx): không thử users.fetch, giữ kết quả ngắn hạn rồi thử lại", async () =>
+	test("lỗi tạm thời (mạng, 5xx) mà không có dữ liệu dự phòng: không thử users.fetch, giữ kết quả ngắn hạn rồi thử lại", async () =>
 	{
 		let now = 0;
 		const directory = new MemberDirectory({ now: () => now, failureTtlMs: MINUTE });
@@ -175,13 +192,39 @@ describe("MemberDirectory", () =>
 		assert.equal(fake.memberFetches.length, 2);
 	});
 
+	test("lỗi tạm thời: dùng thành viên trong cache của discord.js làm dự phòng, chỉ giữ ngắn hạn rồi tra REST lại", async () =>
+	{
+		let now = 0;
+		let restDown = true;
+		const directory = new MemberDirectory({ now: () => now, failureTtlMs: MINUTE, ttlMs: 10 * MINUTE });
+		const fake = fakeGuild({
+			cached: [profile(USER_A, "Tên cũ")],
+			members: { [USER_A]: () => restDown ? Promise.reject(discordError(500)) : Promise.resolve(profile(USER_A, "Tên mới")) },
+		});
+
+		const fallback = await directory.resolve(fake.guild, [USER_A]);
+		assert.deepEqual(fallback.get(USER_A), {
+			displayName: "Tên cũ",
+			avatarUrl: `https://cdn.discordapp.com/avatars/${USER_A}/a.png?size=128`,
+			inGuild: true,
+		});
+		assert.deepEqual(fake.cacheReads, [USER_A]);
+		assert.deepEqual(fake.userFetches, [], "không coi lỗi tạm thời là đã rời server");
+
+		restDown = false;
+		now += MINUTE;
+		assert.equal((await directory.resolve(fake.guild, [USER_A])).get(USER_A)?.displayName, "Tên mới", "hết hạn ngắn thì tra REST lại");
+		assert.equal(fake.memberFetches.length, 2);
+	});
+
 	test("ID trùng chỉ tra một lần; kết quả có đủ mọi ID; không bao giờ throw", async () =>
 	{
-		const fake = fakeGuild({ cached: [profile(USER_A, "Anh A")], members: { [USER_B]: profile(USER_B, "Người B") } });
+		const fake = fakeGuild({ members: { [USER_A]: profile(USER_A, "Anh A"), [USER_B]: profile(USER_B, "Người B") } });
 		const result = await new MemberDirectory().resolve(fake.guild, [USER_B, USER_A, USER_B, USER_C]);
 		assert.deepEqual([...result.keys()].sort(), [USER_A, USER_B, USER_C].sort());
+		assert.equal(result.get(USER_A)?.displayName, "Anh A");
 		assert.equal(result.get(USER_C)?.displayName, UNKNOWN_MEMBER_NAME);
-		assert.deepEqual(fake.memberFetches, [USER_B, USER_C]);
+		assert.deepEqual(fake.memberFetches, [USER_B, USER_A, USER_C]);
 
 		const broken = { id: GUILD, members: { cache: { get: () => { throw new Error("hỏng"); } } } } as unknown as Guild;
 		const fallback = await new MemberDirectory().resolve(broken, [USER_A]);

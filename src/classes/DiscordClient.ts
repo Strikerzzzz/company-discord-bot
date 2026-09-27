@@ -4,6 +4,7 @@ import InteractionHandler from "../handlers/InteractionHandler";
 import ButtonHandler from "../handlers/ButtonHandler";
 import { AvatarFetcher } from "../discord/avatars";
 import { MemberDirectory } from "../discord/memberDirectory";
+import { RenderGate } from "../discord/renderGate";
 import { AppServices } from "../services";
 import { logger } from "../shared/logger";
 
@@ -21,6 +22,8 @@ export default class DiscordClient extends Client
 	readonly avatars = new AvatarFetcher();
 	// Tên hiển thị và avatar của thành viên cho ảnh bảng xếp hạng; có cache trong bộ nhớ.
 	readonly members = new MemberDirectory();
+	// Cooldown theo người và giới hạn số lần vẽ ảnh đồng thời cho /rank, /leaderboard và Bảng vàng.
+	readonly renderGate = new RenderGate();
 
 	constructor(services: AppServices, guildIds: readonly string[])
 	{

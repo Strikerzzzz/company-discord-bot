@@ -1,5 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { performance } from "perf_hooks";
 import {
 	ActionRowBuilder,
 	APIEmbed,
@@ -29,6 +30,7 @@ import {
 } from "../src/discord/cardData";
 import { LeaderboardCardData, RenderedCard } from "../src/discord/cards/types";
 import { UNKNOWN_MEMBER_NAME } from "../src/discord/memberDirectory";
+import { cooldownMessage, RenderGate } from "../src/discord/renderGate";
 import LeaderboardCmd, {
 	BoardState,
 	boardComponents,
@@ -458,11 +460,18 @@ interface Calls
 	deferUpdate: number;
 	edits: InteractionEditReplyOptions[];
 	replies: InteractionReplyOptions[];
+	followUps: InteractionReplyOptions[];
 }
 
 function newCalls(): Calls
 {
-	return { deferReply: [], deferUpdate: 0, edits: [], replies: [] };
+	return { deferReply: [], deferUpdate: 0, edits: [], replies: [], followUps: [] };
+}
+
+/** Số lần interaction đã được phản hồi theo bất kỳ cách nào (defer, reply, sửa, followUp). */
+function responseCount(calls: Calls): number
+{
+	return calls.deferReply.length + calls.deferUpdate + calls.edits.length + calls.replies.length + calls.followUps.length;
 }
 
 interface RoleInfo
@@ -497,6 +506,11 @@ function recorder(calls: Calls): Record<string, unknown>
 		reply: (payload: InteractionReplyOptions) =>
 		{
 			calls.replies.push(payload);
+			return Promise.resolve();
+		},
+		followUp: (payload: InteractionReplyOptions) =>
+		{
+			calls.followUps.push(payload);
 			return Promise.resolve();
 		},
 	};
@@ -544,6 +558,7 @@ interface Harness extends TestContext
 {
 	services: AppServices;
 	command: LeaderboardCmd;
+	gate: RenderGate;
 	rendered: LeaderboardCardData[];
 	resolved: string[][];
 	avatarUrls: (string | null)[];
@@ -556,10 +571,12 @@ function harness(render: (data: LeaderboardCardData) => Promise<RenderedCard> = 
 	const services = createServices(context.db, { clock: context.clock, backupDir: "khong-dung", backupKeep: 1 });
 	const resolved: string[][] = [];
 	const avatarUrls: (string | null)[] = [];
+	const gate = new RenderGate({ now: () => context.clock.now() });
 	const client = {
 		services,
 		guildIds: [GUILD],
 		user: { id: BOT_ID },
+		renderGate: gate,
 		members: {
 			resolve: (_guild: unknown, userIds: readonly string[]) =>
 			{
@@ -587,7 +604,7 @@ function harness(render: (data: LeaderboardCardData) => Promise<RenderedCard> = 
 		rendered.push(data);
 		return render(data);
 	};
-	return { ...context, services, command, rendered, resolved, avatarUrls };
+	return { ...context, services, command, gate, rendered, resolved, avatarUrls };
 }
 
 function seedXp(context: TestContext, userId: string, amount: number): void
@@ -754,16 +771,81 @@ describe("/leaderboard: ảnh và nút", () =>
 		assert.deepEqual(data?.rows.filter(row => row.highlight).map(row => row.rank), [4]);
 	});
 
-	test("\"Hạng của tôi\" khi chưa có điểm trong bảng: trả lời riêng, không đổi message", async () =>
+	test("\"Hạng của tôi\" trên bảng của người khác khi chưa có điểm: defer riêng rồi báo trong chính phản hồi riêng đó", async () =>
 	{
 		const h = harness();
 		seedXp(h, USER_B, 100);
 		const { interaction, calls } = fakeButton(`lb:me:a:w:${USER_B}`, USER_A);
 		await h.command.executeButton(interaction);
 
-		assert.deepEqual(calls.replies, [{ content: NO_STANDING, flags: MessageFlags.Ephemeral }]);
+		assert.deepEqual(calls.deferReply, [{ flags: MessageFlags.Ephemeral }]);
+		assert.deepEqual(calls.edits, [{ content: NO_STANDING }]);
 		assert.equal(calls.deferUpdate, 0);
-		assert.equal(calls.edits.length, 0);
+		assert.deepEqual(calls.replies, []);
+		assert.deepEqual(calls.followUps, []);
+		assert.equal(h.rendered.length, 0);
+	});
+
+	test("\"Hạng của tôi\" trên bảng của mình khi chưa có điểm: deferUpdate, không đổi message, báo riêng bằng followUp", async () =>
+	{
+		const h = harness();
+		seedXp(h, USER_B, 100);
+		const { interaction, calls } = fakeButton(`lb:me:a:w:${USER_A}`, USER_A);
+		await h.command.executeButton(interaction);
+
+		assert.equal(calls.deferUpdate, 1);
+		assert.deepEqual(calls.followUps, [{ content: NO_STANDING, flags: MessageFlags.Ephemeral }]);
+		assert.deepEqual(calls.edits, [], "không sửa message của bảng");
+		assert.deepEqual(calls.deferReply, []);
+		assert.equal(h.rendered.length, 0);
+	});
+
+	test("\"Hạng của tôi\": defer trước khi đọc dữ liệu; chỉ tính vị trí một lần và không dò từng trang", async (t) =>
+	{
+		const h = harness();
+		seedXp(h, USER_B, 100);
+		seedXp(h, USER_A, 50);
+		const { interaction, calls } = fakeButton(`lb:me:a:m:${USER_A}`, USER_A);
+		const deferredAtPosition: number[] = [];
+		const position = t.mock.method(h.services.leaderboard, "userPosition", (guildId: string, kind: ScoreKind, period: LeaderboardPeriod, userId: string) =>
+		{
+			deferredAtPosition.push(calls.deferUpdate);
+			assert.deepEqual([guildId, kind, period, userId], [GUILD, "activity", "month", USER_A]);
+			return 1;
+		});
+		const query = t.mock.method(h.services.leaderboard, "query");
+		const standing = t.mock.method(h.services.leaderboard, "userStanding");
+		await h.command.executeButton(interaction);
+
+		assert.deepEqual(deferredAtPosition, [1], "đã deferUpdate trước khi tính vị trí");
+		assert.equal(position.mock.callCount(), 1);
+		assert.equal(query.mock.callCount(), 1, "chỉ lấy đúng trang để vẽ");
+		assert.equal(standing.mock.callCount(), 0);
+		assert.deepEqual(h.rendered[0].rows.map(row => [row.rank, row.highlight]), [[1, false], [2, true]]);
+	});
+
+	test("\"Hạng của tôi\": nhóm 2000 người hoà điểm ở kỳ tháng, người cuối nhóm bấm → đúng trang, dưới 250 ms", async () =>
+	{
+		const h = harness();
+		const tied = Array.from({ length: 2000 }, (_, index) => `3200000000000${String(index).padStart(5, "0")}`);
+		h.db.transaction(() =>
+		{
+			for (const userId of tied) seedXp(h, userId, 10);
+		})();
+		seedXp(h, USER_A, 500);
+		const viewer = tied[tied.length - 1];
+		const { interaction, calls } = fakeButton(`lb:me:a:m:${viewer}`, viewer);
+
+		const started = performance.now();
+		await h.command.executeButton(interaction);
+		const elapsed = performance.now() - started;
+
+		assert.ok(elapsed < 250, `mất ${elapsed.toFixed(1)} ms`);
+		assert.equal(calls.deferUpdate, 1);
+		const data = h.rendered.at(-1);
+		assert.equal(data?.footer, "Trang 201/201 · 2.001 người");
+		assert.deepEqual(data?.rows.filter(row => row.highlight).map(row => row.rank), [2], "hoà điểm: cùng hạng 2");
+		assert.ok(findButton(buttonRows(calls.edits[0].components), "Trang 201/201"));
 	});
 
 	test("nút sai định dạng: báo lỗi cho người dùng, không đổi gì", async () =>
@@ -772,6 +854,68 @@ describe("/leaderboard: ảnh và nút", () =>
 		const { interaction, calls } = fakeButton("lb:v:a:i:all:1:khong-phai-id", USER_A);
 		await assert.rejects(h.command.executeButton(interaction), isUserError(INVALID_BOARD_BUTTON));
 		assert.equal(calls.deferUpdate + calls.deferReply.length + calls.edits.length, 0);
+	});
+
+	test("cooldown 3 giây theo người (dùng chung cho lệnh và nút): bị chặn thì báo lỗi riêng trước khi defer, không đổi message", async () =>
+	{
+		const h = harness();
+		seedXp(h, USER_A, 10);
+		const first = fakeCommand();
+		await h.command.execute(first.interaction);
+		assert.equal(first.calls.edits.length, 1);
+
+		h.clock.advance(1200);
+		const button = fakeButton(`lb:v:a:i:w:1:${USER_A}`, USER_A);
+		await assert.rejects(h.command.executeButton(button.interaction), isUserError(cooldownMessage(1800)));
+		assert.equal(cooldownMessage(1800), "Bạn thao tác nhanh quá, thử lại sau 2 giây nhé.");
+		assert.equal(responseCount(button.calls), 0, "không defer, không sửa message");
+
+		const again = fakeCommand();
+		await assert.rejects(h.command.execute(again.interaction), isUserError(cooldownMessage(1800)));
+		assert.equal(responseCount(again.calls), 0);
+
+		const other = fakeButton(`lb:v:a:i:w:1:${USER_A}`, USER_B);
+		await h.command.executeButton(other.interaction);
+		assert.equal(other.calls.edits.length, 1, "người khác không bị ảnh hưởng");
+
+		h.clock.advance(1800);
+		const later = fakeButton(`lb:v:a:i:w:1:${USER_A}`, USER_A);
+		await h.command.executeButton(later.interaction);
+		assert.equal(later.calls.deferUpdate, 1, "hết 3 giây thì dùng lại được");
+		assert.equal(h.rendered.length, 3);
+	});
+
+	test("nút sai định dạng hoặc option không hợp lệ không tính vào cooldown", async () =>
+	{
+		const h = harness();
+		await assert.rejects(h.command.executeButton(fakeButton("lb:v:a:i:all:1:sai", USER_A).interaction), isUserError(INVALID_BOARD_BUTTON));
+		await assert.rejects(h.command.execute(fakeCommand({ strings: { ky: "nam" } }).interaction), UserError);
+		assert.equal(h.gate.trackedUsers, 0);
+		const ok = fakeCommand();
+		await h.command.execute(ok.interaction);
+		assert.equal(ok.calls.edits.length, 1);
+	});
+
+	test("vẽ ảnh đi qua semaphore: ba người gọi cùng lúc thì tối đa 2 lần vẽ chạy đồng thời", async () =>
+	{
+		let active = 0;
+		let peak = 0;
+		const h = harness(async () =>
+		{
+			active++;
+			peak = Math.max(peak, active);
+			await new Promise(resolve => setTimeout(resolve, 15));
+			active--;
+			return FAKE_CARD;
+		});
+		seedXp(h, USER_A, 10);
+		const runs = [USER_A, USER_B, USER_C].map(userId => fakeCommand({ userId }));
+		await Promise.all(runs.map(run => h.command.execute(run.interaction)));
+
+		assert.equal(peak, 2);
+		assert.equal(h.rendered.length, 3);
+		for (const run of runs) assert.equal(onlyFile(run.calls.edits[0]).name, "leaderboard.png");
+		assert.equal(h.gate.activeRenders, 0);
 	});
 
 	test("vẽ ảnh lỗi: embed cũ có ghi kỳ, vẫn kèm nút, bỏ ảnh cũ", async (t) =>

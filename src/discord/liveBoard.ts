@@ -11,11 +11,17 @@ import { discordErrorCode } from "./memberDirectory";
 /*
  * Bảng vàng (DEC-030): một message trong channel admin chọn, gồm 2–3 ảnh bảng xếp hạng, bot tự sửa khi dữ liệu đổi.
  * Mọi thao tác trên message của một guild (đăng, sửa, xoá) chạy tuần tự qua khoá theo guild, để lệnh của admin và lượt
- * định kỳ không đăng đôi. Trạng thái (chữ ký dữ liệu lần đăng trước, khoá, lần cảnh báo gần nhất) chỉ nằm trong RAM.
+ * định kỳ không đăng đôi. Trạng thái (chữ ký dữ liệu và thời điểm của lần đăng/sửa trước, khoá, lần cảnh báo gần nhất)
+ * chỉ nằm trong RAM. Ảnh được vẽ qua semaphore chung với /rank và /leaderboard (client.renderGate).
  */
 
 const INITIAL_DELAY_MS = 15_000;
 const WARN_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * Dữ liệu không đổi thì vẫn sửa message sau khoảng này, để phát hiện message đã bị xoá tay (10008) và đăng lại;
+ * nếu chỉ sửa khi dữ liệu đổi thì Bảng vàng bị xoá có thể biến mất tới khi có người ghi điểm.
+ */
+export const LIVE_BOARD_RECHECK_MS = 60 * 60 * 1000;
 
 interface BoardSection
 {
@@ -37,6 +43,8 @@ interface LiveBoardState
 {
 	/** Chữ ký dữ liệu của lần đăng/sửa thành công gần nhất, theo guild. */
 	signatures: Map<string, string>;
+	/** Thời điểm (ms) đăng/sửa thành công gần nhất, theo guild. */
+	postedAt: Map<string, number>;
 	/** Thao tác đang chạy (hoặc đang chờ) của từng guild. */
 	locks: Map<string, Promise<boolean>>;
 	/** Lần cuối cảnh báo "không đăng được" của từng guild, để log không lặp lại mỗi lượt. */
@@ -50,7 +58,7 @@ function stateOf(client: DiscordClient): LiveBoardState
 	let state = states.get(client);
 	if (!state)
 	{
-		state = { signatures: new Map(), locks: new Map(), warnedAt: new Map() };
+		state = { signatures: new Map(), postedAt: new Map(), locks: new Map(), warnedAt: new Map() };
 		states.set(client, state);
 	}
 	return state;
@@ -164,6 +172,7 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 	if (!board)
 	{
 		state.signatures.delete(guildId);
+		state.postedAt.delete(guildId);
 		return false;
 	}
 
@@ -177,7 +186,9 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 		pageSize: CARD_PAGE_SIZE,
 	}));
 	const signature = signatureOf(board.channelId, pages);
-	if (!force && board.messageId !== null && state.signatures.get(guildId) === signature) return false;
+	const postedAt = state.postedAt.get(guildId);
+	const recent = postedAt !== undefined && clock.now() - postedAt < LIVE_BOARD_RECHECK_MS;
+	if (!force && board.messageId !== null && state.signatures.get(guildId) === signature && recent) return false;
 
 	const channel = await fetchChannel(client, board.channelId);
 	if (!channel || channel.isDMBased() || channel.guildId !== guildId || !channel.isTextBased())
@@ -198,14 +209,16 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 	const cards = await Promise.all(sections.map(async (section, index) =>
 	{
 		const data = await loadLeaderboardCardData(client, guild, guildId, { kind: section.kind, scope: section.scope, page: pages[index] }, null);
-		return renderLeaderboardCard(data);
+		return client.renderGate.run(() => renderLeaderboardCard(data));
 	}));
 	const files = cards.map((card, index) => new AttachmentBuilder(card.png, { name: sections[index].fileName }));
 
-	const posted = await upsertMessage(client, board, channel, { content: liveBoardContent(clock.now()), files });
+	const now = clock.now();
+	const posted = await upsertMessage(client, board, channel, { content: liveBoardContent(now), files });
 	if (posted)
 	{
 		state.signatures.set(guildId, signature);
+		state.postedAt.set(guildId, now);
 		state.warnedAt.delete(guildId);
 	}
 	return posted;
@@ -214,8 +227,9 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 /**
  * Đăng (nếu chưa có message) hoặc sửa message Bảng vàng của một guild theo dữ liệu hiện tại (DEC-030).
  * `force`: bỏ qua kiểm tra "dữ liệu không đổi so với lần cập nhật trước" (dùng ngay sau khi admin đặt kênh).
- * Không ném lỗi (chỉ ghi log). Trả về true nếu đã đăng hoặc sửa được message; false nếu guild chưa bật Bảng vàng,
- * dữ liệu không đổi, hoặc gặp lỗi.
+ * Dữ liệu không đổi nhưng lần đăng/sửa gần nhất đã quá LIVE_BOARD_RECHECK_MS thì vẫn sửa, để đăng lại nếu message
+ * đã bị xoá. Không ném lỗi (chỉ ghi log). Trả về true nếu đã đăng hoặc sửa được message; false nếu guild chưa bật
+ * Bảng vàng, dữ liệu không đổi (và vừa sửa gần đây), hoặc gặp lỗi.
  */
 export function refreshLiveBoard(client: DiscordClient, guildId: string, options: { force?: boolean } = {}): Promise<boolean>
 {

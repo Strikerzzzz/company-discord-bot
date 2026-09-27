@@ -219,13 +219,15 @@ export default class LeaderboardCmd extends Command
 			ownerId: interaction.user.id,
 		};
 
+		// Cooldown kiểm tra trước khi defer: bị chặn thì dispatcher trả lời riêng ngay (UserError).
+		this.client.renderGate.assertCooldown(interaction.user.id);
 		await interaction.deferReply(mustReplyPrivately(interaction) ? { flags: MessageFlags.Ephemeral } : undefined);
 		await interaction.editReply(await this.boardMessage(interaction.guild, guildId, state));
 	}
 
 	/**
 	 * Chủ bảng bấm nút: thay ảnh trong chính message đó. Người khác bấm: không đổi message của người khác, mà nhận riêng
-	 * một bảng mới do họ làm chủ.
+	 * một bảng mới do họ làm chủ. Luôn defer trước khi đọc dữ liệu, vì bảng theo kỳ phải cộng từ ledger.
 	 */
 	override async executeButton(interaction: ButtonInteraction): Promise<void>
 	{
@@ -233,47 +235,33 @@ export default class LeaderboardCmd extends Command
 		const action = parseBoardId(interaction.customId);
 		const viewerId = interaction.user.id;
 
-		const state = action.type === "view" ? action.state : this.standingState(guildId, action, viewerId);
+		// Bị cooldown thì trả lời riêng (UserError) và không đổi message.
+		this.client.renderGate.assertCooldown(viewerId);
+		const ownsMessage = (action.type === "view" ? action.state.ownerId : action.ownerId) === viewerId;
+		if (ownsMessage) await interaction.deferUpdate();
+		else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+		const state = action.type === "view" ? { ...action.state, ownerId: viewerId } : this.standingState(guildId, action, viewerId);
 		if (!state)
 		{
-			await interaction.reply({ content: NO_STANDING, flags: MessageFlags.Ephemeral });
+			// deferUpdate không có phản hồi riêng để sửa, nên báo bằng followUp riêng; deferReply riêng thì sửa chính nó.
+			if (ownsMessage) await interaction.followUp({ content: NO_STANDING, flags: MessageFlags.Ephemeral });
+			else await interaction.editReply({ content: NO_STANDING });
 			return;
 		}
-
-		if (state.ownerId === viewerId)
-		{
-			await interaction.deferUpdate();
-			await interaction.editReply(await this.boardMessage(interaction.guild, guildId, state));
-			return;
-		}
-
-		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		await interaction.editReply(await this.boardMessage(interaction.guild, guildId, { ...state, ownerId: viewerId }));
+		await interaction.editReply(await this.boardMessage(interaction.guild, guildId, state));
 	}
 
 	/**
-	 * Bảng cá nhân ở trang có người bấm; null nếu người bấm chưa có điểm trong kỳ. Hạng kiểu competition (hoà điểm cùng
-	 * hạng) nên trang theo hạng là trang của người đầu tiên có hạng đó; nhóm hoà điểm có thể tràn sang các trang sau,
-	 * khi đó đi tiếp cho tới khi thấy người bấm.
+	 * Bảng cá nhân ở trang có người bấm (vị trí trong đúng thứ tự hiển thị, nên nhóm hoà điểm tràn trang vẫn đúng trang);
+	 * null nếu người bấm chưa có điểm trong kỳ. Tính vị trí chỉ quét ledger của kỳ một lần.
 	 */
 	private standingState(guildId: string, action: Extract<BoardAction, { type: "me" }>, viewerId: string): BoardState | null
 	{
-		const { leaderboard } = this.client.services;
-		const { kind, period, ownerId } = action;
-		const standing = leaderboard.userStanding(guildId, kind, period, viewerId);
-		if (standing.rank === null) return null;
-
-		let page = Math.ceil(standing.rank / CARD_PAGE_SIZE);
-		for (;;)
-		{
-			const result = leaderboard.query({ guildId, kind, scope: "individual", period, page, pageSize: CARD_PAGE_SIZE });
-			page = result.page;
-			const last = result.entries.at(-1);
-			const found = result.entries.some(entry => entry.id === viewerId);
-			if (found || !last || last.rank > standing.rank || page >= result.totalPages) break;
-			page++;
-		}
-		return { kind, scope: "individual", period, page, ownerId };
+		const { kind, period } = action;
+		const position = this.client.services.leaderboard.userPosition(guildId, kind, period, viewerId);
+		if (position === null) return null;
+		return { kind, scope: "individual", period, page: Math.floor(position / CARD_PAGE_SIZE) + 1, ownerId: viewerId };
 	}
 
 	/** Nội dung message bảng xếp hạng: ảnh (hoặc embed nếu vẽ lỗi) và các nút; luôn thay toàn bộ ảnh, embed, nút cũ. */
@@ -291,12 +279,12 @@ export default class LeaderboardCmd extends Command
 		return { embeds: [embed], files: [], attachments: [], components };
 	}
 
-	/** Ảnh bảng xếp hạng, hoặc null nếu vẽ lỗi (đã ghi log; người dùng nhận embed thay thế). */
+	/** Ảnh bảng xếp hạng (vẽ qua semaphore toàn process), hoặc null nếu vẽ lỗi (đã ghi log; người dùng nhận embed thay thế). */
 	private async tryRender(data: LeaderboardCardData): Promise<RenderedCard | null>
 	{
 		try
 		{
-			return await this.renderCard(data);
+			return await this.client.renderGate.run(() => this.renderCard(data));
 		}
 		catch (error)
 		{

@@ -1,8 +1,10 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { Db } from "../src/db/connection";
+import { ContributionService } from "../src/modules/contribution/ContributionService";
+import { LeaderboardPeriod, LeaderboardService } from "../src/modules/leaderboard/LeaderboardService";
 import { Ledger } from "../src/modules/ledger/Ledger";
-import { vnDayNumber } from "../src/shared/time";
+import { startOfVnMonth, startOfVnWeek, vnDayNumber } from "../src/shared/time";
 import {
 	ADMIN,
 	createTestContext,
@@ -25,8 +27,17 @@ const ROLE_QA = "500000000000000003";
 const SINCE = Date.UTC(2026, 8, 27, 17, 0);
 const HOUR = 3_600_000;
 
+interface RecordOptions
+{
+	source?: string;
+	guildId?: string;
+	teamRoleIds?: string[];
+	/** Mặc định ADMIN (event admin thật luôn có actor); null = event bù tự động của hệ thống (PROP-024). */
+	actorId?: string | null;
+}
+
 /** Ghi một event tại thời điểm `at` (đặt đồng hồ giả rồi ghi qua Ledger thật). */
-function recordAt(context: TestContext, ledger: Ledger, at: number, userId: string, amount: number, options: { source?: string; guildId?: string; teamRoleIds?: string[] } = {}): number
+function recordAt(context: TestContext, ledger: Ledger, at: number, userId: string, amount: number, options: RecordOptions = {}): number
 {
 	context.clock.current = at;
 	return ledger.record({
@@ -34,6 +45,7 @@ function recordAt(context: TestContext, ledger: Ledger, at: number, userId: stri
 		userId,
 		amount,
 		source: options.source ?? "admin",
+		actorId: options.actorId === undefined ? ADMIN : options.actorId,
 		teamRoleIds: options.teamRoleIds,
 	}).id;
 }
@@ -104,6 +116,47 @@ describe("Ledger: xếp hạng cá nhân theo kỳ", () =>
 		assert.deepEqual(ledger.rankSince(GUILD, USER_E, SINCE), { rank: null, total: 0, totalRanked: 4 });
 		assert.deepEqual(ledger.rankSince(GUILD, USER_F, SINCE), { rank: null, total: -5, totalRanked: 4 });
 		assert.deepEqual(ledger.rankSince(GUILD, "399999999999999999", SINCE), { rank: null, total: 0, totalRanked: 4 });
+	});
+
+	test("positionSince/position: vị trí 0-based đúng thứ tự hiển thị của topSince/top; null nếu không có điểm dương", () =>
+	{
+		const { deps } = seed();
+		const ledger = deps.xpLedger;
+		const period = ledger.topSince(GUILD, SINCE, 100);
+		assert.equal(period.length, 4);
+		period.forEach((entry, index) => assert.equal(ledger.positionSince(GUILD, entry.id, SINCE), index, entry.id));
+		for (const userId of [USER_E, USER_F, "399999999999999999"]) assert.equal(ledger.positionSince(GUILD, userId, SINCE), null, userId);
+
+		const all = ledger.top(GUILD, 100);
+		assert.equal(all.length, 4);
+		all.forEach((entry, index) => assert.equal(ledger.position(GUILD, entry.id), index, entry.id));
+		for (const userId of [USER_E, USER_F, "399999999999999999"]) assert.equal(ledger.position(GUILD, userId), null, userId);
+
+		assert.equal(ledger.positionSince(OTHER_GUILD, USER_A, SINCE), 0, "tách guild");
+		assert.equal(ledger.position(OTHER_GUILD, USER_B), null);
+		assert.equal(deps.contributionLedger.positionSince(GUILD, USER_A, SINCE), null, "tách hai loại điểm");
+		assert.equal(deps.contributionLedger.position(GUILD, USER_A), null);
+	});
+
+	test("nhóm hoà điểm: cùng hạng nhưng vị trí tăng dần theo user_id, kể cả khi nhóm tràn trang", () =>
+	{
+		const context = createTestContext();
+		const ledger = context.deps.xpLedger;
+		const tied = Array.from({ length: 25 }, (_, index) => `31000000000000${String(99 - index).padStart(4, "0")}`);
+		for (const userId of tied) recordAt(context, ledger, SINCE + HOUR, userId, 7, { source: "message" });
+		recordAt(context, ledger, SINCE + HOUR, USER_A, 50, { source: "message" });
+		recordAt(context, ledger, SINCE + HOUR, USER_B, 1, { source: "message" });
+
+		const sorted = [...tied].sort();
+		sorted.forEach((userId, index) =>
+		{
+			assert.equal(ledger.positionSince(GUILD, userId, SINCE), index + 1, userId);
+			assert.equal(ledger.position(GUILD, userId), index + 1, userId);
+			assert.equal(ledger.rankSince(GUILD, userId, SINCE).rank, 2, "cùng hạng 2");
+		});
+		assert.equal(ledger.positionSince(GUILD, USER_A, SINCE), 0);
+		assert.equal(ledger.positionSince(GUILD, USER_B, SINCE), 26);
+		assert.deepEqual(ledger.topSince(GUILD, SINCE, 1, 20).map(entry => entry.id), [sorted[19]], "vị trí 20 là dòng đầu trang 3 (10 dòng/trang)");
 	});
 
 	test("tách guild và tách hai loại điểm", () =>
@@ -190,6 +243,144 @@ describe("Ledger: xếp hạng team theo kỳ", () =>
 	});
 });
 
+describe("Ledger: bảng theo kỳ chỉ tính điểm kiếm được (bỏ event bù tự động của PROP-024)", () =>
+{
+	test("event nguồn admin không có actor bị loại khỏi mọi truy vấn theo kỳ, nhưng vẫn tính vào tổng, bảng all và sumSince", () =>
+	{
+		const context = createTestContext();
+		const { teams, contributionLedger: ledger } = context.deps;
+		teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		recordAt(context, ledger, SINCE + HOUR, USER_A, 5, { source: "admin", actorId: null, teamRoleIds: [ROLE_BACKEND] });
+		recordAt(context, ledger, SINCE + HOUR, USER_B, 2, { source: "admin", teamRoleIds: [ROLE_FRONTEND] });
+		recordAt(context, ledger, SINCE + HOUR, USER_C, 1, { source: "vote", teamRoleIds: [ROLE_FRONTEND] });
+
+		assert.deepEqual(ledger.topSince(GUILD, SINCE, 10), [{ id: USER_B, total: 2, rank: 1 }, { id: USER_C, total: 1, rank: 2 }]);
+		assert.equal(ledger.countRankedSince(GUILD, SINCE), 2);
+		assert.deepEqual(ledger.rankSince(GUILD, USER_A, SINCE), { rank: null, total: 0, totalRanked: 2 });
+		assert.equal(ledger.positionSince(GUILD, USER_A, SINCE), null);
+		assert.equal(ledger.positionSince(GUILD, USER_B, SINCE), 0, "event admin thật (có actor) vẫn được tính");
+		assert.deepEqual(ledger.topTeamsSince(GUILD, SINCE, 10), [{ id: ROLE_FRONTEND, total: 3, rank: 1 }]);
+		assert.equal(ledger.countTeamsSince(GUILD, SINCE), 1);
+
+		assert.equal(ledger.total(GUILD, USER_A), 5);
+		assert.equal(ledger.top(GUILD, 1)[0].id, USER_A, "bảng all vẫn tính event bù");
+		assert.equal(ledger.position(GUILD, USER_A), 0);
+		assert.deepEqual(ledger.topTeams(GUILD, 10).map(entry => entry.id), [ROLE_BACKEND, ROLE_FRONTEND]);
+		assert.equal(ledger.sumSince(GUILD, USER_A, "admin", SINCE), 5, "sumSince không loại event nào");
+	});
+
+	// 10:00 giờ Việt Nam các ngày trong tháng 8 và 9/2026. Tuần của 12/09 (thứ Bảy) bắt đầu 00:00 thứ Hai 07/09.
+	const AUG_15 = Date.UTC(2026, 7, 15, 3, 0);
+	const AUG_20 = Date.UTC(2026, 7, 20, 3, 0);
+	const SEP_08 = Date.UTC(2026, 8, 8, 3, 0);
+	const SEP_10 = Date.UTC(2026, 8, 10, 3, 0);
+	const SEP_12 = Date.UTC(2026, 8, 12, 3, 0);
+	const PERIODS: LeaderboardPeriod[] = ["week", "month"];
+
+	interface Scenario extends TestContext
+	{
+		contributions: ContributionService;
+		board: LeaderboardService;
+	}
+
+	function scenario(): Scenario
+	{
+		const context = createTestContext();
+		context.deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		context.deps.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		return { ...context, contributions: new ContributionService(context.db, context.deps), board: new LeaderboardService(context.deps) };
+	}
+
+	function submitAt(s: Scenario, at: number, authorId: string, roleIds: string[]): number
+	{
+		s.clock.current = at;
+		return s.contributions.submit({
+			guildId: GUILD,
+			authorId,
+			submittedBy: authorId,
+			title: "Tối ưu build",
+			description: "Giảm thời gian build CI từ 10 phút xuống 4 phút.",
+			category: "cai-tien",
+			link: null,
+			authorRoleIds: roleIds,
+		}).id;
+	}
+
+	function toggleAt(s: Scenario, at: number, contributionId: number, voterId: string): void
+	{
+		s.clock.current = at;
+		s.contributions.toggleVote({ guildId: GUILD, contributionId, voterId });
+	}
+
+	/** Tháng 8: contribution của USER_A (team Backend) có 3 ghi nhận, rồi admin trừ 3 điểm, tổng về 0. */
+	function augustOfUserA(s: Scenario): number
+	{
+		const id = submitAt(s, AUG_15, USER_A, [ROLE_BACKEND]);
+		for (const voter of [USER_B, USER_C, USER_D]) toggleAt(s, AUG_15, id, voter);
+		s.clock.current = AUG_20;
+		s.contributions.adjust({ guildId: GUILD, userId: USER_A, delta: -3, actorId: ADMIN, reason: "Trùng nội dung", roleIds: [ROLE_BACKEND] });
+		assert.equal(s.deps.contributionLedger.total(GUILD, USER_A), 0);
+		return id;
+	}
+
+	/** Điểm thật trong tháng 9 (cả trong tuần của 12/09): contribution của USER_B (team Frontend) có `votes` ghi nhận. */
+	function septemberOfUserB(s: Scenario, votes: number): void
+	{
+		const id = submitAt(s, SEP_08, USER_B, [ROLE_FRONTEND]);
+		for (const voter of [USER_A, USER_C, USER_D].slice(0, votes)) toggleAt(s, SEP_08, id, voter);
+	}
+
+	function compensations(s: Scenario, userId: string): { amount: number; createdAt: number }[]
+	{
+		return s.deps.contributionLedger.recent(GUILD, userId, 50)
+			.filter(event => event.source === "admin" && event.actorId === null)
+			.map(({ amount, createdAt }) => ({ amount, createdAt }));
+	}
+
+	function assertOnlyRealPoints(s: Scenario, value: number): void
+	{
+		for (const period of PERIODS)
+		{
+			const individual = s.board.query({ guildId: GUILD, kind: "contribution", scope: "individual", period, page: 1 });
+			assert.deepEqual(individual.entries, [{ rank: 1, id: USER_B, value }], `${period}: chỉ người có điểm thật`);
+			assert.equal(s.board.userPosition(GUILD, "contribution", period, USER_A), null, period);
+			assert.deepEqual(s.board.userStanding(GUILD, "contribution", period, USER_A), { rank: null, value: 0, totalRanked: 1 }, period);
+			const team = s.board.query({ guildId: GUILD, kind: "contribution", scope: "team", period, page: 1 });
+			assert.deepEqual(team.entries, [{ rank: 1, id: ROLE_FRONTEND, value }], `${period}: team Backend chỉ có event bù`);
+		}
+	}
+
+	test("R11: tháng 8 có 3 ghi nhận, admin trừ 3; 10/09 admin gỡ contribution → bảng tuần/tháng/team tháng 9 không có người đó", () =>
+	{
+		const s = scenario();
+		const contributionId = augustOfUserA(s);
+		septemberOfUserB(s, 1);
+		s.clock.current = SEP_10;
+		s.contributions.remove(GUILD, contributionId, ADMIN);
+
+		s.clock.current = SEP_12;
+		assert.equal(s.deps.contributionLedger.total(GUILD, USER_A), 0, "event bù đưa tổng về 0");
+		assert.deepEqual(compensations(s, USER_A), [{ amount: 3, createdAt: SEP_10 }]);
+		assertOnlyRealPoints(s, 1);
+		assert.equal(s.deps.contributionLedger.sumSince(GUILD, USER_A, "admin", startOfVnMonth(SEP_12)), 3, "sumSince vẫn thấy event bù");
+	});
+
+	test("R10: ba người rút ghi nhận cũ của tháng trước → người đó không đứng trên người có điểm thật trong tháng", () =>
+	{
+		const s = scenario();
+		const contributionId = augustOfUserA(s);
+		septemberOfUserB(s, 2);
+		for (const voter of [USER_B, USER_C, USER_D]) toggleAt(s, SEP_10, contributionId, voter);
+
+		s.clock.current = SEP_12;
+		assert.equal(s.deps.contributionLedger.total(GUILD, USER_A), 0);
+		assert.deepEqual(compensations(s, USER_A), Array.from({ length: 3 }, () => ({ amount: 1, createdAt: SEP_10 })));
+		assertOnlyRealPoints(s, 2);
+		assert.equal(startOfVnWeek(SEP_12), Date.UTC(2026, 8, 6, 17, 0), "tuần bắt đầu 00:00 thứ Hai 07/09 giờ Việt Nam");
+	});
+});
+
 describe("Ledger: ngày hoạt động và số event", () =>
 {
 	const LAST_MS_OF_DAY = Date.UTC(2026, 8, 28, 16, 59, 59, 999);
@@ -263,11 +454,17 @@ describe("Ledger: query plan của truy vấn theo kỳ", () =>
 			queryPlan(db, ledger["selectTopSince"], [GUILD, SINCE, 10, 0]),
 			queryPlan(db, ledger["countRankedSinceStmt"], [GUILD, SINCE]),
 			queryPlan(db, ledger["selectRankSince"], [GUILD, SINCE, USER_A]),
+			queryPlan(db, ledger["selectPositionSince"], [GUILD, SINCE, USER_A]),
 		])
 		{
 			assert.ok(plan.some(line => periodSearch("xp_events", "xp_events").test(line)), plan.join("\n"));
 			assert.ok(!plan.some(fullScan), plan.join("\n"));
 		}
+		const positionSince = queryPlan(db, ledger["selectPositionSince"], [GUILD, SINCE, USER_A]);
+		assert.equal(positionSince.filter(line => periodSearch("xp_events", "xp_events").test(line)).length, 1, `quét ledger đúng một lần:\n${positionSince.join("\n")}`);
+
+		const position = queryPlan(db, ledger["selectPosition"], [GUILD, USER_A]);
+		assert.ok(position.every(line => !line.startsWith("SCAN")), position.join("\n"));
 
 		for (const plan of [
 			queryPlan(db, ledger["selectTopTeamsSince"], [GUILD, SINCE, 10, 0]),

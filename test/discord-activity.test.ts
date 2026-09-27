@@ -21,6 +21,7 @@ import { GuildMember } from "discord.js";
 import { breakthroughText, levelUpText } from "../src/discord/views/progression";
 import { tierByKey } from "../src/modules/activity/tiers";
 import { TierRoleServiceApi, TierRoleSyncPlan } from "../src/modules/gamification/types";
+import { cooldownMessage, RenderGate } from "../src/discord/renderGate";
 import LeaderboardCmd from "../src/interactions/commands/leaderboard";
 import RankCmd from "../src/interactions/commands/rank";
 import { levelInfo } from "../src/modules/activity/levels";
@@ -124,6 +125,7 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 			return options.board ?? EMPTY_BOARD;
 		},
 		userStanding: () => { throw new Error("không dùng trong test này"); },
+		userPosition: () => { throw new Error("không dùng trong test này"); },
 	};
 
 	const services = { activity, contributions, teams, guildConfig, leaderboard } as unknown as AppServices;
@@ -274,13 +276,14 @@ function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatI
 	return { interaction: interaction as unknown as ChatInputCommandInteraction, calls };
 }
 
-/** Client giả cho /rank và /leaderboard: có thêm tải avatar và tra tên thành viên (giả). */
-function cardClient(services: AppServices, avatarUrls: (string | null)[] = []): DiscordClient
+/** Client giả cho /rank và /leaderboard: tải avatar và tra tên thành viên (giả); RenderGate thật, mặc định mỗi client một gate. */
+function cardClient(services: AppServices, avatarUrls: (string | null)[] = [], gate = new RenderGate()): DiscordClient
 {
 	return {
 		services,
 		guildIds: [GUILD],
 		user: { id: BOT_ID },
+		renderGate: gate,
 		avatars: {
 			get: (url: string | null) =>
 			{
@@ -688,9 +691,9 @@ const RANK_CARD: RenderedCard = { png: Buffer.from("png"), fileName: "rank.png",
 const BOARD_CARD: RenderedCard = { png: Buffer.from("png"), fileName: "leaderboard.png", width: 1000, height: 400 };
 
 /** /rank với hàm vẽ giả: ghi lại dữ liệu ảnh; `fail` = giả lập vẽ lỗi. */
-function rankCommand(services: AppServices, options: { avatarUrls?: (string | null)[]; fail?: boolean } = {}): { command: RankCmd; cards: RankCardData[] }
+function rankCommand(services: AppServices, options: { avatarUrls?: (string | null)[]; fail?: boolean; gate?: RenderGate } = {}): { command: RankCmd; cards: RankCardData[] }
 {
-	const command = new RankCmd(cardClient(services, options.avatarUrls));
+	const command = new RankCmd(cardClient(services, options.avatarUrls, options.gate));
 	const cards: RankCardData[] = [];
 	command.renderCard = data =>
 	{
@@ -801,6 +804,30 @@ describe("/rank", () =>
 		assert.equal(calls.edits[0].files, undefined);
 		assert.equal(logged.mock.callCount(), 1);
 		assert.match(String(logged.mock.calls[0].arguments[0]), /\[ERROR\]/);
+	});
+
+	test("cooldown 3 giây theo người, dùng chung với /leaderboard: bị chặn thì báo lỗi riêng trước khi defer", async () =>
+	{
+		let now = 1_000_000;
+		const gate = new RenderGate({ now: () => now });
+		const services = withGamification(createFakeServices().services);
+		const { command, cards } = rankCommand(services, { gate });
+		await command.execute(fakeInteraction().interaction);
+
+		now += 2_500;
+		const blocked = fakeInteraction();
+		await assert.rejects(command.execute(blocked.interaction), (error: unknown) => error instanceof UserError && error.message === cooldownMessage(500));
+		assert.deepEqual(blocked.calls.deferred, []);
+		const board = new LeaderboardCmd(cardClient(services, [], gate));
+		const blockedBoard = fakeInteraction();
+		await assert.rejects(board.execute(blockedBoard.interaction), (error: unknown) => error instanceof UserError && error.message === "Bạn thao tác nhanh quá, thử lại sau 1 giây nhé.");
+		assert.deepEqual(blockedBoard.calls.deferred, []);
+
+		now += 500;
+		const later = fakeInteraction();
+		await command.execute(later.interaction);
+		assert.equal(onlyFile(later.calls).name, "rank.png");
+		assert.equal(cards.length, 2);
 	});
 
 	test("chọn bot thì báo lỗi cho người dùng", async () =>

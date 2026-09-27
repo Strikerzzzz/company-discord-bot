@@ -2,11 +2,20 @@ import { logger } from "../shared/logger";
 
 /*
  * Tải avatar từ CDN của Discord để vẽ lên ảnh thẻ (DEC-030). Đây là network call duy nhất ngoài Discord API được phép:
- * chỉ HTTPS tới cdn.discordapp.com và media.discordapp.net, không theo redirect, có timeout, giới hạn dung lượng và cache trong bộ nhớ.
+ * chỉ HTTPS tới cdn.discordapp.com (URL avatar do discord.js dựng luôn ở host này; media.discordapp.net không dùng tới
+ * và phục vụ cả file người dùng tải lên nên không nằm trong allowlist), không theo redirect, có timeout, giới hạn dung
+ * lượng, chỉ nhận PNG/JPEG/WebP và cache trong bộ nhớ. Không nhận GIF: ảnh GIF nhỏ có thể giải nén thành rất nhiều
+ * khung hình (bom giải nén) mà việc đọc kích thước ở header không chặn được.
  * `get()` không bao giờ throw: mọi lỗi (URL sai, mạng lỗi, quá hạn, quá lớn, không phải ảnh) đều trả về null để ảnh vẽ chữ cái đầu.
  */
 
-export const AVATAR_HOSTS: readonly string[] = ["cdn.discordapp.com", "media.discordapp.net"];
+export const AVATAR_HOSTS: readonly string[] = ["cdn.discordapp.com"];
+
+/** Content-type được nhận (so sánh sau khi bỏ tham số và chuyển chữ thường). */
+export const AVATAR_CONTENT_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp"];
+
+/** Dung lượng tối đa mặc định của một ảnh avatar: 512 KB (avatar PNG 256 px thường dưới 100 KB). */
+export const DEFAULT_AVATAR_MAX_BYTES = 512 * 1024;
 
 const MAX_URL_LENGTH = 2048;
 
@@ -16,7 +25,7 @@ export interface AvatarFetcherOptions
 	fetchImpl?: typeof fetch;
 	/** Thời gian tối đa cho cả request lẫn đọc body (mặc định 3000 ms). */
 	timeoutMs?: number;
-	/** Dung lượng tối đa của một ảnh (mặc định 2.000.000 byte). */
+	/** Dung lượng tối đa của một ảnh (mặc định 512 KB). */
 	maxBytes?: number;
 	/** Số URL tối đa trong cache LRU (mặc định 500). */
 	maxEntries?: number;
@@ -58,7 +67,7 @@ function isImageContentType(value: string | null): boolean
 {
 	if (value === null) return false;
 	const type = value.split(";")[0].trim().toLowerCase();
-	return type.startsWith("image/") && !type.includes("svg");
+	return AVATAR_CONTENT_TYPES.includes(type);
 }
 
 export class AvatarFetcher
@@ -77,7 +86,7 @@ export class AvatarFetcher
 	{
 		this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
 		this.timeoutMs = options.timeoutMs ?? 3000;
-		this.maxBytes = options.maxBytes ?? 2_000_000;
+		this.maxBytes = options.maxBytes ?? DEFAULT_AVATAR_MAX_BYTES;
 		this.maxEntries = Math.max(1, options.maxEntries ?? 500);
 		this.ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
 		this.failureTtlMs = options.failureTtlMs ?? 5 * 60 * 1000;
@@ -150,7 +159,7 @@ export class AvatarFetcher
 			const response = await this.fetchImpl(url.href, {
 				signal: AbortSignal.timeout(this.timeoutMs),
 				redirect: "error",
-				headers: { accept: "image/png, image/webp, image/jpeg, image/gif" },
+				headers: { accept: AVATAR_CONTENT_TYPES.join(", ") },
 			});
 			if (!response.ok)
 			{
@@ -160,7 +169,7 @@ export class AvatarFetcher
 			}
 			if (!isImageContentType(response.headers.get("content-type")))
 			{
-				logger.debug(`Avatar ${where} không phải ảnh (content-type không hợp lệ).`);
+				logger.debug(`Avatar ${where} không phải ảnh PNG/JPEG/WebP (content-type không hợp lệ).`);
 				await this.discard(response);
 				return null;
 			}

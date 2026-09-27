@@ -1,10 +1,10 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { AvatarFetcher, parseAvatarUrl } from "../src/discord/avatars";
+import { AVATAR_HOSTS, AvatarFetcher, DEFAULT_AVATAR_MAX_BYTES, parseAvatarUrl } from "../src/discord/avatars";
 import { logger } from "../src/shared/logger";
 
 const AVATAR_URL = "https://cdn.discordapp.com/avatars/300000000000000001/a1b2c3.png?size=256";
-const OTHER_URL = "https://media.discordapp.net/avatars/300000000000000002/d4e5f6.webp?size=128";
+const OTHER_URL = "https://cdn.discordapp.com/guilds/100000000000000001/users/300000000000000002/avatars/d4e5f6.png?size=128";
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
 interface Call
@@ -77,19 +77,22 @@ function rejectOnAbort(init: RequestInit | undefined): Promise<Response>
 
 describe("parseAvatarUrl", () =>
 {
-	test("nhận URL https của cdn.discordapp.com và media.discordapp.net", () =>
+	test("chỉ nhận URL https của cdn.discordapp.com (avatar user, avatar theo server, avatar mặc định)", () =>
 	{
+		assert.deepEqual(AVATAR_HOSTS, ["cdn.discordapp.com"]);
 		assert.equal(parseAvatarUrl(AVATAR_URL)?.hostname, "cdn.discordapp.com");
-		assert.equal(parseAvatarUrl(OTHER_URL)?.hostname, "media.discordapp.net");
+		assert.equal(parseAvatarUrl(OTHER_URL)?.hostname, "cdn.discordapp.com");
 		assert.equal(parseAvatarUrl("https://CDN.DiscordApp.com/embed/avatars/0.png")?.hostname, "cdn.discordapp.com");
 	});
 
-	test("từ chối http, host lạ, credentials, port riêng và chuỗi không phải URL", () =>
+	test("từ chối media.discordapp.net (phục vụ file người dùng tải lên), http, host lạ, credentials, port riêng và chuỗi không phải URL", () =>
 	{
 		const rejected = [
 			null,
 			"",
 			"not a url",
+			"https://media.discordapp.net/avatars/300000000000000002/d4e5f6.webp?size=128",
+			"https://media.discordapp.net/attachments/1/2/bom.png",
 			"http://cdn.discordapp.com/avatars/1/a.png",
 			"https://evil.example.com/avatars/1/a.png",
 			"https://cdn.discordapp.com.evil.com/a.png",
@@ -129,6 +132,7 @@ describe("AvatarFetcher", () =>
 		assert.equal(calls[0].url, AVATAR_URL);
 		assert.equal(calls[0].init?.redirect, "error");
 		assert.ok(calls[0].init?.signal instanceof AbortSignal);
+		assert.deepEqual(calls[0].init?.headers, { accept: "image/png, image/jpeg, image/webp" }, "không xin GIF");
 	});
 
 	test("cache: lần gọi sau không gọi mạng; hết TTL thì tải lại", async () =>
@@ -193,16 +197,34 @@ describe("AvatarFetcher", () =>
 		assert.equal(await keepingAlive(() => fetcher.get(AVATAR_URL)), null);
 	});
 
-	test("content-type không phải ảnh (kể cả SVG) hoặc thiếu content-type trả về null", async () =>
+	test("chỉ nhận content-type PNG/JPEG/WebP; GIF, SVG, định dạng ảnh khác, không phải ảnh hoặc thiếu content-type trả về null", async () =>
 	{
-		const invalid: Record<string, string>[] = [{ "content-type": "text/html" }, { "content-type": "image/svg+xml" }, { "content-type": "application/octet-stream" }, {}];
-		for (const headers of invalid)
+		const invalid = ["text/html", "image/gif", "image/svg+xml", "image/avif", "image/bmp", "image/pngx", "image/", "application/octet-stream", null];
+		for (const type of invalid)
 		{
-			const { fetchImpl } = fakeFetch(() => imageResponse(PNG, headers));
-			assert.equal(await new AvatarFetcher({ fetchImpl }).get(AVATAR_URL), null, JSON.stringify(headers));
+			const { fetchImpl } = fakeFetch(() => imageResponse(PNG, type === null ? {} : { "content-type": type }));
+			assert.equal(await new AvatarFetcher({ fetchImpl }).get(AVATAR_URL), null, String(type));
 		}
-		const { fetchImpl } = fakeFetch(() => imageResponse(PNG, { "content-type": "Image/WebP; charset=binary" }));
-		assert.deepEqual(await new AvatarFetcher({ fetchImpl }).get(AVATAR_URL), PNG);
+		for (const type of ["image/png", "image/jpeg", "Image/WebP; charset=binary"])
+		{
+			const { fetchImpl } = fakeFetch(() => imageResponse(PNG, { "content-type": type }));
+			assert.deepEqual(await new AvatarFetcher({ fetchImpl }).get(AVATAR_URL), PNG, type);
+		}
+	});
+
+	test("giới hạn mặc định 512 KB", async () =>
+	{
+		assert.equal(DEFAULT_AVATAR_MAX_BYTES, 512 * 1024);
+		const declared = fakeFetch(() => imageResponse(PNG, { "content-type": "image/png", "content-length": String(DEFAULT_AVATAR_MAX_BYTES + 1) }));
+		assert.equal(await new AvatarFetcher({ fetchImpl: declared.fetchImpl }).get(AVATAR_URL), null);
+
+		const tooBig = chunkedStream(513, 1024);
+		const big = fakeFetch(() => imageResponse(tooBig.stream));
+		assert.equal(await new AvatarFetcher({ fetchImpl: big.fetchImpl }).get(AVATAR_URL), null);
+
+		const exact = chunkedStream(512, 1024);
+		const ok = fakeFetch(() => imageResponse(exact.stream));
+		assert.equal((await new AvatarFetcher({ fetchImpl: ok.fetchImpl }).get(AVATAR_URL))?.length, DEFAULT_AVATAR_MAX_BYTES);
 	});
 
 	test("HTTP lỗi hoặc body rỗng trả về null", async () =>
