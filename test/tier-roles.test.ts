@@ -57,13 +57,13 @@ describe("TierRoleService.set và list", () =>
 		const { tierRoles } = setup();
 		assert.deepEqual(tierRoles.list(GUILD), []);
 
-		tierRoles.set(GUILD, "do-kiep", ROLE_DO_KIEP, ADMIN);
-		tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-8", ROLE_DO_KIEP, ADMIN);
+		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		assert.deepEqual(tierRoles.list(GUILD), [
-			{ tierKey: "luyen-khi", roleId: ROLE_LUYEN_KHI },
-			{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN },
-			{ tierKey: "do-kiep", roleId: ROLE_DO_KIEP },
+			{ tierKey: "bac-1", roleId: ROLE_LUYEN_KHI, createdByBot: false },
+			{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false },
+			{ tierKey: "bac-8", roleId: ROLE_DO_KIEP, createdByBot: false },
 		]);
 		assert.deepEqual(tierRoles.list(OTHER_GUILD), []);
 	});
@@ -72,11 +72,11 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const { tierRoles, clock } = context;
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 
-		assert.equal(updatedAt(context, "truc-co"), clock.now());
+		assert.equal(updatedAt(context, "bac-2"), clock.now());
 		assert.deepEqual(tierRoleAudits(context), [
-			{ action: "tier_role.set", actorId: ADMIN, targetId: ROLE_TRUC_CO, details: { tierKey: "truc-co" } },
+			{ action: "tier_role.set", actorId: ADMIN, targetId: ROLE_TRUC_CO, details: { tierKey: "bac-2" } },
 		]);
 	});
 
@@ -84,12 +84,12 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const { tierRoles, clock } = context;
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 		const firstUpdate = clock.now();
 
 		clock.advanceSeconds(60);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, USER_A);
-		assert.equal(updatedAt(context, "truc-co"), firstUpdate);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, USER_A);
+		assert.equal(updatedAt(context, "bac-2"), firstUpdate);
 		assert.equal(tierRoleAudits(context).length, 1);
 	});
 
@@ -97,21 +97,21 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const { tierRoles, clock } = context;
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		clock.advanceSeconds(60);
-		tierRoles.set(GUILD, "kim-dan", ROLE_OTHER, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_OTHER, ADMIN);
 
-		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_OTHER }]);
-		assert.equal(updatedAt(context, "kim-dan"), clock.now());
-		tierRoles.set(GUILD, "truc-co", ROLE_KIM_DAN, ADMIN);
+		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_OTHER, createdByBot: false }]);
+		assert.equal(updatedAt(context, "bac-3"), clock.now());
+		tierRoles.set(GUILD, "bac-2", ROLE_KIM_DAN, ADMIN);
 		assert.deepEqual(tierRoles.list(GUILD), [
-			{ tierKey: "truc-co", roleId: ROLE_KIM_DAN },
-			{ tierKey: "kim-dan", roleId: ROLE_OTHER },
+			{ tierKey: "bac-2", roleId: ROLE_KIM_DAN, createdByBot: false },
+			{ tierKey: "bac-3", roleId: ROLE_OTHER, createdByBot: false },
 		]);
 		assert.deepEqual(tierRoleAudits(context).map(entry => [entry.targetId, entry.details]), [
-			[ROLE_KIM_DAN, { tierKey: "kim-dan" }],
-			[ROLE_OTHER, { tierKey: "kim-dan" }],
-			[ROLE_KIM_DAN, { tierKey: "truc-co" }],
+			[ROLE_KIM_DAN, { tierKey: "bac-3" }],
+			[ROLE_OTHER, { tierKey: "bac-3" }],
+			[ROLE_KIM_DAN, { tierKey: "bac-2" }],
 		]);
 	});
 
@@ -119,15 +119,15 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const { tierRoles } = context;
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 
-		const conflict = userError("Role này đang được gán cho cảnh giới Kim Đan. Hãy bỏ gán ở cảnh giới đó trước.");
-		assert.throws(() => tierRoles.set(GUILD, "do-kiep", ROLE_KIM_DAN, ADMIN), conflict);
-		assert.throws(() => tierRoles.set(GUILD, "truc-co", ROLE_KIM_DAN, ADMIN), conflict);
+		const conflict = userError("Role này đang được gán cho bậc 3. Hãy bỏ gán ở bậc đó trước.");
+		assert.throws(() => tierRoles.set(GUILD, "bac-8", ROLE_KIM_DAN, ADMIN), conflict);
+		assert.throws(() => tierRoles.set(GUILD, "bac-2", ROLE_KIM_DAN, ADMIN), conflict);
 		assert.deepEqual(tierRoles.list(GUILD), [
-			{ tierKey: "truc-co", roleId: ROLE_TRUC_CO },
-			{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN },
+			{ tierKey: "bac-2", roleId: ROLE_TRUC_CO, createdByBot: false },
+			{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false },
 		]);
 		assert.equal(tierRoleAudits(context).length, 2);
 	});
@@ -136,11 +136,11 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const { tierRoles } = context;
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		tierRoles.set(OTHER_GUILD, "do-kiep", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(OTHER_GUILD, "bac-8", ROLE_KIM_DAN, ADMIN);
 
-		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }]);
-		assert.deepEqual(tierRoles.list(OTHER_GUILD), [{ tierKey: "do-kiep", roleId: ROLE_KIM_DAN }]);
+		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }]);
+		assert.deepEqual(tierRoles.list(OTHER_GUILD), [{ tierKey: "bac-8", roleId: ROLE_KIM_DAN, createdByBot: false }]);
 		assert.equal(tierRoleAudits(context, OTHER_GUILD).length, 1);
 	});
 
@@ -148,9 +148,9 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		const loose: LooseTierRoles = context.tierRoles;
-		assert.throws(() => loose.set(GUILD, "tran-tien", ROLE_OTHER, ADMIN), userError("Cảnh giới không hợp lệ."));
-		assert.throws(() => loose.set(GUILD, "", ROLE_OTHER, ADMIN), userError("Cảnh giới không hợp lệ."));
-		assert.throws(() => loose.clear(GUILD, "tran-tien", ADMIN), userError("Cảnh giới không hợp lệ."));
+		assert.throws(() => loose.set(GUILD, "tran-tien", ROLE_OTHER, ADMIN), userError("Bậc danh hiệu không hợp lệ."));
+		assert.throws(() => loose.set(GUILD, "", ROLE_OTHER, ADMIN), userError("Bậc danh hiệu không hợp lệ."));
+		assert.throws(() => loose.clear(GUILD, "tran-tien", ADMIN), userError("Bậc danh hiệu không hợp lệ."));
 		assert.deepEqual(context.tierRoles.list(GUILD), []);
 		assert.equal(tierRoleAudits(context).length, 0);
 	});
@@ -159,9 +159,9 @@ describe("TierRoleService.set và list", () =>
 	{
 		const context = setup();
 		context.db.prepare("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES (?, 'khoa-la', ?, 0)").run(GUILD, ROLE_OTHER);
-		context.tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		assert.deepEqual(context.tierRoles.list(GUILD), [{ tierKey: "luyen-khi", roleId: ROLE_LUYEN_KHI }]);
-		assert.throws(() => context.tierRoles.set(GUILD, "truc-co", ROLE_OTHER, ADMIN), userError(/cảnh giới khoa-la\./));
+		context.tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		assert.deepEqual(context.tierRoles.list(GUILD), [{ tierKey: "bac-1", roleId: ROLE_LUYEN_KHI, createdByBot: false }]);
+		assert.throws(() => context.tierRoles.set(GUILD, "bac-2", ROLE_OTHER, ADMIN), userError(/cho khoa-la\./));
 	});
 });
 
@@ -171,36 +171,36 @@ describe("TierRoleService.clear", () =>
 	{
 		const context = setup();
 		const { tierRoles } = context;
-		assert.equal(tierRoles.clear(GUILD, "kim-dan", ADMIN), false);
+		assert.equal(tierRoles.clear(GUILD, "bac-3", ADMIN), false);
 		assert.equal(tierRoleAudits(context).length, 0);
 
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
-		assert.equal(tierRoles.clear(GUILD, "kim-dan", USER_A), true);
-		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "truc-co", roleId: ROLE_TRUC_CO }]);
-		assert.equal(tierRoles.clear(GUILD, "kim-dan", USER_A), false);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
+		assert.equal(tierRoles.clear(GUILD, "bac-3", USER_A), true);
+		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "bac-2", roleId: ROLE_TRUC_CO, createdByBot: false }]);
+		assert.equal(tierRoles.clear(GUILD, "bac-3", USER_A), false);
 
 		assert.deepEqual(tierRoleAudits(context).slice(2), [
-			{ action: "tier_role.clear", actorId: USER_A, targetId: ROLE_KIM_DAN, details: { tierKey: "kim-dan" } },
+			{ action: "tier_role.clear", actorId: USER_A, targetId: ROLE_KIM_DAN, details: { tierKey: "bac-3" } },
 		]);
 	});
 
 	test("sau khi bỏ gán, role đó gán được cho cảnh giới khác", () =>
 	{
 		const { tierRoles } = setup();
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		tierRoles.clear(GUILD, "kim-dan", ADMIN);
-		tierRoles.set(GUILD, "do-kiep", ROLE_KIM_DAN, ADMIN);
-		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "do-kiep", roleId: ROLE_KIM_DAN }]);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		tierRoles.clear(GUILD, "bac-3", ADMIN);
+		tierRoles.set(GUILD, "bac-8", ROLE_KIM_DAN, ADMIN);
+		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "bac-8", roleId: ROLE_KIM_DAN, createdByBot: false }]);
 	});
 
 	test("chỉ bỏ gán trong đúng guild", () =>
 	{
 		const { tierRoles } = setup();
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		tierRoles.set(OTHER_GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
-		assert.equal(tierRoles.clear(OTHER_GUILD, "kim-dan", ADMIN), true);
-		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }]);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(OTHER_GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
+		assert.equal(tierRoles.clear(OTHER_GUILD, "bac-3", ADMIN), true);
+		assert.deepEqual(tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }]);
 		assert.deepEqual(tierRoles.list(OTHER_GUILD), []);
 	});
 });
@@ -210,9 +210,9 @@ describe("TierRoleService.plan", () =>
 	function configured(): TierRoleService
 	{
 		const { tierRoles } = setup();
-		tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
-		tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		return tierRoles;
 	}
 

@@ -247,7 +247,7 @@ export default class AdminCmd extends Command
 		const { userId } = targetOf(interaction);
 		const profile = this.services.activity.getProfile(guildId, userId);
 		const events = this.services.activity.recentEvents(guildId, userId, RECENT_XP_EVENTS);
-		await interaction.reply(ephemeralEmbed(buildXpDetailEmbed(profile, events)));
+		await interaction.reply(ephemeralEmbed(buildXpDetailEmbed(profile, events, this.services.tierSets.current(guildId))));
 	}
 
 	private async adjustXp({ interaction, guildId, actorId }: AdminContext, sign: 1 | -1): Promise<void>

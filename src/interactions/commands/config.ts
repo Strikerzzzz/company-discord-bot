@@ -411,7 +411,7 @@ export default class ConfigCmd extends Command
 			await this.clearTierRole(context);
 			break;
 		case "list":
-			await context.interaction.reply(ephemeralEmbed(buildTierRoleListEmbed(this.services.tierRoles.list(context.guildId))));
+			await context.interaction.reply(ephemeralEmbed(buildTierRoleListEmbed(this.services.tierSets.current(context.guildId), this.services.tierRoles.list(context.guildId))));
 			break;
 		default:
 			throw new Error(`Subcommand không hợp lệ: /config tier ${subcommand}`);
@@ -420,10 +420,11 @@ export default class ConfigCmd extends Command
 
 	private async view({ interaction, guildId }: ConfigContext): Promise<void>
 	{
-		const { guildConfig, teams, liveBoards, tierRoles } = this.services;
+		const { guildConfig, teams, liveBoards, tierRoles, tierSets } = this.services;
 		const embed = buildConfigEmbed(guildConfig.getSettings(guildId), teams.list(guildId), guildConfig.listChannels(guildId), {
 			boardChannelId: liveBoards.get(guildId)?.channelId ?? null,
 			tierRoles: tierRoles.list(guildId),
+			tierSet: tierSets.current(guildId),
 		});
 		await interaction.reply(ephemeralEmbed(embed));
 	}

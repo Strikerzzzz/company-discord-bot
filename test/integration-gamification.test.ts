@@ -32,8 +32,8 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 			const s = createServices(db, { clock, backupDir: join(dir, "backups"), backupKeep: 3 });
 			s.teams.add(GUILD, ROLE_BACKEND, ADMIN);
 			s.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
-			s.tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-			s.tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+			s.tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+			s.tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 
 			const message = (userId: string, content: string, roleIds: string[]) =>
 				s.activity.handleMessage({ guildId: GUILD, userId, channelId: CHANNEL_GENERAL, content, hasAttachments: false, roleIds });
@@ -46,7 +46,7 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 			}
 			let profile = s.gamification.profile(GUILD, USER_A);
 			assert.deepEqual([profile.streak.current, profile.streak.best, profile.streak.activeToday], [3, 3, true]);
-			assert.equal(profile.tier.key, "luyen-khi");
+			assert.equal(profile.tier.key, "bac-1");
 			assert.deepEqual(s.tierRoles.plan(GUILD, profile.level.level, []), { add: [ROLE_LUYEN_KHI], remove: [] });
 
 			// Admin cộng XP đưa A lên level 3: đột phá Trúc Cơ, role cảnh giới đổi từ Luyện Khí sang Trúc Cơ.
@@ -54,7 +54,7 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 			s.activity.adjustXp({ guildId: GUILD, userId: USER_A, delta: 445, actorId: ADMIN, reason: "Thưởng dự án", roleIds: [ROLE_BACKEND] });
 			profile = s.gamification.profile(GUILD, USER_A);
 			assert.equal(profile.level.level, 3);
-			assert.equal(tierUp(before, profile.level.level)?.key, "truc-co");
+			assert.equal(tierUp(before, profile.level.level)?.key, "bac-2");
 			assert.deepEqual(s.tierRoles.plan(GUILD, profile.level.level, [ROLE_LUYEN_KHI, ROLE_BACKEND]), { add: [ROLE_TRUC_CO], remove: [ROLE_LUYEN_KHI] });
 
 			// Giới hạn XP từ vote mặc định 25/ngày: 20 → 5 (bị cắt) → 0 (bị cắt); sang ngày mới được lại.

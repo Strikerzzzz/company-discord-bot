@@ -1,5 +1,5 @@
 import { LevelInfo } from "../activity/levels";
-import { Tier, TierKey } from "../activity/tiers";
+import { Tier, TierKey, TierSet } from "../activity/tiers";
 
 /**
  * Chuỗi ngày hoạt động (DEC-029): số ngày liên tiếp (theo giờ Việt Nam) có ít nhất một tin nhắn được Activity XP.
@@ -65,8 +65,11 @@ export interface GamificationProfile
 {
 	userId: string;
 	level: LevelInfo;
+	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh), để hiển thị giọng văn và bậc đúng bộ (DEC-033). */
+	tierSet: TierSet;
+	/** Bậc theo level trong bộ đang dùng. */
 	tier: Tier;
-	/** null nếu đã ở cảnh giới cao nhất. */
+	/** null nếu đã ở bậc cao nhất. */
 	nextTier: Tier | null;
 	streak: StreakInfo;
 	stats: AchievementStats;
@@ -87,6 +90,20 @@ export interface TierRoleMapping
 {
 	tierKey: TierKey;
 	roleId: string;
+	/** true nếu role do bot tự tạo bằng chức năng tạo/đồng bộ role (DEC-033). */
+	createdByBot: boolean;
+}
+
+/** Kết quả một lần tạo/đồng bộ role theo bộ danh hiệu, để ghi audit "tier_role.setup". */
+export interface TierRoleSetupSummary
+{
+	setKey: string;
+	/** Số role bot vừa tạo mới. */
+	created: number;
+	/** Số role đã gán được bot đổi tên/màu theo bộ. */
+	renamed: number;
+	/** Số bậc bỏ qua (role không an toàn, cao hơn bot, lỗi API...). */
+	skipped: number;
 }
 
 /** Các thay đổi role cần làm để member chỉ giữ đúng role của cảnh giới hiện tại (DEC-031). */
@@ -104,7 +121,7 @@ export interface TierRoleServiceApi
 	 * Gán (hoặc đổi) role cho một cảnh giới. Ghi audit "tier_role.set" (target = roleId, details { tierKey }).
 	 * UserError nếu role đang được gán cho cảnh giới khác trong guild. Không kiểm tra quyền Discord của role (việc của tầng Discord).
 	 */
-	set(guildId: string, tierKey: TierKey, roleId: string, actorId: string): void;
+	set(guildId: string, tierKey: TierKey, roleId: string, actorId: string, options?: { createdByBot?: boolean }): void;
 	/** Bỏ role của một cảnh giới. Ghi audit "tier_role.clear" (target = role cũ, details { tierKey }). false nếu vốn chưa gán. */
 	clear(guildId: string, tierKey: TierKey, actorId: string): boolean;
 	/**
@@ -113,4 +130,6 @@ export interface TierRoleServiceApi
 	 * Chỉ đụng tới các role có trong tier_roles của guild; guild chưa gán role nào thì trả về { add: [], remove: [] }.
 	 */
 	plan(guildId: string, level: number, memberRoleIds: readonly string[]): TierRoleSyncPlan;
+	/** Ghi audit "tier_role.setup" (target null, details = summary) sau khi tầng Discord tạo/đổi tên role theo bộ. */
+	recordSetup(guildId: string, actorId: string, summary: TierRoleSetupSummary): void;
 }

@@ -118,6 +118,7 @@ function createHarness(): Harness
 		guildConfig: context.deps.guildConfig,
 		teams: context.deps.teams,
 		audit: context.deps.audit,
+		tierSets: context.deps.tierSets,
 		tierRoles,
 		liveBoards,
 	} as unknown as AppServices;
@@ -317,7 +318,7 @@ function optionAt(options: readonly APIApplicationCommandOption[] | undefined, .
 /** Gọi `/config tier set-role` cho cảnh giới Kim Đan. */
 function setRole(role: Role, extra: Omit<Invocation, "group" | "subcommand" | "options"> = {}): Invocation
 {
-	return { group: "tier", subcommand: "set-role", options: { "canh-gioi": "kim-dan", role }, ...extra };
+	return { group: "tier", subcommand: "set-role", options: { "canh-gioi": "bac-3", role }, ...extra };
 }
 
 // ---------- Test ----------
@@ -388,17 +389,17 @@ describe("/config tier", () =>
 		assert.ok(TIER_ROLE_DEDICATED_NOTE.includes("role **mới tạo riêng**"));
 		assert.ok(TIER_ROLE_DEDICATED_NOTE.includes("bot sẽ gỡ role này khỏi người không ở đúng cảnh giới"));
 		assert.deepEqual(fake.fetches, [{ force: true }], "làm mới thông tin bot trước khi kiểm tra thứ bậc role");
-		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }]);
-		assert.deepEqual(audits(harness.context, "tier_role"), [{ action: "tier_role.set", targetId: ROLE_KIM_DAN, details: { tierKey: "kim-dan" } }]);
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }]);
+		assert.deepEqual(audits(harness.context, "tier_role"), [{ action: "tier_role.set", targetId: ROLE_KIM_DAN, details: { tierKey: "bac-3" } }]);
 	});
 
 	test("set-role: bot chưa có Manage Roles thì vẫn lưu nhưng cảnh báo; đổi role thì nhắc role cũ không còn do bot quản lý", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "kim-dan", ROLE_OLD, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_OLD, ADMIN);
 		const text = replyText(await run(harness, setRole(fakeRole(ROLE_KIM_DAN), { fetchedBot: fakeBot(false) })));
 
-		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }]);
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }]);
 		assert.ok(text.includes(`Role cũ <@&${ROLE_OLD}> không còn do bot quản lý`), text);
 		assert.ok(text.includes("⚠️ Bot chưa có quyền **Manage Roles**"), text);
 	});
@@ -493,47 +494,47 @@ describe("/config tier", () =>
 		assert.deepEqual(harness.tierRoles.list(GUILD), []);
 
 		replyText(await run(harness, setRole(role, { caller: { permissions: [PermissionFlagsBits.Administrator], highestPosition: 6 } })));
-		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }], "Administrator có Manage Roles");
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }], "Administrator có Manage Roles");
 
-		harness.tierRoles.clear(GUILD, "kim-dan", ADMIN);
+		harness.tierRoles.clear(GUILD, "bac-3", ADMIN);
 		replyText(await run(harness, setRole(role, { caller: { id: OWNER, permissions: [], highestPosition: 0 } })));
-		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "kim-dan", roleId: ROLE_KIM_DAN }], "chủ server không bị giới hạn thứ bậc");
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_KIM_DAN, createdByBot: false }], "chủ server không bị giới hạn thứ bậc");
 	});
 
 	test("set-role: role đang thuộc cảnh giới khác, cảnh giới không hợp lệ, server không có trong cache thì báo lỗi", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "luyen-khi", ROLE_KIM_DAN, ADMIN);
-		const options = { "canh-gioi": "kim-dan", role: fakeRole(ROLE_KIM_DAN) };
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_KIM_DAN, ADMIN);
+		const options = { "canh-gioi": "bac-3", role: fakeRole(ROLE_KIM_DAN) };
 
-		await rejects(harness, { group: "tier", subcommand: "set-role", options }, "Role này đang được gán cho cảnh giới Luyện Khí. Hãy bỏ gán ở cảnh giới đó trước.");
+		await rejects(harness, { group: "tier", subcommand: "set-role", options }, "Role này đang được gán cho bậc 1. Hãy bỏ gán ở bậc đó trước.");
 		await rejects(harness, { group: "tier", subcommand: "set-role", options: { ...options, "canh-gioi": "phi-thang" } }, "Cảnh giới không hợp lệ.");
 		await rejects(harness, { group: "tier", subcommand: "set-role", options, cached: false }, "Không đọc được thông tin server. Vui lòng thử lại sau.");
-		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "luyen-khi", roleId: ROLE_KIM_DAN }]);
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-1", roleId: ROLE_KIM_DAN, createdByBot: false }]);
 	});
 
 	test("clear-role: bỏ role đã gán (nhắc bot không tự gỡ role khỏi người đang có); chưa gán thì báo", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 
-		const cleared = replyText(await run(harness, { group: "tier", subcommand: "clear-role", options: { "canh-gioi": "kim-dan" } }));
+		const cleared = replyText(await run(harness, { group: "tier", subcommand: "clear-role", options: { "canh-gioi": "bac-3" } }));
 		assert.ok(cleared.startsWith(`Đã bỏ <@&${ROLE_KIM_DAN}> khỏi cảnh giới 🟡 **Kim Đan** (từ Level 6).`), cleared);
 		assert.ok(cleared.includes("không tự gỡ role đó"));
 		assert.deepEqual(harness.tierRoles.list(GUILD), []);
 		assert.deepEqual(audits(harness.context, "tier_role").map(entry => entry.action), ["tier_role.set", "tier_role.clear"]);
 
-		const again = replyText(await run(harness, { group: "tier", subcommand: "clear-role", options: { "canh-gioi": "kim-dan" } }));
+		const again = replyText(await run(harness, { group: "tier", subcommand: "clear-role", options: { "canh-gioi": "bac-3" } }));
 		assert.equal(again, "Cảnh giới 🟡 **Kim Đan** (từ Level 6) chưa được gán role.");
 	});
 
 	test("list: đủ 8 cảnh giới với emoji, tên, mốc level, role hoặc \"chưa gán\", ghi chú thời điểm cập nhật role", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		const embed = replyEmbed(await run(harness, { group: "tier", subcommand: "list" }));
 
-		assert.equal(embed.title, "☯️ Role cảnh giới (1/8)");
+		assert.equal(embed.title, "🏅 Role danh hiệu · bộ Tu tiên (1/8)");
 		const lines = (embed.description ?? "").split("\n");
 		assert.equal(lines.length, 8);
 		assert.equal(lines[0], "🌱 **Luyện Khí** · từ Level 0 · chưa gán");
@@ -553,7 +554,7 @@ describe("role cảnh giới không dùng được vào việc khác", () =>
 	test("admin-role, poll role-tao-vote, team add từ chối role đang là role cảnh giới; không lưu gì", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		const { guildConfig, teams } = harness.context.deps;
 
 		await rejects(harness, { subcommand: "admin-role", options: { role } }, tierRoleRefusal("làm role admin bot"));
@@ -571,11 +572,11 @@ describe("role cảnh giới không dùng được vào việc khác", () =>
 	test("bỏ gán cảnh giới rồi thì dùng được; role khác không bị ảnh hưởng", async () =>
 	{
 		const harness = createHarness();
-		harness.tierRoles.set(GUILD, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		replyText(await run(harness, { group: "team", subcommand: "add", options: { role: { id: ROLE_TEAM, managed: false } } }));
 		assert.deepEqual(harness.context.deps.teams.list(GUILD), [ROLE_TEAM]);
 
-		harness.tierRoles.clear(GUILD, "kim-dan", ADMIN);
+		harness.tierRoles.clear(GUILD, "bac-3", ADMIN);
 		replyText(await run(harness, { subcommand: "admin-role", options: { role } }));
 		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).adminRoleId, ROLE_KIM_DAN);
 	});

@@ -209,7 +209,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 	ctx.lineJoin = "round";
 	switch (key)
 	{
-	case "luyen-khi":
+	case "bac-1":
 	{
 		ctx.strokeStyle = color;
 		ctx.lineWidth = Math.max(1.5, size * 0.11);
@@ -221,7 +221,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		drawLeaf(ctx, x, y + s * 0.2, s * 0.8, -Math.PI * 0.85, mix(color, "#ffffff", 0.25));
 		break;
 	}
-	case "truc-co":
+	case "bac-2":
 	{
 		const bricks: [number, number, number][] = [[-0.95, 0.42, 0.92], [0.03, 0.42, 0.92], [-0.66, -0.14, 0.63], [0.03, -0.14, 0.63], [-0.34, -0.7, 0.68]];
 		bricks.forEach(([left, top, width], index) =>
@@ -233,7 +233,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		});
 		break;
 	}
-	case "kim-dan":
+	case "bac-3":
 	{
 		const gradient = ctx.createRadialGradient(x - s * 0.3, y - s * 0.35, s * 0.1, x, y, s * 0.85);
 		gradient.addColorStop(0, "#fffde7");
@@ -243,7 +243,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		strokeCircle(ctx, x, y, s * 0.95, rgba(color, 0.7), Math.max(1, size * 0.06));
 		break;
 	}
-	case "nguyen-anh":
+	case "bac-4":
 	{
 		strokeCircle(ctx, x, y - s * 0.62, s * 0.38, color, Math.max(1.2, size * 0.07));
 		fillCircle(ctx, x, y - s * 0.05, s * 0.3, color);
@@ -256,12 +256,12 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		ctx.fill();
 		break;
 	}
-	case "hoa-than":
+	case "bac-5":
 	{
 		drawFlame(ctx, x, y, size * 0.95, true, color, mix(color, "#ffe082", 0.7));
 		break;
 	}
-	case "luyen-hu":
+	case "bac-6":
 	{
 		ctx.strokeStyle = color;
 		ctx.lineWidth = Math.max(1.5, size * 0.1);
@@ -279,7 +279,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		ctx.stroke();
 		break;
 	}
-	case "hop-the":
+	case "bac-7":
 	{
 		const r = s * 0.9;
 		fillCircle(ctx, x, y, r, color);
@@ -295,7 +295,7 @@ export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size
 		strokeCircle(ctx, x, y, r, color, Math.max(1, size * 0.06));
 		break;
 	}
-	case "do-kiep":
+	case "bac-8":
 	{
 		boltPath(ctx, x, y, size);
 		ctx.fillStyle = linearGradient(ctx, x, y - s, x, y + s, ["#fff8d6", color, mix(color, "#ff6f00", 0.4)]);

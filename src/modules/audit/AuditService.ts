@@ -19,6 +19,10 @@ export type AuditAction =
 	| "poll.close"
 	| "tier_role.set"
 	| "tier_role.clear"
+	| "tier_role.setup"
+	| "tier_set.set"
+	| "tier_name.set"
+	| "tier_name.reset"
 	| "board.set"
 	| "board.clear"
 	| "backup.manual";

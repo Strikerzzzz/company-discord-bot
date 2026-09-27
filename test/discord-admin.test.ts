@@ -31,6 +31,7 @@ import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
 import ConfigCmd from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
+import { DEFAULT_TIER_SET } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageXpResult, XpAdjustInput, XpEventView } from "../src/modules/activity/types";
 import { AuditAction, AuditEntry } from "../src/modules/audit/AuditService";
 import {
@@ -72,6 +73,10 @@ const AUDIT_ACTIONS: Record<AuditAction, true> = {
 	"poll.close": true,
 	"tier_role.set": true,
 	"tier_role.clear": true,
+	"tier_role.setup": true,
+	"tier_set.set": true,
+	"tier_name.set": true,
+	"tier_name.reset": true,
 	"board.set": true,
 	"board.clear": true,
 	"backup.manual": true,
@@ -296,6 +301,7 @@ function createHarness(): Harness
 		guildConfig: context.deps.guildConfig,
 		teams: context.deps.teams,
 		audit: context.deps.audit,
+		tierSets: context.deps.tierSets,
 		activity,
 		contributions,
 		statistics: { summary: (): GuildStatistics => SAMPLE_STATS },
@@ -649,7 +655,7 @@ describe("views quản trị", () =>
 	test("embed chi tiết XP: level, tổng XP, hạng, biến động", () =>
 	{
 		const profile: ActivityProfile = { userId: USER_A, level: levelInfo(1234), rank: 3, totalRanked: 1500 };
-		const embed = buildXpDetailEmbed(profile, [xpEvent({ amount: 10 }), xpEvent({ amount: -5, voided: true })]).toJSON();
+		const embed = buildXpDetailEmbed(profile, [xpEvent({ amount: 10 }), xpEvent({ amount: -5, voided: true })], DEFAULT_TIER_SET).toJSON();
 		assert.ok(embed.description?.includes(`<@${USER_A}>`));
 		assert.ok(embed.description?.includes("~~"));
 		const fields = Object.fromEntries((embed.fields ?? []).map(field => [field.name, field.value]));
@@ -658,7 +664,7 @@ describe("views quản trị", () =>
 		assert.equal(fields["Hạng"], "#3 / 1.500");
 		assert.equal(fields["Cảnh giới"], "🧱 Trúc Cơ");
 
-		const empty = buildXpDetailEmbed({ ...profile, rank: null, level: levelInfo(0) }, []).toJSON();
+		const empty = buildXpDetailEmbed({ ...profile, rank: null, level: levelInfo(0) }, [], DEFAULT_TIER_SET).toJSON();
 		assert.ok(empty.description?.includes("Chưa có biến động nào."));
 		assert.ok(embedText(empty).includes("Chưa xếp hạng"));
 	});
@@ -721,7 +727,8 @@ describe("views quản trị", () =>
 		];
 		const gamification = {
 			boardChannelId: CHANNEL_GENERAL,
-			tierRoles: [{ tierKey: "luyen-khi", roleId: ROLE_LUYEN_KHI }, { tierKey: "truc-co", roleId: ROLE_TRUC_CO }] as const,
+			tierRoles: [{ tierKey: "bac-1", roleId: ROLE_LUYEN_KHI, createdByBot: false }, { tierKey: "bac-2", roleId: ROLE_TRUC_CO, createdByBot: false }] as const,
+			tierSet: DEFAULT_TIER_SET,
 		};
 		const embed = buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollCreatorRoleId: ROLE_OTHER }, [ROLE_BACKEND, ROLE_FRONTEND], channels, gamification).toJSON();
 		const text = embedText(embed);
@@ -741,7 +748,7 @@ describe("views quản trị", () =>
 			`<#${CHANNEL_BOT}>: tắt XP`,
 			`<#${CHANNEL_GENERAL}>: bật XP, 20 XP/tin, cooldown 30 giây`,
 			`🏆 Bảng vàng\n<#${CHANNEL_GENERAL}>`,
-			"Role cảnh giới (2/8)",
+			"Danh hiệu: bộ Tu tiên · role đã gán 2/8",
 			`🌱 Luyện Khí (Lv 0+): <@&${ROLE_LUYEN_KHI}>`,
 			`🧱 Trúc Cơ (Lv 3+): <@&${ROLE_TRUC_CO}>`,
 		])
@@ -749,7 +756,7 @@ describe("views quản trị", () =>
 			assert.ok(text.includes(expected), `thiếu "${expected}"`);
 		}
 
-		const empty = embedText(buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollXpDailyCap: 0 }, [], [], { boardChannelId: null, tierRoles: [] }).toJSON());
+		const empty = embedText(buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollXpDailyCap: 0 }, [], [], { boardChannelId: null, tierRoles: [], tierSet: DEFAULT_TIER_SET }).toJSON());
 		assert.ok(empty.includes("Chưa có team nào"));
 		assert.ok(empty.includes("Mọi channel dùng cấu hình chung"));
 		assert.ok(empty.includes("Giới hạn XP từ vote mỗi ngày: **không giới hạn**"));
@@ -765,7 +772,7 @@ describe("views quản trị", () =>
 			xpPerMessage: 100,
 			xpCooldownSeconds: 3600,
 		}));
-		const embed = buildConfigEmbed(DEFAULT_GUILD_SETTINGS, [], channels, { boardChannelId: null, tierRoles: [] }).toJSON();
+		const embed = buildConfigEmbed(DEFAULT_GUILD_SETTINGS, [], channels, { boardChannelId: null, tierRoles: [], tierSet: DEFAULT_TIER_SET }).toJSON();
 		const field = embed.fields?.find(candidate => candidate.name.startsWith("📺"));
 		assert.ok(field);
 		assert.ok(field.value.length <= 1024);
@@ -859,8 +866,8 @@ describe("/admin", () =>
 	test("xp give: thành viên là GuildMember thì đồng bộ role cảnh giới theo tổng XP mới, rồi sửa phản hồi thêm một dòng", async () =>
 	{
 		const { admin, tierRoles } = createHarness();
-		tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 		const { member, changes } = fakeGuildMember([ROLE_BACKEND, ROLE_LUYEN_KHI]);
 
 		const fake = await run(admin, { group: "xp", subcommand: "give", options: { "thanh-vien": user(USER_A), "so-xp": 50 }, member });
@@ -876,8 +883,8 @@ describe("/admin", () =>
 	test("xp reset: về Level 0 thì chuyển về role Luyện Khí; xp remove không đổi cảnh giới thì không sửa phản hồi", async () =>
 	{
 		const { admin, tierRoles } = createHarness();
-		tierRoles.set(GUILD, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 
 		const reset = fakeGuildMember([ROLE_TRUC_CO]);
 		const fake = await run(admin, { group: "xp", subcommand: "reset", options: { "thanh-vien": user(USER_A) }, member: reset.member });
@@ -895,7 +902,7 @@ describe("/admin", () =>
 	{
 		t.mock.method(console, "error", () => undefined);
 		const { admin, tierRoles } = createHarness();
-		tierRoles.set(GUILD, "truc-co", BOT_ROLE, ADMIN);
+		tierRoles.set(GUILD, "bac-2", BOT_ROLE, ADMIN);
 		const { member, changes } = fakeGuildMember([]);
 
 		const fake = await run(admin, { group: "xp", subcommand: "give", options: { "thanh-vien": user(USER_A), "so-xp": 50 }, member });
@@ -1051,10 +1058,10 @@ describe("/config", () =>
 		assert.ok(before.includes(`<@&${ROLE_BACKEND}>`));
 		assert.ok(before.includes(`<#${CHANNEL_BOT}>: tắt XP`));
 		assert.ok(before.includes("Đang tắt. Dùng `/config board` để bật."));
-		assert.ok(before.includes("Role cảnh giới (0/8)"));
+		assert.ok(before.includes("role đã gán 0/8"));
 
 		liveBoards.setChannel(GUILD, CHANNEL_GENERAL, ADMIN);
-		tierRoles.set(GUILD, "kim-dan", ROLE_FRONTEND, ADMIN);
+		tierRoles.set(GUILD, "bac-3", ROLE_FRONTEND, ADMIN);
 		const after = embedText(replyEmbed(await run(config, { subcommand: "view" })));
 		assert.ok(after.includes(`🏆 Bảng vàng\n<#${CHANNEL_GENERAL}>`));
 		assert.ok(after.includes(`🟡 Kim Đan (Lv 6+): <@&${ROLE_FRONTEND}>`));

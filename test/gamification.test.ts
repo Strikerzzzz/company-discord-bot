@@ -169,7 +169,7 @@ describe("GamificationService.profile", () =>
 		assert.equal(profile.userId, USER_A);
 		assert.deepEqual(profile.level, levelInfo(0));
 		assert.equal(profile.tier.name, "Luyện Khí");
-		assert.equal(profile.nextTier?.key, "truc-co");
+		assert.equal(profile.nextTier?.key, "bac-2");
 		assert.deepEqual(profile.streak, streak(0, 0, false, null));
 		assert.deepEqual(profile.stats, {
 			messages: 0, bestStreak: 0, recognitionsReceived: 0, recognitionsGiven: 0, pollsJoined: 0, contributions: 0,
@@ -186,8 +186,8 @@ describe("GamificationService.profile", () =>
 		deps.xpLedger.record({ guildId: GUILD, userId: USER_A, amount: totalXpForLevel(3), source: "admin" });
 		const profile = gamification.profile(GUILD, USER_A);
 		assert.equal(profile.level.level, 3);
-		assert.equal(profile.tier.key, "truc-co");
-		assert.equal(profile.nextTier?.key, "kim-dan");
+		assert.equal(profile.tier.key, "bac-2");
+		assert.equal(profile.nextTier?.key, "bac-3");
 
 		deps.xpLedger.record({ guildId: GUILD, userId: USER_B, amount: totalXpForLevel(45), source: "admin" });
 		const top = gamification.profile(GUILD, USER_B);

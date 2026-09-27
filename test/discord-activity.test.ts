@@ -25,7 +25,7 @@ import { cooldownMessage, RenderGate } from "../src/discord/renderGate";
 import LeaderboardCmd from "../src/interactions/commands/leaderboard";
 import RankCmd from "../src/interactions/commands/rank";
 import { levelInfo } from "../src/modules/activity/levels";
-import { nextTier, tierForLevel } from "../src/modules/activity/tiers";
+import { DEFAULT_TIER_SET, nextTier, tierForLevel } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageInput, MessageXpResult } from "../src/modules/activity/types";
 import { ContributionProfile, ContributionServiceApi } from "../src/modules/contribution/types";
 import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
@@ -310,6 +310,7 @@ function withGamification(services: AppServices, totalXp = 0): AppServices
 			return {
 				userId,
 				level,
+				tierSet: DEFAULT_TIER_SET,
 				tier: tierForLevel(level.level),
 				nextTier: nextTier(level.level),
 				streak: { current: 0, best: 0, activeToday: false, lastActiveDay: null },
@@ -574,7 +575,7 @@ describe("event messageCreate", () =>
 		const fake = messageServices({ xpResult: LEVEL_UP });
 		const { message, sent } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: breakthroughText(USER_A, tierByKey("truc-co"), 3), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: breakthroughText(USER_A, tierByKey("bac-2"), 3), allowedMentions: { users: [USER_A] } }]);
 	});
 
 	test("bot không có quyền gửi tin ở channel: bỏ qua thông báo, không gây lỗi", async () =>
@@ -747,7 +748,7 @@ describe("/rank", () =>
 		assert.equal(cards.length, 1);
 		assert.equal(cards[0].displayName, "Anh A");
 		assert.equal(cards[0].level.level, 6);
-		assert.equal(cards[0].tier.key, "kim-dan");
+		assert.equal(cards[0].tier.key, "bac-3");
 		assert.equal(cards[0].activity.rank, 1);
 		assert.deepEqual(cards[0].teamNames, ["Backend"]);
 		assert.deepEqual(avatarUrls, [AVATAR]);

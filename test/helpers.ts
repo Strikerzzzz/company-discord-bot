@@ -2,6 +2,7 @@ import { Db, openDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
 import { AuditService } from "../src/modules/audit/AuditService";
 import { ServiceDeps } from "../src/modules/deps";
+import { TierSetService } from "../src/modules/gamification/TierSetService";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
 import { Ledger } from "../src/modules/ledger/Ledger";
 import { TeamService } from "../src/modules/team/TeamService";
@@ -53,6 +54,7 @@ export function createTestContext(): TestContext
 			teams: new TeamService(db, clock, audit),
 			xpLedger: new Ledger(db, "xp", clock),
 			contributionLedger: new Ledger(db, "contribution", clock),
+			tierSets: new TierSetService(db, clock, audit),
 		},
 	};
 }

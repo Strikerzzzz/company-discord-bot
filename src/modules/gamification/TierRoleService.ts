@@ -2,26 +2,31 @@ import { Statement } from "better-sqlite3";
 import { Db } from "../../db/connection";
 import { Clock } from "../../shared/clock";
 import { UserError } from "../../shared/errors";
-import { isTierKey, TierKey, tierByKey, TIERS, tierForLevel } from "../activity/tiers";
+import { isTierKey, TierKey, TIERS, tierForLevel, tierIndex } from "../activity/tiers";
 import { AuditService } from "../audit/AuditService";
-import { TierRoleMapping, TierRoleServiceApi, TierRoleSyncPlan } from "./types";
+import { TierRoleMapping, TierRoleServiceApi, TierRoleSetupSummary, TierRoleSyncPlan } from "./types";
 
-const INVALID_TIER = "Cảnh giới không hợp lệ.";
+const INVALID_TIER = "Bậc danh hiệu không hợp lệ.";
 
 interface TierRoleRow
 {
 	tier_key: string;
 	role_id: string;
-}
-
-/** Tên cảnh giới để hiển thị trong thông báo lỗi; khoá lạ (sửa tay DB) thì hiển thị nguyên khoá. */
-function tierName(tierKey: string): string
-{
-	return isTierKey(tierKey) ? tierByKey(tierKey).name : tierKey;
+	created_by_bot: number;
 }
 
 /**
- * Role Discord tự gán theo cảnh giới (DEC-031): mỗi cảnh giới tối đa một role, mỗi role chỉ thuộc một cảnh giới
+ * Tên bậc trong thông báo lỗi. Service không biết bộ danh hiệu guild đang dùng nên gọi theo vị trí ("bậc 3");
+ * khoá lạ (sửa tay DB) thì hiển thị nguyên khoá.
+ */
+function tierName(tierKey: string): string
+{
+	return isTierKey(tierKey) ? `bậc ${tierIndex(tierKey) + 1}` : tierKey;
+}
+
+/**
+ * Role Discord tự gán theo bậc danh hiệu (DEC-031, DEC-033): mỗi bậc tối đa một role, mỗi role chỉ thuộc một bậc.
+ * Bậc là vị trí dùng chung giữa các bộ, nên đổi bộ không đổi role đã gán. Thứ tự và mốc level theo TIER_LEVELS.
  * (unique index (guild_id, role_id) là lớp chặn cuối). Đây là cấu hình, không phải điểm, nên bỏ gán thì xoá dòng.
  * Không kiểm tra quyền Discord của role; việc đó thuộc tầng Discord.
  */
@@ -30,34 +35,34 @@ export class TierRoleService implements TierRoleServiceApi
 	private readonly selectByGuild: Statement<[string], TierRoleRow>;
 	private readonly selectByRole: Statement<[string, string], { tier_key: string }>;
 	private readonly selectByTier: Statement<[string, string], { role_id: string }>;
-	private readonly upsert: Statement<[string, string, string, number]>;
+	private readonly upsert: Statement<[string, string, string, number, number]>;
 	private readonly deleteByTier: Statement<[string, string]>;
 
 	constructor(private readonly db: Db, private readonly clock: Clock, private readonly audit: AuditService)
 	{
-		this.selectByGuild = db.prepare("SELECT tier_key, role_id FROM tier_roles WHERE guild_id = ?");
+		this.selectByGuild = db.prepare("SELECT tier_key, role_id, created_by_bot FROM tier_roles WHERE guild_id = ?");
 		this.selectByRole = db.prepare("SELECT tier_key FROM tier_roles WHERE guild_id = ? AND role_id = ?");
 		this.selectByTier = db.prepare("SELECT role_id FROM tier_roles WHERE guild_id = ? AND tier_key = ?");
 		this.upsert = db.prepare(`
-			INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT (guild_id, tier_key) DO UPDATE SET role_id = excluded.role_id, updated_at = excluded.updated_at`);
+			INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at, created_by_bot) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (guild_id, tier_key) DO UPDATE SET role_id = excluded.role_id, updated_at = excluded.updated_at, created_by_bot = excluded.created_by_bot`);
 		this.deleteByTier = db.prepare("DELETE FROM tier_roles WHERE guild_id = ? AND tier_key = ?");
 	}
 
 	list(guildId: string): TierRoleMapping[]
 	{
-		const roleByTier = new Map(this.selectByGuild.all(guildId).map(row => [row.tier_key, row.role_id]));
+		const rowByTier = new Map(this.selectByGuild.all(guildId).map(row => [row.tier_key, row]));
 		const mappings: TierRoleMapping[] = [];
-		// Duyệt theo TIERS để có thứ tự cảnh giới và tự bỏ qua khoá lạ không thuộc TIERS.
+		// Duyệt theo TIERS để có thứ tự bậc và tự bỏ qua khoá lạ không thuộc TIER_KEYS.
 		for (const tier of TIERS)
 		{
-			const roleId = roleByTier.get(tier.key);
-			if (roleId !== undefined) mappings.push({ tierKey: tier.key, roleId });
+			const row = rowByTier.get(tier.key);
+			if (row !== undefined) mappings.push({ tierKey: tier.key, roleId: row.role_id, createdByBot: row.created_by_bot === 1 });
 		}
 		return mappings;
 	}
 
-	set(guildId: string, tierKey: TierKey, roleId: string, actorId: string): void
+	set(guildId: string, tierKey: TierKey, roleId: string, actorId: string, options: { createdByBot?: boolean } = {}): void
 	{
 		// Kiểu TypeScript không bảo vệ được dữ liệu đến từ Discord lúc chạy, nên kiểm tra lại.
 		if (!isTierKey(tierKey)) throw new UserError(INVALID_TIER);
@@ -68,10 +73,10 @@ export class TierRoleService implements TierRoleServiceApi
 			if (owner !== undefined)
 			{
 				if (owner.tier_key === tierKey) return;
-				throw new UserError(`Role này đang được gán cho cảnh giới ${tierName(owner.tier_key)}. Hãy bỏ gán ở cảnh giới đó trước.`);
+				throw new UserError(`Role này đang được gán cho ${tierName(owner.tier_key)}. Hãy bỏ gán ở bậc đó trước.`);
 			}
 
-			this.upsert.run(guildId, tierKey, roleId, this.clock.now());
+			this.upsert.run(guildId, tierKey, roleId, this.clock.now(), options.createdByBot === true ? 1 : 0);
 			this.audit.record(guildId, actorId, "tier_role.set", roleId, { tierKey });
 		})();
 	}
@@ -89,6 +94,11 @@ export class TierRoleService implements TierRoleServiceApi
 			this.audit.record(guildId, actorId, "tier_role.clear", current.role_id, { tierKey });
 			return true;
 		})();
+	}
+
+	recordSetup(guildId: string, actorId: string, summary: TierRoleSetupSummary): void
+	{
+		this.audit.record(guildId, actorId, "tier_role.setup", null, { ...summary });
 	}
 
 	plan(guildId: string, level: number, memberRoleIds: readonly string[]): TierRoleSyncPlan

@@ -1,6 +1,6 @@
 // Hàm thuần dựng nội dung hiển thị cho lệnh quản trị (/admin, /config). Không truy cập service hay database.
 import { EmbedBuilder, escapeMarkdown, InteractionReplyOptions, MessageFlags } from "discord.js";
-import { isTierKey, tierByKey, TIERS, tierForLevel } from "../../modules/activity/tiers";
+import { isTierKey, isTierSetKey, TIER_SETS, tierByKey, tierForLevel, tierIndex, TierSet } from "../../modules/activity/tiers";
 import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activity/types";
 import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
 import { TierRoleMapping } from "../../modules/gamification/types";
@@ -153,14 +153,16 @@ export interface GamificationConfigView
 {
 	/** Kênh Bảng vàng; null = đang tắt. */
 	boardChannelId: string | null;
-	/** Các cảnh giới đã gán role, theo thứ tự TIERS. */
+	/** Các bậc đã gán role, theo thứ tự bậc. */
 	tierRoles: readonly TierRoleMapping[];
+	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh, DEC-033). */
+	tierSet: TierSet;
 }
 
-/** Một dòng "emoji Tên (Lv n+)" của cảnh giới có khoá `tierKey`. */
-function tierLabel(tierKey: TierRoleMapping["tierKey"]): string
+/** Một dòng "emoji Tên (Lv n+)" của bậc `tierKey` trong bộ `set`. */
+function tierLabel(tierKey: TierRoleMapping["tierKey"], set: TierSet): string
 {
-	const tier = tierByKey(tierKey);
+	const tier = tierByKey(tierKey, set);
 	return `${tier.emoji} ${tier.name} (Lv ${formatNumber(tier.minLevel)}+)`;
 }
 
@@ -181,7 +183,7 @@ export function buildConfigEmbed(
 		? "Đang tắt. Dùng `/config board` để bật."
 		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
 	const tierRoleText = gamification.tierRoles.length > 0
-		? gamification.tierRoles.map(mapping => `${tierLabel(mapping.tierKey)}: ${roleMention(mapping.roleId)}`).join("\n")
+		? gamification.tierRoles.map(mapping => `${tierLabel(mapping.tierKey, gamification.tierSet)}: ${roleMention(mapping.roleId)}`).join("\n")
 		: "Chưa gán role nào. Dùng `/config tier set-role` để gán.";
 
 	return new EmbedBuilder()
@@ -195,7 +197,7 @@ export function buildConfigEmbed(
 			{ name: `👥 Team (${teams.length}/${MAX_TEAMS})`, value: teamText },
 			{ name: `📺 Channel có cấu hình riêng (${channels.length})`, value: channelText },
 			{ name: "🏆 Bảng vàng", value: boardText },
-			{ name: `☯️ Role cảnh giới (${gamification.tierRoles.length}/${TIERS.length})`, value: tierRoleText },
+			{ name: `🏅 Danh hiệu: bộ ${gamification.tierSet.name} · role đã gán ${gamification.tierRoles.length}/${gamification.tierSet.tiers.length}`, value: tierRoleText },
 		);
 }
 
@@ -235,10 +237,10 @@ export const TIER_ROLE_DEDICATED_NOTE = "⚠️ Nên dùng role **mới tạo ri
 	+ "khi họ nhắn tin, và gán cho mọi người đạt cảnh giới.";
 
 /** Danh sách 8 cảnh giới: emoji, tên, mốc level và role đã gán (hoặc "chưa gán"). */
-export function buildTierRoleListEmbed(mappings: readonly TierRoleMapping[]): EmbedBuilder
+export function buildTierRoleListEmbed(set: TierSet, mappings: readonly TierRoleMapping[]): EmbedBuilder
 {
 	const roleByTier = new Map(mappings.map(mapping => [mapping.tierKey, mapping.roleId]));
-	const lines = TIERS.map(tier =>
+	const lines = set.tiers.map(tier =>
 	{
 		const roleId = roleByTier.get(tier.key);
 		return `${tier.emoji} **${tier.name}** · từ Level ${formatNumber(tier.minLevel)} · ${roleId === undefined ? "chưa gán" : roleMention(roleId)}`;
@@ -246,7 +248,7 @@ export function buildTierRoleListEmbed(mappings: readonly TierRoleMapping[]): Em
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
-		.setTitle(`☯️ Role cảnh giới (${mappings.length}/${TIERS.length})`)
+		.setTitle(`🏅 Role danh hiệu · bộ ${set.name} (${mappings.length}/${set.tiers.length})`)
 		.setDescription(lines.join("\n"))
 		.setFooter({ text: TIER_ROLE_SYNC_NOTE });
 }
@@ -288,10 +290,10 @@ function rankText(rank: number | null, totalRanked: number): string
 	return rank === null ? "Chưa xếp hạng" : `#${formatNumber(rank)} / ${formatNumber(totalRanked)}`;
 }
 
-export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly XpEventView[]): EmbedBuilder
+export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly XpEventView[], set: TierSet): EmbedBuilder
 {
 	const { level } = profile;
-	const tier = tierForLevel(level.level);
+	const tier = tierForLevel(level.level, set);
 	const header = `${userMention(profile.userId)}\n\n**Biến động gần nhất**\n`;
 	const history = events.length > 0
 		? fitLines(events.map(formatXpEvent), EMBED_DESCRIPTION_MAX - header.length, hidden => `… và ${hidden} biến động khác`)
@@ -305,7 +307,7 @@ export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly Xp
 			{ name: "Level", value: formatNumber(level.level), inline: true },
 			{ name: "Tổng XP", value: formatNumber(level.totalXp), inline: true },
 			{ name: "Hạng", value: rankText(profile.rank, profile.totalRanked), inline: true },
-			{ name: "Cảnh giới", value: `${tier.emoji} ${tier.name}`, inline: true },
+			{ name: set.texts.tierLabel, value: `${tier.emoji} ${tier.name}`, inline: true },
 			{
 				name: `Tiến độ lên level ${formatNumber(level.level + 1)}`,
 				value: `${progressBar(level.xpIntoLevel, level.xpForNextLevel)} ${formatNumber(level.xpIntoLevel)} / ${formatNumber(level.xpForNextLevel)} XP`,
@@ -378,6 +380,10 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"poll.close": "Đóng vote",
 	"tier_role.set": "Gán role cho cảnh giới",
 	"tier_role.clear": "Bỏ role của cảnh giới",
+	"tier_role.setup": "Tạo/đồng bộ role danh hiệu",
+	"tier_set.set": "Chọn bộ danh hiệu",
+	"tier_name.set": "Đổi tên bậc danh hiệu",
+	"tier_name.reset": "Khôi phục tên bậc mặc định",
 	"board.set": "Đặt kênh Bảng vàng",
 	"board.clear": "Tắt Bảng vàng",
 	"backup.manual": "Sao lưu thủ công",
@@ -405,6 +411,10 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"poll.close": "none",
 	"tier_role.set": "role",
 	"tier_role.clear": "role",
+	"tier_role.setup": "none",
+	"tier_set.set": "none",
+	"tier_name.set": "none",
+	"tier_name.reset": "none",
 	"board.set": "channel",
 	"board.clear": "channel",
 	"backup.manual": "none",
@@ -425,7 +435,16 @@ const DETAIL_LABELS = new Map<string, string>([
 	["totalXp", "Tổng XP"],
 	["score", "Tổng điểm"],
 	["xpReward", "XP khi tham gia"],
-	["tierKey", "Cảnh giới"],
+	["tierKey", "Bậc"],
+	["setKey", "Bộ danh hiệu"],
+	["from", "Từ bộ"],
+	["to", "Sang bộ"],
+	["name", "Tên"],
+	["emoji", "Emoji"],
+	["count", "Số bậc"],
+	["created", "Role tạo mới"],
+	["renamed", "Role đổi tên"],
+	["skipped", "Bỏ qua"],
 	["compensated", "Điểm bù tự động"],
 ]);
 
@@ -460,11 +479,8 @@ function detailValue(key: string, value: unknown): string
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);
 	if (typeof value === "string")
 	{
-		if (key === "tierKey" && isTierKey(value))
-		{
-			const tier = tierByKey(value);
-			return `${tier.emoji} ${tier.name}`;
-		}
+		if (key === "tierKey" && isTierKey(value)) return `Bậc ${tierIndex(value) + 1}`;
+		if ((key === "setKey" || key === "from" || key === "to") && isTierSetKey(value)) return TIER_SETS[value].name;
 		if (/^\d{17,20}$/.test(value))
 		{
 			if (key.endsWith("RoleId")) return roleMention(value);

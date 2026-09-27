@@ -133,9 +133,9 @@ function tierRolesFor(...guildIds: string[]): TierRoleService
 	const service = new TierRoleService(context.db, context.clock, context.deps.audit);
 	for (const guildId of guildIds)
 	{
-		service.set(guildId, "luyen-khi", ROLE_LUYEN_KHI, ADMIN);
-		service.set(guildId, "truc-co", ROLE_TRUC_CO, ADMIN);
-		service.set(guildId, "kim-dan", ROLE_KIM_DAN, ADMIN);
+		service.set(guildId, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		service.set(guildId, "bac-2", ROLE_TRUC_CO, ADMIN);
+		service.set(guildId, "bac-3", ROLE_KIM_DAN, ADMIN);
 	}
 	return service;
 }
@@ -334,7 +334,7 @@ describe("syncTierRoles", () =>
 	{
 		const context = createTestContext();
 		const tierRoles = new TierRoleService(context.db, context.clock, context.deps.audit);
-		tierRoles.set(GUILD, "truc-co", ROLE_TRUC_CO, ADMIN);
+		tierRoles.set(GUILD, "bac-2", ROLE_TRUC_CO, ADMIN);
 		const { member, calls } = fakeMember({ roleIds: [ROLE_TRUC_CO] });
 
 		assert.deepEqual(await syncTierRoles(member, 0, tierRoles, REASON), { added: [], removed: [ROLE_TRUC_CO], skipped: [] });
@@ -495,6 +495,7 @@ describe("syncTierRoles", () =>
 			list: () => [],
 			set: () => undefined,
 			clear: () => false,
+			recordSetup: () => undefined,
 			plan: () =>
 			{
 				throw new Error("database is locked");

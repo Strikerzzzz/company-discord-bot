@@ -41,7 +41,7 @@ import LeaderboardCmd, {
 	parseBoardId,
 } from "../src/interactions/commands/leaderboard";
 import { levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
-import { tierByKey, tierForLevel, nextTier } from "../src/modules/activity/tiers";
+import { DEFAULT_TIER_SET, tierByKey, tierForLevel, nextTier } from "../src/modules/activity/tiers";
 import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
 import { GamificationProfile } from "../src/modules/gamification/types";
 import { LeaderboardPage, LeaderboardPeriod, LeaderboardScope, ScoreKind } from "../src/modules/leaderboard/LeaderboardService";
@@ -311,11 +311,11 @@ describe("dữ liệu ảnh bảng xếp hạng", () =>
 			avatar: AVATAR_BYTES,
 			value: "68.420 XP",
 			detail: "Lv 45",
-			tier: tierByKey("do-kiep"),
+			tier: tierByKey("bac-8"),
 			accentColor: null,
 			highlight: false,
 		});
-		assert.equal(data.rows[1].tier?.key, "kim-dan");
+		assert.equal(data.rows[1].tier?.key, "bac-3");
 		assert.equal(data.rows[1].detail, "Lv 7");
 		assert.equal(data.rows[1].highlight, true);
 		assert.equal(data.rows[2].name, UNKNOWN_MEMBER_NAME, "không tra được tên");
@@ -372,6 +372,7 @@ function gamificationProfile(options: { totalXp?: number; streak?: number; unloc
 	return {
 		userId: USER_A,
 		level,
+		tierSet: DEFAULT_TIER_SET,
 		tier: tierForLevel(level.level),
 		nextTier: nextTier(level.level),
 		streak: { current: options.streak ?? 0, best: Math.max(options.streak ?? 0, 3), activeToday: true, lastActiveDay: 1 },
@@ -402,8 +403,8 @@ describe("thẻ rank và phần chữ đi kèm", () =>
 			displayName: "Anh A",
 			avatar: AVATAR_BYTES,
 			level: profile.level,
-			tier: tierByKey("kim-dan"),
-			nextTier: tierByKey("nguyen-anh"),
+			tier: tierByKey("bac-3"),
+			nextTier: tierByKey("bac-4"),
 			activity: { rank: 3, totalRanked: 37, weeklyXp: 1240, weeklyRank: 2 },
 			contribution: { score: 86, rank: 4, totalRanked: 21, contributions: 12 },
 			streak: { current: 12, best: 12, activeToday: true },

@@ -295,6 +295,20 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - PEND-021 (PROP-031, phương án a): nếu một lượt rút ghi nhận làm phát sinh điểm bù (tác giả đang bị admin trừ điểm), người rút **không ghi nhận lại** được contribution đó. Bot giữ dòng vote với event đã huỷ, giống lượt đã bị reset (PEND-015). Phản hồi khi rút có báo rõ lý do. Lượt rút không phải bù thì vẫn ghi nhận lại bình thường.
   - PEND-019 (PROP-027): người phụ trách trả lời "oke" cho câu hỏi kèm ghi chú "hiện là không"; AI hiểu là **giữ nguyên**. Ảnh kèm chữ quá ngắn (dưới 5 ký tự sau chuẩn hoá) không được XP; ảnh không kèm chữ hoặc ảnh kèm chữ từ 5 ký tự trở lên thì được.
 
+### DEC-033 — Bộ danh hiệu chọn được, bot tự tạo role, bảng điều khiển trực quan
+
+- **Ngày:** 2026-09-27 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (muốn hệ thống danh hiệu "có lựa chọn chứ không cứng"; chọn thêm 4 bộ, cho đổi tên từng bậc, bot tự tạo/đổi tên role, "giao diện gán role trực quan")
+- **Nội dung:**
+  - **5 bộ có sẵn:** Tu tiên (mặc định), Rank game (Đồng → Thách Đấu), Kiếm hiệp (Tân Thủ → Võ Lâm Minh Chủ), Cây xanh (Hạt Giống → Đại Thụ Ngàn Năm), Vũ trụ (Thiên Thạch → Vũ Trụ). Dữ liệu nằm ở `src/modules/activity/tiers.ts`.
+  - Mọi bộ có **8 bậc cùng mốc level** 0/3/6/10/15/20/30/40. Bậc là vị trí dùng chung (`bac-1` … `bac-8`), nên đổi bộ không làm mất role đã gán theo bậc. Chỉ để hiển thị, không đổi công thức XP/level (DEC-022).
+  - Mỗi guild chọn một bộ. Admin đổi được **tên và emoji** từng bậc (tối đa 32 ký tự, không chứa ký tự định dạng hay mention). Tên tuỳ chỉnh lưu theo từng bộ, nên đổi qua lại không mất. Màu và mốc level luôn theo bộ.
+  - Mỗi bộ có **giọng văn riêng**: thông báo lên level, thông báo lên bậc, chữ trên ảnh thẻ.
+  - **Bot tự tạo role** (không có quyền gì, màu theo bậc) cho bậc chưa gán role, và **đổi tên/màu** role đã gán sang bộ đang dùng. Bot chỉ đụng role cảnh giới đã qua kiểm tra an toàn (DEC-031) và thấp hơn role của bot. Người thao tác phải có Manage Roles.
+  - **Bảng điều khiển** `/config tier panel` (chỉ admin, trả lời riêng): menu chọn bộ, 8 ô chọn role (mỗi bậc một ô, điền sẵn role hiện tại), nút đổi tên bậc (form), nút tạo/đồng bộ role, nút khôi phục tên mặc định. Mọi thao tác kiểm tra quyền như lệnh gõ tay.
+  - Component (nút, menu, form) của lệnh admin được kiểm tra quyền admin ở dispatcher, giống lệnh gõ (lớp quyền 2).
+  - Hai huy hiệu mang tên tu tiên đổi sang tên trung tính cho hợp mọi bộ: "Bế Quan Tu Luyện" → "Chuyên Cần", "Bách Nhật Trúc Cơ" → "Bách Nhật Bền Bỉ".
+- **Hệ quả:** migration 4 (khoá bậc mới, `tier_roles.created_by_bot`, `tier_set_config`, `tier_name_overrides`); audit mới `tier_set.set`, `tier_name.set`, `tier_name.reset`, `tier_role.setup`.
+
 ---
 
 ## Đang chờ quyết định

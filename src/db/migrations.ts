@@ -279,6 +279,43 @@ export const MIGRATIONS: readonly Migration[] = [
 			CREATE INDEX idx_poll_participants_user ON poll_participants (user_id);
 		`,
 	},
+	{
+		version: 4,
+		name: "tier_sets",
+		sql: `
+			-- Bậc danh hiệu dùng khoá vị trí chung cho mọi bộ (DEC-033): đổi khoá cảnh giới tu tiên cũ sang bac-1 … bac-8.
+			UPDATE tier_roles SET tier_key = CASE tier_key
+				WHEN 'luyen-khi' THEN 'bac-1'
+				WHEN 'truc-co' THEN 'bac-2'
+				WHEN 'kim-dan' THEN 'bac-3'
+				WHEN 'nguyen-anh' THEN 'bac-4'
+				WHEN 'hoa-than' THEN 'bac-5'
+				WHEN 'luyen-hu' THEN 'bac-6'
+				WHEN 'hop-the' THEN 'bac-7'
+				WHEN 'do-kiep' THEN 'bac-8'
+				ELSE tier_key END;
+			-- 1 = role do bot tự tạo bằng chức năng tạo/đồng bộ role (chỉ để hiển thị và dọn dẹp; quy tắc an toàn áp dụng như nhau).
+			ALTER TABLE tier_roles ADD COLUMN created_by_bot INTEGER NOT NULL DEFAULT 0;
+
+			-- Bộ danh hiệu guild đang dùng; không có dòng = bộ mặc định (tu-tien).
+			CREATE TABLE tier_set_config (
+				guild_id TEXT PRIMARY KEY,
+				set_key TEXT NOT NULL,
+				updated_at INTEGER NOT NULL
+			);
+
+			-- Tên/emoji tuỳ chỉnh theo từng bộ, nên đổi sang bộ khác rồi quay lại vẫn giữ. NULL = dùng mặc định của bộ.
+			CREATE TABLE tier_name_overrides (
+				guild_id TEXT NOT NULL,
+				set_key TEXT NOT NULL,
+				tier_key TEXT NOT NULL,
+				name TEXT,
+				emoji TEXT,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, set_key, tier_key)
+			);
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

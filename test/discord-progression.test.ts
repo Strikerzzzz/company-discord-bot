@@ -46,7 +46,7 @@ describe("thông báo đột phá cảnh giới", () =>
 	test("đúng định dạng cho Trúc Cơ", () =>
 	{
 		assert.equal(
-			breakthroughText(USER_A, tierByKey("truc-co"), 3),
+			breakthroughText(USER_A, tierByKey("bac-2"), 3),
 			`⚡ Thiên kiếp giáng xuống… <@${USER_A}> đã đặt nền Trúc Cơ vững chắc! 🧱 Cảnh giới **Trúc Cơ** · Level 3`,
 		);
 	});
@@ -66,7 +66,7 @@ describe("thông báo đột phá cảnh giới", () =>
 
 	test("khác với thông báo lên level thường", () =>
 	{
-		const tier = tierByKey("kim-dan");
+		const tier = tierByKey("bac-3");
 		for (let level = 0; level < LEVEL_UP_VARIANTS; level++)
 		{
 			assert.notEqual(breakthroughText(USER_A, tier, level), levelUpText(USER_A, level));

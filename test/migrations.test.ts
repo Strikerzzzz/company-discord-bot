@@ -105,7 +105,7 @@ describe("migrations", () =>
 				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
 			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 3)), 1);
 		assert.equal(currentSchemaVersion(db), 3);
 		assert.deepEqual(db.prepare("SELECT poll_xp_daily_cap FROM guild_settings WHERE guild_id = 'g1'").get(), { poll_xp_daily_cap: 25 });
 		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tier_roles', 'live_boards') ORDER BY name").all();
@@ -113,6 +113,30 @@ describe("migrations", () =>
 
 		db.prepare("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES ('g1', 'kim-dan', 'r1', 0)").run();
 		assert.throws(() => db.prepare("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES ('g1', 'truc-co', 'r1', 0)").run(), /UNIQUE/);
+	});
+
+	test("DB đang ở version 3 có role cảnh giới: migration 4 đổi khoá cảnh giới cũ sang bac-N, thêm created_by_bot và bảng bộ danh hiệu", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 3));
+		const insert = db.prepare<[string, string, string]>("INSERT INTO tier_roles (guild_id, tier_key, role_id, updated_at) VALUES (?, ?, ?, 0)");
+		insert.run("g1", "luyen-khi", "r1");
+		insert.run("g1", "kim-dan", "r3");
+		insert.run("g1", "do-kiep", "r8");
+		insert.run("g2", "khoa-la", "r9");
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 4);
+		const rows = db.prepare<[], { guild_id: string; tier_key: string; role_id: string; created_by_bot: number }>(
+			"SELECT guild_id, tier_key, role_id, created_by_bot FROM tier_roles ORDER BY guild_id, role_id").all();
+		assert.deepEqual(rows.map(row => [row.guild_id, row.tier_key, row.role_id, row.created_by_bot]), [
+			["g1", "bac-1", "r1", 0],
+			["g1", "bac-3", "r3", 0],
+			["g1", "bac-8", "r8", 0],
+			["g2", "khoa-la", "r9", 0],
+		]);
+		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tier_set_config', 'tier_name_overrides') ORDER BY name").all();
+		assert.deepEqual(tables.map(table => table.name), ["tier_name_overrides", "tier_set_config"]);
 	});
 
 	test("từ chối database mới hơn code", () =>
