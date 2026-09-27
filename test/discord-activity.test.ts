@@ -3,24 +3,31 @@ import assert from "node:assert/strict";
 import {
 	APIEmbed,
 	ApplicationCommandOptionType,
+	AttachmentBuilder,
 	ChatInputCommandInteraction,
 	EmbedBuilder,
+	InteractionEditReplyOptions,
 	Message,
 	MessageFlags,
 	PermissionFlagsBits,
 	PermissionsBitField,
 } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
+import { NO_BADGE_TEXT } from "../src/discord/cardData";
+import { LeaderboardCardData, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { leaderboardEmbed, levelUpMessage, rankEmbed, RankView } from "../src/discord/views/activity";
 import MessageCreate from "../src/events/messageCreate";
 import LeaderboardCmd from "../src/interactions/commands/leaderboard";
 import RankCmd from "../src/interactions/commands/rank";
 import { levelInfo } from "../src/modules/activity/levels";
+import { nextTier, tierForLevel } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageInput, MessageXpResult } from "../src/modules/activity/types";
 import { ContributionProfile, ContributionServiceApi } from "../src/modules/contribution/types";
+import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
+import { GamificationServiceApi } from "../src/modules/gamification/types";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
 import { DEFAULT_GUILD_SETTINGS } from "../src/modules/guild-config/types";
-import { LeaderboardPage, LeaderboardServiceApi, ScoreKind } from "../src/modules/leaderboard/LeaderboardService";
+import { LeaderboardPage, LeaderboardPeriod, LeaderboardServiceApi, ScoreKind } from "../src/modules/leaderboard/LeaderboardService";
 import { TeamService } from "../src/modules/team/TeamService";
 import { AppServices } from "../src/services";
 import { UserError } from "../src/shared/errors";
@@ -49,6 +56,7 @@ interface BoardCall
 	scope: "individual" | "team";
 	guildId: string;
 	kind: ScoreKind;
+	period: LeaderboardPeriod;
 	page: number;
 }
 
@@ -104,17 +112,13 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 		getSettings: () => ({ ...DEFAULT_GUILD_SETTINGS, levelUpAnnouncements: options.levelUpAnnouncements ?? true }),
 	};
 	const leaderboard: LeaderboardServiceApi = {
-		individual: (guildId, kind, page) =>
+		individual: () => { throw new Error("không dùng trong test này"); },
+		teams: () => { throw new Error("không dùng trong test này"); },
+		query: ({ guildId, kind, scope, period, page }) =>
 		{
-			boardCalls.push({ scope: "individual", guildId, kind, page });
+			boardCalls.push({ scope, guildId, kind, period, page });
 			return options.board ?? EMPTY_BOARD;
 		},
-		teams: (guildId, kind, page) =>
-		{
-			boardCalls.push({ scope: "team", guildId, kind, page });
-			return options.board ?? EMPTY_BOARD;
-		},
-		query: () => { throw new Error("không dùng trong test này"); },
 		userStanding: () => { throw new Error("không dùng trong test này"); },
 	};
 
@@ -213,23 +217,33 @@ interface InteractionOptions
 	integers?: Record<string, number>;
 	/** Người gọi có quyền gửi tin ở kênh hiện tại không (mặc định có). */
 	canSend?: boolean;
+	/** Bot có quyền Attach Files ở kênh hiện tại không (mặc định có). */
+	canAttach?: boolean;
 }
 
-interface Reply
+interface Calls
 {
-	embeds: EmbedBuilder[];
-	flags?: number;
+	/** Tham số của từng lần deferReply (undefined = trả lời công khai). */
+	deferred: unknown[];
+	edits: InteractionEditReplyOptions[];
 }
 
-function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatInputCommandInteraction; replies: Reply[] }
+const GUILD_ROLES = new Map([
+	[ROLE_BACKEND, { name: "Backend", colors: { primaryColor: 0 } }],
+	[ROLE_FRONTEND, { name: "Frontend", colors: { primaryColor: 0x3498db } }],
+]);
+
+function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatInputCommandInteraction; calls: Calls }
 {
-	const replies: Reply[] = [];
+	const calls: Calls = { deferred: [], edits: [] };
 	const interaction = {
 		inGuild: () => options.inGuild ?? true,
 		guildId: GUILD,
+		guild: { id: GUILD, roles: { cache: GUILD_ROLES } },
 		user: fakeUser(USER_A, "Người A"),
 		member: { nick: "Anh A", roles: [ROLE_BACKEND, ROLE_OTHER] },
 		memberPermissions: new PermissionsBitField(options.canSend === false ? [] : [PermissionFlagsBits.SendMessages]),
+		appPermissions: new PermissionsBitField(options.canAttach === false ? [] : [PermissionFlagsBits.AttachFiles]),
 		channel: { isThread: () => false },
 		options: {
 			getUser: () => options.user ?? null,
@@ -242,20 +256,83 @@ function fakeInteraction(options: InteractionOptions = {}): { interaction: ChatI
 			},
 			getInteger: (name: string) => options.integers?.[name] ?? null,
 		},
-		reply: (payload: Reply) =>
+		deferReply: (payload?: unknown) =>
 		{
-			replies.push(payload);
+			calls.deferred.push(payload);
+			return Promise.resolve();
+		},
+		editReply: (payload: InteractionEditReplyOptions) =>
+		{
+			calls.edits.push(payload);
 			return Promise.resolve();
 		},
 	};
-	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies };
+	return { interaction: interaction as unknown as ChatInputCommandInteraction, calls };
 }
 
-function onlyEmbed(replies: Reply[]): APIEmbed
+/** Client giả cho /rank và /leaderboard: có thêm tải avatar và tra tên thành viên (giả). */
+function cardClient(services: AppServices, avatarUrls: (string | null)[] = []): DiscordClient
 {
-	assert.equal(replies.length, 1);
-	assert.equal(replies[0].embeds.length, 1);
-	return replies[0].embeds[0].toJSON();
+	return {
+		services,
+		guildIds: [GUILD],
+		user: { id: BOT_ID },
+		avatars: {
+			get: (url: string | null) =>
+			{
+				avatarUrls.push(url);
+				return Promise.resolve(null);
+			},
+		},
+		members: {
+			resolve: (_guild: unknown, userIds: readonly string[]) => Promise.resolve(new Map(userIds.map(id => [
+				id,
+				{ displayName: `Tên ${id.slice(-3)}`, avatarUrl: null, inGuild: true },
+			]))),
+		},
+	} as unknown as DiscordClient;
+}
+
+/** Thêm hồ sơ gamification giả (level theo `totalXp`, chưa có huy hiệu) cho /rank. */
+function withGamification(services: AppServices, totalXp = 0): AppServices
+{
+	const gamification: GamificationServiceApi = {
+		profile: (_guildId, userId) =>
+		{
+			const level = levelInfo(totalXp);
+			return {
+				userId,
+				level,
+				tier: tierForLevel(level.level),
+				nextTier: nextTier(level.level),
+				streak: { current: 0, best: 0, activeToday: false, lastActiveDay: null },
+				stats: { messages: 0, bestStreak: 0, recognitionsReceived: 0, recognitionsGiven: 0, pollsJoined: 0, contributions: 0 },
+				achievements: ACHIEVEMENTS.map(achievement => ({ achievement, unlocked: false, current: 0 })),
+				weekly: { xp: 0, rank: null },
+			};
+		},
+	};
+	return { ...services, gamification };
+}
+
+function onlyEmbed(calls: Calls): APIEmbed
+{
+	assert.equal(calls.edits.length, 1);
+	const embeds = calls.edits[0].embeds ?? [];
+	assert.equal(embeds.length, 1);
+	const [embed] = embeds;
+	assert.ok(embed instanceof EmbedBuilder);
+	return embed.toJSON();
+}
+
+function onlyFile(calls: Calls): AttachmentBuilder
+{
+	assert.equal(calls.edits.length, 1);
+	const files = calls.edits[0].files ?? [];
+	assert.equal(files.length, 1);
+	const [file] = files;
+	assert.ok(file instanceof AttachmentBuilder);
+	return file;
 }
 
 function fieldValue(embed: APIEmbed, name: string): string
@@ -503,6 +580,34 @@ describe("event messageCreate", () =>
 	});
 });
 
+const RANK_CARD: RenderedCard = { png: Buffer.from("png"), fileName: "rank.png", width: 1000, height: 460 };
+const BOARD_CARD: RenderedCard = { png: Buffer.from("png"), fileName: "leaderboard.png", width: 1000, height: 400 };
+
+/** /rank với hàm vẽ giả: ghi lại dữ liệu ảnh; `fail` = giả lập vẽ lỗi. */
+function rankCommand(services: AppServices, options: { avatarUrls?: (string | null)[]; fail?: boolean } = {}): { command: RankCmd; cards: RankCardData[] }
+{
+	const command = new RankCmd(cardClient(services, options.avatarUrls));
+	const cards: RankCardData[] = [];
+	command.renderCard = data =>
+	{
+		cards.push(data);
+		return options.fail ? Promise.reject(new Error("canvas hỏng")) : Promise.resolve(RANK_CARD);
+	};
+	return { command, cards };
+}
+
+function leaderboardCommand(services: AppServices): { command: LeaderboardCmd; cards: LeaderboardCardData[] }
+{
+	const command = new LeaderboardCmd(cardClient(services));
+	const cards: LeaderboardCardData[] = [];
+	command.renderCard = data =>
+	{
+		cards.push(data);
+		return Promise.resolve(BOARD_CARD);
+	};
+	return { command, cards };
+}
+
 describe("/rank", () =>
 {
 	test("định nghĩa: option thanh-vien kiểu user, không bắt buộc", () =>
@@ -513,137 +618,177 @@ describe("/rank", () =>
 		assert.deepEqual(json.options?.map(o => [o.name, o.type, o.required ?? false]), [["thanh-vien", ApplicationCommandOptionType.User, false]]);
 	});
 
-	test("mặc định xem hồ sơ của chính người gọi, team lấy từ role của họ", async () =>
+	test("mặc định xem thẻ của chính người gọi: ảnh kèm phần chữ, team lấy từ role của họ", async () =>
 	{
 		const fake = createFakeServices({
 			configuredTeams: [ROLE_BACKEND, ROLE_FRONTEND],
 			activity: activityProfile(USER_A, 1915, 1, 3),
 		});
-		const { interaction, replies } = fakeInteraction();
-		await new RankCmd(fakeClient(fake.services)).execute(interaction);
+		const avatarUrls: (string | null)[] = [];
+		const { command, cards } = rankCommand(withGamification(fake.services, 1915), { avatarUrls });
+		const { interaction, calls } = fakeInteraction();
+		await command.execute(interaction);
 
 		assert.deepEqual(fake.profileCalls, [`activity:${USER_A}`, `contribution:${USER_A}`]);
-		const embed = onlyEmbed(replies);
-		assert.equal(embed.author?.name, "Anh A");
-		assert.match(fieldValue(embed, "⚡ Activity XP"), /\*\*Level 6\*\*/);
-		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_BACKEND}>`);
-		assert.equal(replies[0].flags, undefined, "có quyền gửi tin thì trả lời công khai");
+		assert.deepEqual(calls.deferred, [undefined], "có quyền gửi tin thì trả lời công khai");
+		assert.equal(cards.length, 1);
+		assert.equal(cards[0].displayName, "Anh A");
+		assert.equal(cards[0].level.level, 6);
+		assert.equal(cards[0].tier.key, "kim-dan");
+		assert.equal(cards[0].activity.rank, 1);
+		assert.deepEqual(cards[0].teamNames, ["Backend"]);
+		assert.deepEqual(avatarUrls, [AVATAR]);
+
+		assert.equal(onlyFile(calls).name, "rank.png");
+		assert.equal(calls.edits[0].content, `🟡 **Kim Đan** · Level 6\n${NO_BADGE_TEXT}\n🎯 Sắp đạt: 💬 Khai Khẩu (0/100)`);
+		assert.equal(calls.edits[0].embeds, undefined);
 	});
 
-	test("người không được gửi tin ở kênh chỉ nhận kết quả riêng", async () =>
+	test("người không được gửi tin ở kênh, hoặc bot thiếu Attach Files, chỉ nhận kết quả riêng", async () =>
 	{
-		const fake = createFakeServices();
-		const { interaction, replies } = fakeInteraction({ canSend: false });
-		await new RankCmd(fakeClient(fake.services)).execute(interaction);
-		assert.equal(onlyEmbed(replies).author?.name, "Anh A");
-		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+		for (const options of [{ canSend: false }, { canAttach: false }])
+		{
+			const { command } = rankCommand(withGamification(createFakeServices().services));
+			const { interaction, calls } = fakeInteraction(options);
+			await command.execute(interaction);
+			assert.deepEqual(calls.deferred, [{ flags: MessageFlags.Ephemeral }]);
+			assert.equal(onlyFile(calls).name, "rank.png");
+		}
 	});
 
 	test("xem thành viên khác: dùng member được chọn", async () =>
 	{
 		const fake = createFakeServices({ configuredTeams: [ROLE_BACKEND, ROLE_FRONTEND] });
-		const { interaction, replies } = fakeInteraction({
+		const { command, cards } = rankCommand(withGamification(fake.services));
+		const { interaction } = fakeInteraction({
 			user: fakeUser(USER_B, "Người B"),
 			member: { nick: null, roles: [ROLE_FRONTEND] },
 		});
-		await new RankCmd(fakeClient(fake.services)).execute(interaction);
+		await command.execute(interaction);
 
 		assert.deepEqual(fake.profileCalls, [`activity:${USER_B}`, `contribution:${USER_B}`]);
-		const embed = onlyEmbed(replies);
-		assert.equal(embed.author?.name, "Người B");
-		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_FRONTEND}>`);
+		assert.equal(cards[0].displayName, "Người B");
+		assert.deepEqual(cards[0].teamNames, ["Frontend"]);
 	});
 
 	test("thành viên đã rời server: không có team", async () =>
 	{
 		const fake = createFakeServices({ configuredTeams: [ROLE_BACKEND] });
-		const { interaction, replies } = fakeInteraction({ user: fakeUser(USER_B, "Người B"), member: null });
-		await new RankCmd(fakeClient(fake.services)).execute(interaction);
-		assert.equal(fieldValue(onlyEmbed(replies), "👥 Team"), "Chưa thuộc team nào");
+		const { command, cards } = rankCommand(withGamification(fake.services));
+		const { interaction } = fakeInteraction({ user: fakeUser(USER_B, "Người B"), member: null });
+		await command.execute(interaction);
+		assert.equal(cards[0].displayName, "Người B");
+		assert.deepEqual(cards[0].teamNames, []);
+	});
+
+	test("vẽ ảnh lỗi: trả embed cũ kèm phần chữ, ghi log lỗi", async (t) =>
+	{
+		const logged = t.mock.method(console, "error", () => undefined);
+		const fake = createFakeServices({ configuredTeams: [ROLE_BACKEND], activity: activityProfile(USER_A, 1915, 1, 3) });
+		const { command } = rankCommand(withGamification(fake.services, 1915), { fail: true });
+		const { interaction, calls } = fakeInteraction();
+		await command.execute(interaction);
+
+		const embed = onlyEmbed(calls);
+		assert.equal(embed.author?.name, "Anh A");
+		assert.match(fieldValue(embed, "⚡ Activity XP"), /\*\*Level 6\*\*/);
+		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_BACKEND}>`);
+		assert.match(calls.edits[0].content ?? "", /^🟡 \*\*Kim Đan\*\* · Level 6/);
+		assert.equal(calls.edits[0].files, undefined);
+		assert.equal(logged.mock.callCount(), 1);
+		assert.match(String(logged.mock.calls[0].arguments[0]), /\[ERROR\]/);
 	});
 
 	test("chọn bot thì báo lỗi cho người dùng", async () =>
 	{
 		const fake = createFakeServices();
-		const { interaction, replies } = fakeInteraction({ user: fakeUser("700000000000000001", "Bot", true) });
+		const { command } = rankCommand(withGamification(fake.services));
+		const { interaction, calls } = fakeInteraction({ user: fakeUser("700000000000000001", "Bot", true) });
 		await assert.rejects(
-			new RankCmd(fakeClient(fake.services)).execute(interaction),
+			command.execute(interaction),
 			(error: unknown) => error instanceof UserError && error.message === "Bot không có điểm.",
 		);
 		assert.equal(fake.profileCalls.length, 0);
-		assert.equal(replies.length, 0);
+		assert.equal(calls.deferred.length, 0);
 	});
 
 	test("ngoài server thì báo lỗi cho người dùng", async () =>
 	{
 		const { interaction } = fakeInteraction({ inGuild: false });
-		await assert.rejects(new RankCmd(fakeClient(createFakeServices().services)).execute(interaction), UserError);
+		await assert.rejects(rankCommand(createFakeServices().services).command.execute(interaction), UserError);
 	});
 });
 
 describe("/leaderboard", () =>
 {
-	test("định nghĩa: loai bắt buộc, pham-vi và trang tuỳ chọn", () =>
+	test("định nghĩa: loai, pham-vi, ky và trang đều tuỳ chọn; xử lý nút namespace lb", () =>
 	{
-		const json = new LeaderboardCmd(fakeClient(createFakeServices().services)).data.toJSON();
+		const command = new LeaderboardCmd(fakeClient(createFakeServices().services));
+		const json = command.data.toJSON();
 		assert.equal(json.name, "leaderboard");
 		assert.ok(json.description.length <= 100);
 		const options = json.options ?? [];
-		assert.deepEqual(options.map(o => [o.name, o.required ?? false]), [["loai", true], ["pham-vi", false], ["trang", false]]);
+		assert.deepEqual(options.map(o => [o.name, o.required ?? false]), [["loai", false], ["pham-vi", false], ["ky", false], ["trang", false]]);
 		for (const option of options) assert.ok(option.description.length <= 100, option.name);
 
-		const [kind, scope, page] = options;
-		assert.ok("choices" in kind && "choices" in scope && "min_value" in page);
+		const [kind, scope, period, page] = options;
+		assert.ok("choices" in kind && "choices" in scope && "choices" in period && "min_value" in page);
 		assert.deepEqual(kind.choices?.map(c => c.value), ["activity", "contribution"]);
 		assert.deepEqual(scope.choices?.map(c => c.value), ["ca-nhan", "team"]);
+		assert.deepEqual(period.choices?.map(c => [c.name, c.value]), [["Tổng", "tong"], ["Tuần này", "tuan"], ["Tháng này", "thang"]]);
 		assert.equal(page.min_value, 1);
+		assert.deepEqual(command.buttonIds, ["lb"]);
 	});
 
-	test("mặc định: bảng cá nhân, trang 1", async () =>
+	test("mặc định: bảng Activity cá nhân, kỳ tổng, trang 1; ảnh kèm nút", async () =>
 	{
 		const fake = createFakeServices({
 			board: { entries: [{ rank: 1, id: USER_A, value: 1915 }], page: 1, totalPages: 1, totalEntries: 1, period: "all", since: null },
 		});
-		const { interaction, replies } = fakeInteraction({ strings: { loai: "activity" } });
-		await new LeaderboardCmd(fakeClient(fake.services)).execute(interaction);
+		const { command, cards } = leaderboardCommand(fake.services);
+		const { interaction, calls } = fakeInteraction();
+		await command.execute(interaction);
 
-		assert.deepEqual(fake.boardCalls, [{ scope: "individual", guildId: GUILD, kind: "activity", page: 1 }]);
-		const embed = onlyEmbed(replies);
-		assert.equal(embed.title, "🏆 Bảng xếp hạng Activity XP — Cá nhân");
-		assert.equal(embed.description, `🥇 <@${USER_A}> — Level 6 · 1.915 XP`);
-		assert.equal(replies[0].flags, undefined, "có quyền gửi tin thì trả lời công khai");
+		assert.deepEqual(fake.boardCalls, [{ scope: "individual", guildId: GUILD, kind: "activity", period: "all", page: 1 }]);
+		assert.deepEqual(calls.deferred, [undefined], "có quyền gửi tin thì trả lời công khai");
+		assert.equal(onlyFile(calls).name, "leaderboard.png");
+		assert.equal(calls.edits[0].components?.length, 3);
+		assert.deepEqual(cards[0].rows.map(row => [row.name, row.value, row.detail, row.highlight]), [[`Tên ${USER_A.slice(-3)}`, "1.915 XP", "Lv 6", true]]);
 	});
 
 	test("người không được gửi tin ở kênh chỉ nhận bảng xếp hạng riêng", async () =>
 	{
 		const fake = createFakeServices();
-		const { interaction, replies } = fakeInteraction({ strings: { loai: "activity" }, canSend: false });
-		await new LeaderboardCmd(fakeClient(fake.services)).execute(interaction);
-		assert.equal(onlyEmbed(replies).title, "🏆 Bảng xếp hạng Activity XP — Cá nhân");
-		assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+		const { command } = leaderboardCommand(fake.services);
+		const { interaction, calls } = fakeInteraction({ canSend: false });
+		await command.execute(interaction);
+		assert.deepEqual(calls.deferred, [{ flags: MessageFlags.Ephemeral }]);
+		assert.equal(onlyFile(calls).name, "leaderboard.png");
 	});
 
-	test("bảng team Contribution, trang được chọn", async () =>
+	test("bảng team Contribution tuần này, trang được chọn", async () =>
 	{
 		const fake = createFakeServices();
-		const { interaction, replies } = fakeInteraction({ strings: { "loai": "contribution", "pham-vi": "team" }, integers: { trang: 2 } });
-		await new LeaderboardCmd(fakeClient(fake.services)).execute(interaction);
+		const { command, cards } = leaderboardCommand(fake.services);
+		const { interaction } = fakeInteraction({ strings: { "loai": "contribution", "pham-vi": "team", "ky": "tuan" }, integers: { trang: 2 } });
+		await command.execute(interaction);
 
-		assert.deepEqual(fake.boardCalls, [{ scope: "team", guildId: GUILD, kind: "contribution", page: 2 }]);
-		const embed = onlyEmbed(replies);
-		assert.equal(embed.title, "🏆 Bảng xếp hạng Contribution — Team");
-		assert.equal(embed.description, "Chưa có dữ liệu.");
-		assert.equal(embed.footer?.text, "Trang 1/1 · 0 team");
+		assert.deepEqual(fake.boardCalls, [{ scope: "team", guildId: GUILD, kind: "contribution", period: "week", page: 2 }]);
+		assert.equal(cards[0].title, "BẢNG XẾP HẠNG · CONTRIBUTION");
+		assert.equal(cards[0].footer, "Trang 1/1 · 0 team");
 	});
 
 	test("giá trị option không hợp lệ thì báo lỗi cho người dùng", async () =>
 	{
 		const fake = createFakeServices();
-		const command = new LeaderboardCmd(fakeClient(fake.services));
-		const badKind = fakeInteraction({ strings: { loai: "xp" } });
-		await assert.rejects(command.execute(badKind.interaction), UserError);
-		const badScope = fakeInteraction({ strings: { "loai": "activity", "pham-vi": "phong-ban" } });
-		await assert.rejects(command.execute(badScope.interaction), UserError);
+		const { command } = leaderboardCommand(fake.services);
+		const invalid: Record<string, string>[] = [{ "loai": "xp" }, { "pham-vi": "phong-ban" }, { "ky": "nam" }];
+		for (const strings of invalid)
+		{
+			const { interaction, calls } = fakeInteraction({ strings });
+			await assert.rejects(command.execute(interaction), UserError);
+			assert.equal(calls.deferred.length, 0);
+		}
 		assert.equal(fake.boardCalls.length, 0);
 	});
 });
