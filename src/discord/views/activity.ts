@@ -2,7 +2,7 @@ import { EmbedBuilder } from "discord.js";
 import { levelInfo } from "../../modules/activity/levels";
 import { ActivityProfile } from "../../modules/activity/types";
 import { ContributionProfile } from "../../modules/contribution/types";
-import { LeaderboardEntry, LeaderboardPage, LeaderboardScope, ScoreKind } from "../../modules/leaderboard/LeaderboardService";
+import { LeaderboardEntry, LeaderboardPage, LeaderboardPeriod, LeaderboardScope, ScoreKind } from "../../modules/leaderboard/LeaderboardService";
 import { COLORS, formatNumber, progressBar, rankLabel, roleMention, truncate, userMention } from "../format";
 
 // Nội dung hiển thị cho Activity XP, /rank và /leaderboard.
@@ -71,23 +71,35 @@ export function rankEmbed(view: RankView): EmbedBuilder
 		);
 }
 
-export function leaderboardTitle(kind: ScoreKind, scope: LeaderboardScope): string
+const PERIOD_LABELS: Readonly<Record<LeaderboardPeriod, string | null>> = {
+	all: null,
+	week: "Tuần này",
+	month: "Tháng này",
+};
+
+/** Tiêu đề bảng xếp hạng; kỳ tuần/tháng được ghi thêm ở cuối, kỳ tổng giữ tiêu đề cũ. */
+export function leaderboardTitle(kind: ScoreKind, scope: LeaderboardScope, period: LeaderboardPeriod = "all"): string
 {
-	return `🏆 Bảng xếp hạng ${KIND_LABELS[kind]} — ${SCOPE_LABELS[scope]}`;
+	const title = `🏆 Bảng xếp hạng ${KIND_LABELS[kind]} — ${SCOPE_LABELS[scope]}`;
+	const periodLabel = PERIOD_LABELS[period];
+	return periodLabel === null ? title : `${title} · ${periodLabel}`;
 }
 
-/** Giá trị của một dòng: Activity cá nhân kèm level; team chỉ có tổng điểm. */
-export function leaderboardValue(kind: ScoreKind, scope: LeaderboardScope, value: number): string
+/**
+ * Giá trị của một dòng: Activity cá nhân kỳ tổng kèm level; team chỉ có tổng điểm. Kỳ tuần/tháng không kèm level,
+ * vì điểm của kỳ không phải tổng XP.
+ */
+export function leaderboardValue(kind: ScoreKind, scope: LeaderboardScope, value: number, period: LeaderboardPeriod = "all"): string
 {
 	if (kind === "contribution") return `${formatNumber(value)} điểm`;
-	if (scope === "team") return `${formatNumber(value)} XP`;
+	if (scope === "team" || period !== "all") return `${formatNumber(value)} XP`;
 	return `Level ${formatNumber(levelInfo(value).level)} · ${formatNumber(value)} XP`;
 }
 
-function leaderboardLine(entry: LeaderboardEntry, kind: ScoreKind, scope: LeaderboardScope): string
+function leaderboardLine(entry: LeaderboardEntry, kind: ScoreKind, scope: LeaderboardScope, period: LeaderboardPeriod): string
 {
 	const mention = scope === "team" ? roleMention(entry.id) : userMention(entry.id);
-	return `${rankLabel(entry.rank)} ${mention} — ${leaderboardValue(kind, scope, entry.value)}`;
+	return `${rankLabel(entry.rank)} ${mention} — ${leaderboardValue(kind, scope, entry.value, period)}`;
 }
 
 export interface LeaderboardView
@@ -100,12 +112,12 @@ export interface LeaderboardView
 export function leaderboardEmbed(view: LeaderboardView): EmbedBuilder
 {
 	const { kind, scope, page } = view;
-	const lines = page.entries.map(entry => leaderboardLine(entry, kind, scope));
+	const lines = page.entries.map(entry => leaderboardLine(entry, kind, scope, page.period));
 	const unit = scope === "team" ? "team" : "người";
 
 	return new EmbedBuilder()
 		.setColor(COLORS.gold)
-		.setTitle(leaderboardTitle(kind, scope))
+		.setTitle(leaderboardTitle(kind, scope, page.period))
 		.setDescription(lines.length > 0 ? truncate(lines.join("\n"), DESCRIPTION_MAX) : "Chưa có dữ liệu.")
 		.setFooter({ text: `Trang ${formatNumber(page.page)}/${formatNumber(page.totalPages)} · ${formatNumber(page.totalEntries)} ${unit}` });
 }
