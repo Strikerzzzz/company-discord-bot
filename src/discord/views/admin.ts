@@ -169,6 +169,15 @@ function tierLabel(tierKey: TierRoleMapping["tierKey"], set: TierSet): string
 	return `${tier.emoji} ${tier.name} (Lv ${formatNumber(tier.minLevel)}+)`;
 }
 
+/** Nội dung field danh hiệu: các bậc đã gán role (gọn trong giới hạn field) và gợi ý bảng điều khiển luôn ở cuối. */
+function tierRoleFieldText(tierRoles: readonly TierRoleMapping[], set: TierSet): string
+{
+	if (tierRoles.length === 0) return `Chưa gán role nào. ${TIER_PANEL_HINT}`;
+	const lines = tierRoles.map(mapping => `${tierLabel(mapping.tierKey, set)}: ${roleMention(mapping.roleId)}`);
+	const budget = EMBED_FIELD_MAX - TIER_PANEL_HINT.length - 1;
+	return `${fitLines(lines, budget, hidden => `… và ${hidden} bậc khác`)}\n${TIER_PANEL_HINT}`;
+}
+
 export function buildConfigEmbed(
 	settings: GuildSettings,
 	teams: readonly string[],
@@ -186,9 +195,7 @@ export function buildConfigEmbed(
 		? "Đang tắt. Dùng `/config board` để bật."
 		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
 	const { tierSet, tierRoles } = gamification;
-	const tierRoleText = tierRoles.length > 0
-		? [...tierRoles.map(mapping => `${tierLabel(mapping.tierKey, tierSet)}: ${roleMention(mapping.roleId)}`), TIER_PANEL_HINT].join("\n")
-		: `Chưa gán role nào. ${TIER_PANEL_HINT}`;
+	const tierRoleText = tierRoleFieldText(tierRoles, tierSet);
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
@@ -430,8 +437,51 @@ const DETAIL_LABELS = new Map<string, string>([
 	["created", "Role tạo mới"],
 	["renamed", "Role đổi tên"],
 	["skipped", "Bỏ qua"],
+	["renamedRoles", "Role đổi tên"],
+	["keptRoles", "Role giữ nguyên tên"],
+	["orphanedRoles", "Role không xoá được"],
+	["deletedRoleId", "Role đã xoá"],
 	["compensated", "Điểm bù tự động"],
 ]);
+
+/** Khoá cảnh giới tu tiên dùng trước migration 4 (DEC-033), theo thứ tự bậc; audit cũ vẫn giữ nguyên các khoá này. */
+const LEGACY_TIER_KEYS: readonly string[] = ["luyen-khi", "truc-co", "kim-dan", "nguyen-anh", "hoa-than", "luyen-hu", "hop-the", "do-kiep"];
+
+const SNOWFLAKE = /^\d{17,20}$/;
+const ROLE_LIST_MAX = 160;
+
+/** Số thứ tự 1–8 của bậc theo khoá hiện tại hoặc khoá cũ; null nếu khoá lạ. */
+function tierNumber(value: string): number | null
+{
+	if (isTierKey(value)) return tierIndex(value) + 1;
+	const legacy = LEGACY_TIER_KEYS.indexOf(value);
+	return legacy >= 0 ? legacy + 1 : null;
+}
+
+/** ID role của một phần tử danh sách role trong audit: chuỗi ID, hoặc object có `roleId`. */
+function listedRoleId(item: unknown): string | null
+{
+	if (typeof item === "string") return SNOWFLAKE.test(item) ? item : null;
+	if (typeof item === "object" && item !== null && "roleId" in item && typeof item.roleId === "string" && SNOWFLAKE.test(item.roleId))
+	{
+		return item.roleId;
+	}
+	return null;
+}
+
+/** Danh sách role dạng mention, gọn trong giới hạn; null nếu có phần tử không nhận ra được ID role. */
+function roleListText(items: readonly unknown[]): string | null
+{
+	const roleIds: string[] = [];
+	for (const item of items)
+	{
+		const roleId = listedRoleId(item);
+		if (roleId === null) return null;
+		roleIds.push(roleId);
+	}
+	if (roleIds.length === 0) return "không có";
+	return fitLines(roleIds.map(roleMention), ROLE_LIST_MAX, hidden => `và ${hidden} role khác`, { separator: ", " });
+}
 
 /** Nhãn tiếng Việt của một hành động trong audit log. */
 export function auditActionLabel(action: AuditAction): string
@@ -464,15 +514,22 @@ function detailValue(key: string, value: unknown): string
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);
 	if (typeof value === "string")
 	{
-		if (key === "tierKey" && isTierKey(value)) return `Bậc ${tierIndex(value) + 1}`;
+		const tier = key === "tierKey" ? tierNumber(value) : null;
+		if (tier !== null) return `Bậc ${tier}`;
 		if ((key === "setKey" || key === "from" || key === "to") && isTierSetKey(value)) return TIER_SETS[value].name;
-		if (/^\d{17,20}$/.test(value))
+		if (SNOWFLAKE.test(value))
 		{
+			if (key === "deletedRoleId") return `${roleMention(value)} (ID ${value})`;
 			if (key.endsWith("RoleId")) return roleMention(value);
 			if (key.endsWith("ChannelId")) return channelMention(value);
 			if (key.endsWith("Id")) return userMention(value);
 		}
 		return inlineText(value, DETAIL_VALUE_MAX);
+	}
+	if (Array.isArray(value) && key.endsWith("Roles"))
+	{
+		const roles = roleListText(value);
+		if (roles !== null) return roles;
 	}
 	return inlineText(JSON.stringify(value), DETAIL_VALUE_MAX);
 }

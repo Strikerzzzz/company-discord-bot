@@ -580,7 +580,7 @@ describe("event messageCreate", () =>
 		const fake = messageServices({ xpResult: PLAIN_LEVEL_UP });
 		const { message, sent, permissionChecks } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: levelUpText(DEFAULT_TIER_SET, USER_A, 4), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: levelUpText(DEFAULT_TIER_SET, USER_A, 4), allowedMentions: { users: [USER_A] }, flags: MessageFlags.SuppressEmbeds }]);
 		assert.deepEqual(permissionChecks, [{ id: BOT_ID }]);
 		assert.deepEqual(fake.tierSetCalls, [GUILD], "hỏi bộ danh hiệu của đúng guild, một lần");
 	});
@@ -590,7 +590,7 @@ describe("event messageCreate", () =>
 		const fake = messageServices({ xpResult: LEVEL_UP });
 		const { message, sent } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: promotionText(DEFAULT_TIER_SET, USER_A, tierByKey("bac-2"), 3), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: promotionText(DEFAULT_TIER_SET, USER_A, tierByKey("bac-2"), 3), allowedMentions: { users: [USER_A] }, flags: MessageFlags.SuppressEmbeds }]);
 	});
 
 	test("bộ danh hiệu của guild quyết định câu chữ: Rank game, có tên bậc tuỳ chỉnh", async () =>
@@ -600,16 +600,32 @@ describe("event messageCreate", () =>
 		const plain = messageServices({ xpResult: PLAIN_LEVEL_UP, tierSet: rankGame });
 		const first = fakeMessage();
 		await new MessageCreate(fakeClient(plain.services)).execute(first.message);
-		assert.deepEqual(first.sent, [{ content: levelUpText(rankGame, USER_A, 4), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(first.sent, [{ content: levelUpText(rankGame, USER_A, 4), allowedMentions: { users: [USER_A] }, flags: MessageFlags.SuppressEmbeds }]);
 		assert.equal(levelUpText(rankGame, USER_A, 4), `📈 <@${USER_A}> vừa lên **Level 4**!`);
 
 		const promoted = messageServices({ xpResult: LEVEL_UP, tierSet: rankGame });
 		const second = fakeMessage();
 		await new MessageCreate(fakeClient(promoted.services)).execute(second.message);
 		assert.deepEqual(second.sent, [{
-			content: `🏆 Thăng hạng! <@${USER_A}> đã leo lên hạng Bạc! 🥈 Hạng **Bạc Ròng** · Level 3`,
+			content: `🏆 Thăng hạng! <@${USER_A}> đã vượt mốc Level 3! 🥈 Hạng **Bạc Ròng** · Level 3`,
 			allowedMentions: { users: [USER_A] },
+			flags: MessageFlags.SuppressEmbeds,
 		}]);
+	});
+
+	test("thông báo công khai (lên level và lên bậc) luôn tắt xem trước link, kể cả khi tên bậc trông giống tên miền", async () =>
+	{
+		const lookalike = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-2", name: "example.com", emoji: null }]);
+		for (const xpResult of [PLAIN_LEVEL_UP, LEVEL_UP])
+		{
+			const fake = messageServices({ xpResult, tierSet: lookalike });
+			const { message, sent } = fakeMessage();
+			await new MessageCreate(fakeClient(fake.services)).execute(message);
+			assert.equal(sent.length, 1);
+			const payload = sent[0];
+			assert.ok(typeof payload === "object" && payload !== null && "flags" in payload, "có flags");
+			assert.equal(payload.flags, MessageFlags.SuppressEmbeds);
+		}
 	});
 
 	test("không lên level, hoặc tắt thông báo, thì không cần hỏi bộ danh hiệu", async () =>

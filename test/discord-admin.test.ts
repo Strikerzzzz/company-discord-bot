@@ -733,6 +733,43 @@ describe("views quản trị", () =>
 		assert.ok(buildAuditEmbed([]).toJSON().description?.includes("Chưa có thao tác quản trị nào"));
 	});
 
+	test("audit bậc danh hiệu: khoá mới bac-N và khoá cảnh giới cũ trước migration 4 đều hiển thị \"Bậc N\"", () =>
+	{
+		const legacy = ["luyen-khi", "truc-co", "kim-dan", "nguyen-anh", "hoa-than", "luyen-hu", "hop-the", "do-kiep"];
+		for (const [index, tierKey] of legacy.entries())
+		{
+			assert.equal(formatAuditDetails({ tierKey }), `Bậc: Bậc ${index + 1}`, tierKey);
+			assert.equal(formatAuditDetails({ tierKey: `bac-${index + 1}` }), `Bậc: Bậc ${index + 1}`);
+		}
+		assert.equal(formatAuditDetails({ tierKey: "bac-9" }), "Bậc: bac-9");
+		assert.equal(formatAuditDetails({ name: "kim-dan" }), "Tên: kim-dan", "chỉ khoá tierKey mới được ánh xạ");
+	});
+
+	test("audit tạo/đồng bộ role: danh sách role đổi tên, giữ tên, không xoá được hiển thị dạng mention; role đã xoá kèm ID", () =>
+	{
+		const roles = Array.from({ length: 8 }, (_, index) => `51000000000000000${index}`);
+		const details = formatAuditDetails({
+			renamedRoles: [roles[0], roles[1]],
+			keptRoles: [],
+			orphanedRoles: [{ roleId: roles[2], name: "Luyện Khí" }],
+			deletedRoleId: roles[3],
+		});
+		assert.equal(details, [
+			`Role đổi tên: <@&${roles[0]}>, <@&${roles[1]}>`,
+			"Role giữ nguyên tên: không có",
+			`Role không xoá được: <@&${roles[2]}>`,
+			`Role đã xoá: <@&${roles[3]}> (ID ${roles[3]})`,
+		].join(" · "));
+
+		const many = formatAuditDetails({ keptRoles: roles });
+		assert.ok(many !== null && many.startsWith(`Role giữ nguyên tên: <@&${roles[0]}>, `), String(many));
+		assert.match(String(many), /, và \d+ role khác$/);
+		assert.ok(String(many).length <= 300);
+
+		assert.equal(formatAuditDetails({ renamedRoles: ["không phải id"] }), `Role đổi tên: ${inlineText(JSON.stringify(["không phải id"]), 80)}`);
+		assert.ok(!String(formatAuditDetails({ orphanedRoles: [{ id: roles[0] }] })).includes("<@&"), "phần tử không có roleId thì hiện JSON rút gọn");
+	});
+
 	test("embed audit 25 mục dài vẫn trong giới hạn của Discord", () =>
 	{
 		const entries: AuditEntry[] = Array.from({ length: 25 }, (_, index) => ({
@@ -809,6 +846,22 @@ describe("views quản trị", () =>
 		assert.ok(field);
 		assert.equal(field.name, "🏅 Danh hiệu: bộ Vũ trụ · role đã gán 1/8");
 		assert.equal(field.value, `🌍 Trái Đất (Lv 6+): <@&${ROLE_TRUC_CO}>\n${TIER_PANEL_HINT}`);
+	});
+
+	test("embed cấu hình: tên bậc rất dài vẫn vừa giới hạn field, gợi ý bảng điều khiển luôn ở cuối", () =>
+	{
+		const tierKeys = ["bac-1", "bac-2", "bac-3", "bac-4", "bac-5", "bac-6", "bac-7", "bac-8"] as const;
+		const longName = "Đại Thụ Ngàn Năm Của Cả Công Ty ".repeat(6).trim();
+		const tierSet = applyTierOverrides(TIER_SETS["cay-xanh"], tierKeys.map(tierKey => ({ tierKey, name: longName, emoji: "👩‍💻" })));
+		const tierRoles = tierKeys.map((tierKey, index) => ({ tierKey, roleId: `5100000000000000${String(index).padStart(3, "0")}`, createdByBot: true }));
+		const embed = buildConfigEmbed(DEFAULT_GUILD_SETTINGS, [], [], { boardChannelId: null, tierRoles, tierSet }).toJSON();
+		const field = embed.fields?.find(candidate => candidate.name.startsWith("🏅"));
+		assert.ok(field);
+		assert.ok(field.value.length <= 1024, `field dài ${field.value.length}`);
+		assert.ok(field.value.endsWith(`\n${TIER_PANEL_HINT}`));
+		assert.match(field.value, /… và \d+ bậc khác\n/);
+		assert.ok(field.value.startsWith(`👩‍💻 ${longName} (Lv 0+): <@&${tierRoles[0].roleId}>`));
+		assert.equal(field.name, "🏅 Danh hiệu: bộ Cây xanh · role đã gán 8/8");
 	});
 
 	test("embed cấu hình rất nhiều channel vẫn vừa giới hạn field", () =>

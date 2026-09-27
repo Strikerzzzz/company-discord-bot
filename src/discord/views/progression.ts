@@ -1,4 +1,4 @@
-import { Tier, TierSet } from "../../modules/activity/tiers";
+import { Tier, TIER_SETS, TierSet } from "../../modules/activity/tiers";
 import { formatNumber, userMention } from "../format";
 
 /*
@@ -38,12 +38,22 @@ export function levelUpText(set: TierSet, userId: string, level: number): string
 	return fillTemplate(template, { user: userMention(userId), level: formatNumber(level) });
 }
 
+/**
+ * Vế "đã {phrase}" của thông báo lên bậc. Vế riêng của bậc (`breakthrough`) nhắc tên mặc định (ví dụ "leo lên hạng Bạc"),
+ * nên khi admin đã đổi tên bậc thì dùng vế trung tính theo mốc level để câu không mâu thuẫn với tên mới.
+ */
+function promotionPhrase(tier: Tier): string
+{
+	const defaultName = TIER_SETS[tier.setKey].tiers.at(tier.index)?.name;
+	return tier.name === defaultName ? tier.breakthrough : `vượt mốc Level ${formatNumber(tier.minLevel)}`;
+}
+
 /** Thông báo khi lên level vượt qua mốc của bậc mới `tier` (thuộc bộ `set`). */
 export function promotionText(set: TierSet, userId: string, tier: Tier, level: number): string
 {
 	return fillTemplate(set.texts.promotion, {
 		user: userMention(userId),
-		phrase: tier.breakthrough,
+		phrase: promotionPhrase(tier),
 		emoji: tier.emoji,
 		tier: tier.name,
 		level: formatNumber(level),
