@@ -98,12 +98,18 @@ export interface TierRoleMapping
 export interface TierRoleSetupSummary
 {
 	setKey: string;
-	/** Số role bot vừa tạo mới. */
+	/** Số role bot vừa tạo mới (kể cả tạo lại cho role đã gán nhưng không còn trong server). */
 	created: number;
-	/** Số role đã gán được bot đổi tên/màu theo bộ. */
+	/** Số role do bot tạo được đổi tên/màu theo bộ. */
 	renamed: number;
-	/** Số bậc bỏ qua (role không an toàn, cao hơn bot, lỗi API...). */
+	/** Số bậc bỏ qua (role không an toàn, cao hơn bot hoặc người thao tác, lỗi API, bậc vừa đổi role giữa chừng...). */
 	skipped: number;
+	/** Role đã đổi tên/màu kèm tên trước khi đổi (để tra lại), theo thứ tự bot xử lý. */
+	renamedRoles: { roleId: string; oldName: string }[];
+	/** Role do admin tự gán mà bot giữ nguyên tên (bot chỉ đổi tên role do chính bot tạo). */
+	keptRoles: string[];
+	/** Role bot vừa tạo nhưng không dùng được (bậc đổi role giữa chừng, lỗi lưu) và cũng không xoá lại được: admin cần xoá thủ công. */
+	orphanedRoles: string[];
 }
 
 /** Các thay đổi role cần làm để member chỉ giữ đúng role của cảnh giới hiện tại (DEC-031). */
@@ -122,8 +128,11 @@ export interface TierRoleServiceApi
 	 * UserError nếu role đang được gán cho cảnh giới khác trong guild. Không kiểm tra quyền Discord của role (việc của tầng Discord).
 	 */
 	set(guildId: string, tierKey: TierKey, roleId: string, actorId: string, options?: { createdByBot?: boolean }): void;
-	/** Bỏ role của một cảnh giới. Ghi audit "tier_role.clear" (target = role cũ, details { tierKey }). false nếu vốn chưa gán. */
-	clear(guildId: string, tierKey: TierKey, actorId: string): boolean;
+	/**
+	 * Bỏ role của một cảnh giới. Ghi audit "tier_role.clear" (target = role cũ, details { tierKey }, thêm `deletedRoleId` nếu
+	 * tầng Discord vừa xoá role đó khỏi server: role do bot tạo không còn dùng vào việc gì khác). false nếu vốn chưa gán.
+	 */
+	clear(guildId: string, tierKey: TierKey, actorId: string, options?: { deletedRoleId?: string }): boolean;
 	/**
 	 * Hàm thuần theo dữ liệu đã cấu hình: role cần thêm/bỏ để member có đúng một role cảnh giới, là role gán cho cảnh giới
 	 * của `level` (nếu cảnh giới đó chưa gán role thì không thêm gì, nhưng vẫn bỏ role của các cảnh giới khác).

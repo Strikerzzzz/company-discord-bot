@@ -11,6 +11,11 @@ import {
 	CALLER_NEEDS_MANAGE_ROLES,
 	SETUP_API_FAILURE,
 	SETUP_CHANGED_MEANWHILE,
+	SETUP_CLEARED_MEANWHILE,
+	SETUP_MISSING_PERMISSIONS,
+	SETUP_REASSIGNED_AFTER_RENAME,
+	SETUP_ROLE_LIMIT,
+	SETUP_ROLE_LIMIT_PENDING,
 	SETUP_RUNNING,
 	syncTierSetRoles,
 	TierRoleActor,
@@ -23,11 +28,13 @@ import {
 	buildTierSetupReport,
 	INVALID_PANEL_ACTION,
 	parseTierPanelId,
+	TierNameGroup,
+	tierNamesFingerprint,
 	tierPanelReply,
 	tierPanelUpdate,
 } from "../src/discord/views/tierPanel";
-import ConfigCmd from "../src/interactions/commands/config";
-import { TIER_KEYS, TIER_SETS, TierKey } from "../src/modules/activity/tiers";
+import ConfigCmd, { PANEL_ROLE_CHANGED, RENAME_NAMES_CHANGED, RENAME_SET_CHANGED, RESET_SET_CHANGED } from "../src/interactions/commands/config";
+import { TIER_KEYS, TIER_SETS, TierKey, TierSet } from "../src/modules/activity/tiers";
 import { TierRoleService } from "../src/modules/gamification/TierRoleService";
 import { AppServices } from "../src/services";
 import { UserError } from "../src/shared/errors";
@@ -54,6 +61,24 @@ function colorOf(hex: string): number
 	return Number.parseInt(hex.slice(1), 16);
 }
 
+/** customId ô chọn role của một bậc, kèm role đang gán lúc vẽ bảng. */
+function roleSelectId(tierKey: TierKey, drawnRoleId: string | null = null): string
+{
+	return `tierui:role:${tierKey}:${drawnRoleId ?? "none"}`;
+}
+
+/** customId form đổi tên của một nhóm, theo tên hiện tại của bộ. */
+function namesId(group: TierNameGroup, set: TierSet = TU_TIEN): string
+{
+	return `tierui:names:${group}:${set.key}:${tierNamesFingerprint(set, group)}`;
+}
+
+/** Lỗi REST giả của Discord có mã lỗi JSON (ví dụ 50013 Missing Permissions). */
+function discordError(code: number): Error
+{
+	return Object.assign(new Error(`Discord API error ${code}`), { code });
+}
+
 // ---------- Server Discord giả ----------
 
 interface RoleSpec
@@ -62,6 +87,7 @@ interface RoleSpec
 	name?: string;
 	position?: number;
 	managed?: boolean;
+	mentionable?: boolean;
 	permissions?: bigint[];
 	color?: number;
 }
@@ -85,13 +111,22 @@ interface World
 	calls: string[];
 	created: CreatedRole[];
 	bot: { manageRoles: boolean; highest: number };
-	/** Tạo role có tên này thì Discord báo lỗi. */
-	failCreate: Set<string>;
-	/** Sửa role có id này thì Discord báo lỗi. */
-	failEdit: Set<string>;
+	/** Tạo role có tên này thì Discord báo lỗi (mã lỗi JSON, null = lỗi không có mã). */
+	failCreate: Map<string, number | null>;
+	/** Sửa role có id này thì Discord báo lỗi (mã lỗi JSON, null = lỗi không có mã). */
+	failEdit: Map<string, number | null>;
+	/** Xoá role có id hoặc tên này thì Discord báo lỗi. */
+	failDelete: Set<string>;
 	fetchMeCalls: number;
 	/** Chạy trong lúc Discord đang tạo role (trước khi trả kết quả), để mô phỏng thao tác đồng thời. */
 	onCreate: ((name: string) => Promise<void> | void) | null;
+	/** Chạy trong lúc Discord đang sửa role, để mô phỏng thao tác đồng thời. */
+	onEdit: ((roleId: string) => void) | null;
+}
+
+function failure(code: number | null | undefined): Error
+{
+	return code === null || code === undefined ? new Error("Discord API error") : discordError(code);
 }
 
 function createWorld(specs: RoleSpec[] = []): World
@@ -104,10 +139,12 @@ function createWorld(specs: RoleSpec[] = []): World
 		calls: [],
 		created: [],
 		bot: { manageRoles: true, highest: 50 },
-		failCreate: new Set(),
-		failEdit: new Set(),
+		failCreate: new Map(),
+		failEdit: new Map(),
+		failDelete: new Set(),
 		fetchMeCalls: 0,
 		onCreate: null,
+		onEdit: null,
 	};
 	const makeRole = (spec: RoleSpec): Role =>
 	{
@@ -116,13 +153,15 @@ function createWorld(specs: RoleSpec[] = []): World
 			name: spec.name ?? "role cũ",
 			position: spec.position ?? 1,
 			managed: spec.managed ?? false,
+			mentionable: spec.mentionable ?? false,
 			permissions: new PermissionsBitField(spec.permissions ?? []),
 			colors: { primaryColor: spec.color ?? 0, secondaryColor: null, tertiaryColor: null },
 			guild: base,
 			edit: (options: { name: string; colors: { primaryColor: number } }): Promise<unknown> =>
 			{
 				world.calls.push(`edit:${spec.id}:${options.name}`);
-				if (world.failEdit.has(spec.id)) return Promise.reject(new Error("Missing Permissions"));
+				world.onEdit?.(spec.id);
+				if (world.failEdit.has(spec.id)) return Promise.reject(failure(world.failEdit.get(spec.id)));
 				role.name = options.name;
 				role.colors = { ...role.colors, primaryColor: options.colors.primaryColor };
 				return Promise.resolve(role);
@@ -130,6 +169,7 @@ function createWorld(specs: RoleSpec[] = []): World
 			delete: (): Promise<unknown> =>
 			{
 				world.calls.push(`delete:${spec.id}`);
+				if (world.failDelete.has(spec.id) || world.failDelete.has(role.name)) return Promise.reject(failure(null));
 				roles.delete(spec.id);
 				return Promise.resolve(role);
 			},
@@ -153,7 +193,7 @@ function createWorld(specs: RoleSpec[] = []): World
 				world.calls.push(`create:${name}`);
 				world.created.push(options);
 				if (world.onCreate) await world.onCreate(name);
-				if (world.failCreate.has(name)) throw new Error("Missing Permissions");
+				if (world.failCreate.has(name)) throw failure(world.failCreate.get(name));
 				const role = makeRole({ id: `57000000000000000${nextId++}`, name, color: options.colors?.primaryColor });
 				roles.set(role.id, role);
 				return role;
@@ -228,6 +268,8 @@ interface Call
 	fields?: Record<string, string>;
 	caller?: CallerSpec;
 	fromMessage?: boolean;
+	/** editReply bị Discord từ chối (tin nhắn riêng đã bị đóng, Unknown Message...). */
+	failEditReply?: boolean;
 }
 
 interface Recorded
@@ -319,6 +361,11 @@ function fakeInteraction(world: World, call: Call): { interaction: Interaction; 
 		},
 		editReply: (payload: unknown): Promise<void> =>
 		{
+			if (call.failEditReply)
+			{
+				calls.push({ method: "editReply", payload });
+				return Promise.reject(discordError(10008));
+			}
 			state.replied = true;
 			return record("editReply", payload);
 		},
@@ -413,9 +460,17 @@ function nodeById(panel: JsonNode, customId: string): JsonNode
 	return node;
 }
 
+/** Ô chọn role của một bậc (customId mang thêm role lúc vẽ bảng). */
+function roleSelectOf(panel: JsonNode, tierKey: TierKey): JsonNode
+{
+	const node = flatten(panel).find(candidate => candidate.custom_id?.startsWith(`tierui:role:${tierKey}:`));
+	assert.ok(node, `không có ô chọn role của ${tierKey}`);
+	return node;
+}
+
 function defaultRoleOf(panel: JsonNode, tierKey: TierKey): string | null
 {
-	return nodeById(panel, `tierui:role:${tierKey}`).default_values?.[0]?.id ?? null;
+	return roleSelectOf(panel, tierKey).default_values?.[0]?.id ?? null;
 }
 
 function panelText(panel: JsonNode): string
@@ -469,13 +524,26 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 		assert.ok(text.includes("🟡 **Kim Đan** · từ Level 6"), text);
 		assert.equal(panel.accent_color, colorOf(TU_TIEN.tiers[7].color));
 
-		const select = nodeById(panel, "tierui:role:bac-3");
+		const select = nodeById(panel, `tierui:role:bac-3:${ROLE_C}`);
 		assert.equal(select.type, ComponentType.RoleSelect);
 		assert.equal(select.min_values, 0);
 		assert.equal(select.max_values, 1);
 		assert.equal(select.placeholder, "Chọn role cho Kim Đan");
 		assert.deepEqual(select.default_values, [{ id: ROLE_C, type: "role" }]);
-		for (const key of TIER_KEYS.filter(tierKey => tierKey !== "bac-3")) assert.equal(defaultRoleOf(panel, key), null, key);
+		for (const key of TIER_KEYS.filter(tierKey => tierKey !== "bac-3"))
+		{
+			assert.equal(defaultRoleOf(panel, key), null, key);
+			assert.equal(roleSelectOf(panel, key).custom_id, roleSelectId(key), "customId mang \"none\" khi bậc chưa gán");
+		}
+	});
+
+	test("tên bậc dài: placeholder ô chọn role được cắt cho vừa 150 ký tự, builder không ném lỗi", () =>
+	{
+		const long = { ...TU_TIEN, tiers: TU_TIEN.tiers.map(tier => (tier.key === "bac-1" ? { ...tier, name: "Ư".repeat(200) } : tier)) };
+		const panel = toJson(buildTierPanel({ set: long, mappings: [] }));
+		const placeholder = roleSelectOf(panel, "bac-1").placeholder ?? "";
+		assert.ok(placeholder.length <= 150, String(placeholder.length));
+		assert.ok(placeholder.startsWith("Chọn role cho ƯƯƯ") && placeholder.endsWith("…"), placeholder);
 	});
 
 	test("menu chọn bộ: 5 bộ, mô tả theo bộ, mặc định là bộ đang dùng", () =>
@@ -492,7 +560,7 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 	test("nút ↺ chỉ bấm được khi có tên tuỳ chỉnh; role đã gán mà không còn trong server thì không điền sẵn và có nhắc", () =>
 	{
 		const plain = toJson(buildTierPanel({ set: TU_TIEN, mappings: [] }));
-		assert.equal(nodeById(plain, "tierui:reset").disabled, true);
+		assert.equal(nodeById(plain, "tierui:reset:tu-tien").disabled, true);
 		assert.equal(nodeById(plain, "tierui:setup").label, "✨ Tạo/đồng bộ role");
 
 		const custom = { ...TU_TIEN, tiers: TU_TIEN.tiers.map(tier => (tier.key === "bac-2" ? { ...tier, name: "Nền Móng" } : tier)) };
@@ -501,8 +569,9 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 			mappings: [{ tierKey: "bac-2", roleId: ROLE_GONE, createdByBot: true }],
 			missingRoleIds: new Set([ROLE_GONE]),
 		}));
-		assert.equal(nodeById(panel, "tierui:reset").disabled, false);
+		assert.equal(nodeById(panel, "tierui:reset:tu-tien").disabled, false);
 		assert.equal(defaultRoleOf(panel, "bac-2"), null);
+		assert.equal(roleSelectOf(panel, "bac-2").custom_id, roleSelectId("bac-2", ROLE_GONE), "customId vẫn mang role đã gán để bỏ gán được");
 		assert.ok(panelText(panel).includes("🧱 **Nền Móng** · từ Level 3\n-# ⚠️ Role đã gán không còn trong server"));
 	});
 
@@ -517,21 +586,32 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 	{
 		assert.deepEqual(parseTierPanelId("tierui:set"), { type: "set" });
 		assert.deepEqual(parseTierPanelId("tierui:setup"), { type: "setup" });
-		assert.deepEqual(parseTierPanelId("tierui:reset"), { type: "reset" });
-		assert.deepEqual(parseTierPanelId("tierui:role:bac-8"), { type: "role", tierKey: "bac-8" });
+		assert.deepEqual(parseTierPanelId("tierui:reset:kiem-hiep"), { type: "reset", setKey: "kiem-hiep" });
+		assert.deepEqual(parseTierPanelId("tierui:role:bac-8:none"), { type: "role", tierKey: "bac-8", drawnRoleId: null });
+		assert.deepEqual(parseTierPanelId(`tierui:role:bac-2:${ROLE_B}`), { type: "role", tierKey: "bac-2", drawnRoleId: ROLE_B });
 		assert.deepEqual(parseTierPanelId("tierui:rename:2"), { type: "rename", group: 2 });
-		assert.deepEqual(parseTierPanelId("tierui:names:1:vu-tru"), { type: "names", group: 1, setKey: "vu-tru" });
-		for (const bad of ["tierui", "tierui:", "tierui:role:bac-9", "tierui:role:bac-1:x", "tierui:rename:3", "tierui:names:1", "tierui:names:1:phi-thang", "x:set", " tierui:set"])
+		assert.deepEqual(parseTierPanelId("tierui:names:1:vu-tru:0a1b2c3d"), { type: "names", group: 1, setKey: "vu-tru", fingerprint: "0a1b2c3d" });
+		const bad = [
+			"tierui", "tierui:", "tierui:reset", "tierui:reset:phi-thang", "tierui:role:bac-8", "tierui:role:bac-9:none", "tierui:role:bac-1:x",
+			"tierui:role:bac-1:1234", "tierui:rename:3", "tierui:names:1", "tierui:names:1:vu-tru", "tierui:names:1:phi-thang:0a1b2c3d",
+			"tierui:names:1:vu-tru:0A1B2C3D", "tierui:names:1:vu-tru:0a1b2c3", "x:set", " tierui:set",
+		];
+		for (const id of bad)
 		{
-			assert.throws(() => parseTierPanelId(bad), { name: "UserError", message: INVALID_PANEL_ACTION }, bad);
+			assert.throws(() => parseTierPanelId(id), { name: "UserError", message: INVALID_PANEL_ACTION }, id);
 		}
 	});
 
-	test("form đổi tên: 1 dòng hướng dẫn + 4 ô (điền sẵn tên hiện tại, không bắt buộc), customId mang nhóm và bộ", () =>
+	test("form đổi tên: 1 dòng hướng dẫn + 4 ô (điền sẵn tên hiện tại, không bắt buộc, độ dài tối đa cố định), customId mang nhóm, bộ, dấu vân tay", () =>
 	{
+		const longName = "Hư Không Vô Tận Thiên Địa Huyền Hoàng";
 		const custom = { ...TU_TIEN, tiers: TU_TIEN.tiers.map(tier => (tier.key === "bac-6" ? { ...tier, name: "Hư Không", emoji: "🌌" } : tier)) };
 		const modal = toJson(buildTierRenameModal(custom, 2));
-		assert.equal(modal.custom_id, "tierui:names:2:tu-tien");
+		assert.equal(modal.custom_id, `tierui:names:2:tu-tien:${tierNamesFingerprint(custom, 2)}`);
+		assert.match(tierNamesFingerprint(custom, 2), /^[0-9a-f]{8}$/);
+		assert.notEqual(tierNamesFingerprint(custom, 2), tierNamesFingerprint(TU_TIEN, 2), "đổi tên một bậc trong nhóm thì dấu vân tay đổi");
+		assert.equal(tierNamesFingerprint(custom, 1), tierNamesFingerprint(TU_TIEN, 1), "bậc của nhóm khác không ảnh hưởng");
+		assert.ok((modal.custom_id ?? "").length <= 100);
 		assert.equal(modal.title, "Đổi tên bậc 5–8 · bộ Tu tiên");
 		assert.equal(modal.components?.length, 5);
 		assert.equal(modal.components?.[0].type, ComponentType.TextDisplay);
@@ -546,11 +626,17 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 		{
 			assert.equal(input?.type, ComponentType.TextInput);
 			assert.equal(input?.required, false);
-			assert.ok((input?.max_length ?? 0) >= (input?.value ?? "").length);
+			assert.equal(input?.max_length, 72);
+			assert.ok((input?.value ?? "").length <= 72);
 		}
+
+		const withLong = { ...TU_TIEN, tiers: TU_TIEN.tiers.map(tier => (tier.key === "bac-1" ? { ...tier, name: longName, emoji: "🧑‍🧑‍🧒‍🧒" } : tier)) };
+		const longInput = toJson(buildTierRenameModal(withLong, 1)).components?.[1].component;
+		assert.equal(longInput?.max_length, 72, "độ dài tối đa không phụ thuộc giá trị hiện tại");
+		assert.equal(longInput?.value, `🧑‍🧑‍🧒‍🧒 ${longName}`);
 	});
 
-	test("báo cáo đồng bộ: số đếm, từng bậc có thay đổi hoặc bị bỏ qua kèm lý do; luôn vừa 2.000 ký tự", () =>
+	test("báo cáo đồng bộ: số đếm, từng bậc có thay đổi, giữ nguyên tên hoặc bị bỏ qua kèm lý do; luôn vừa 2.000 ký tự", () =>
 	{
 		const tiers = TU_TIEN.tiers;
 		const result: TierRoleSetupResult = {
@@ -558,21 +644,49 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 			entries: [
 				{ tier: tiers[0], status: "created", roleId: ROLE_A, reason: null },
 				{ tier: tiers[1], status: "recreated", roleId: ROLE_B, reason: null },
-				{ tier: tiers[2], status: "renamed", roleId: ROLE_C, reason: null },
+				{ tier: tiers[2], status: "renamed", roleId: ROLE_C, reason: null, previousName: "Cũ" },
 				{ tier: tiers[3], status: "unchanged", roleId: ROLE_D, reason: null },
 				...tiers.slice(4).map(tier => ({ tier, status: "skipped" as const, roleId: ROLE_E, reason: "x".repeat(600) })),
 			],
-			summary: { setKey: "tu-tien", created: 2, renamed: 1, skipped: 4 },
+			summary: { setKey: "tu-tien", created: 2, renamed: 1, skipped: 4, renamedRoles: [{ roleId: ROLE_C, oldName: "Cũ" }], keptRoles: [], orphanedRoles: [] },
+			setChangedMeanwhile: false,
 		};
 		const report = buildTierSetupReport(TU_TIEN, result);
 		assert.ok(report.length <= 2000, String(report.length));
 		const lines = report.split("\n");
-		assert.equal(lines[0], "✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **2** · đổi tên **1** · giữ nguyên **1** · bỏ qua **4**.");
+		assert.equal(lines[0], "✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **2** · đổi tên **1** · giữ nguyên tên **0** · đã đúng **1** · bỏ qua **4**.");
 		assert.equal(lines[1], `• 🌱 **Luyện Khí**: đã tạo <@&${ROLE_A}>`);
 		assert.equal(lines[2], `• 🧱 **Trúc Cơ**: role cũ không còn, đã tạo lại <@&${ROLE_B}>`);
 		assert.equal(lines[3], `• 🟡 **Kim Đan**: đã đổi tên và màu <@&${ROLE_C}>`);
 		assert.ok(lines[4].startsWith(`• 🔥 **Hóa Thần**: bỏ qua <@&${ROLE_E}>. xxx`));
 		assert.match(lines[lines.length - 1], /^… và \d+ dòng khác$/);
+	});
+
+	test("báo cáo đồng bộ: cảnh báo bộ vừa đổi và role mồ côi đặt ngay sau số đếm; ghi chú giữ nguyên tên và thứ tự role để thấy màu", () =>
+	{
+		const tiers = TU_TIEN.tiers;
+		const result: TierRoleSetupResult = {
+			setKey: "tu-tien",
+			entries: [
+				{ tier: tiers[0], status: "kept", roleId: ROLE_A, reason: null },
+				{ tier: tiers[1], status: "skipped", roleId: null, reason: SETUP_CLEARED_MEANWHILE, orphanedRoleId: ROLE_H },
+				{ tier: tiers[2], status: "renamed", roleId: ROLE_C, reason: SETUP_REASSIGNED_AFTER_RENAME, previousName: "Cũ" },
+				...tiers.slice(3).map(tier => ({ tier, status: "unchanged" as const, roleId: ROLE_E, reason: null })),
+			],
+			summary: { setKey: "tu-tien", created: 0, renamed: 1, skipped: 1, renamedRoles: [{ roleId: ROLE_C, oldName: "Cũ" }], keptRoles: [ROLE_A], orphanedRoles: [ROLE_H] },
+			setChangedMeanwhile: true,
+		};
+		const lines = buildTierSetupReport(TU_TIEN, result).split("\n");
+		assert.equal(lines[0], "✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **0** · đổi tên **1** · giữ nguyên tên **1** · đã đúng **5** · bỏ qua **1**.");
+		assert.ok(lines[1].startsWith("⚠️ Bộ danh hiệu hoặc tên bậc vừa được đổi trong lúc bot đang đồng bộ"), lines[1]);
+		assert.equal(lines[2], `⚠️ Bot vừa tạo nhưng không dùng được, cũng không xoá lại được: <@&${ROLE_H}>. Hãy xoá thủ công trong **Server Settings → Roles**.`);
+		assert.equal(lines[3], `• 🌱 **Luyện Khí**: giữ nguyên tên <@&${ROLE_A}> (role do admin tự gán)`);
+		assert.equal(lines[4], `• 🧱 **Trúc Cơ**: bỏ qua. ${SETUP_CLEARED_MEANWHILE}`);
+		assert.equal(lines[5], `• 🟡 **Kim Đan**: đã đổi tên và màu <@&${ROLE_C}>. ${SETUP_REASSIGNED_AFTER_RENAME}`);
+		assert.ok(lines[6].startsWith("-# Bot chỉ đổi tên role do bot tạo."), lines[6]);
+		assert.ok(lines[7].startsWith("-# Muốn thấy màu danh hiệu trên tên thành viên"), lines[7]);
+		assert.ok(lines[7].includes("lên trên role có màu khác (ví dụ role team) và vẫn nằm dưới role của bot"), lines[7]);
+		assert.equal(lines.length, 9);
 	});
 });
 
@@ -585,10 +699,10 @@ describe("bảng điều khiển danh hiệu: quyền", () =>
 		const harness = createHarness(createWorld([{ id: ROLE_A, position: 5 }]));
 		const denied: Call[] = [
 			{ kind: "string", id: "tierui:set", values: ["rank-game"] },
-			{ kind: "role", id: "tierui:role:bac-1", values: [ROLE_A] },
-			{ kind: "button", id: "tierui:reset" },
+			{ kind: "role", id: roleSelectId("bac-1"), values: [ROLE_A] },
+			{ kind: "button", id: "tierui:reset:tu-tien" },
 			{ kind: "button", id: "tierui:setup" },
-			{ kind: "modal", id: "tierui:names:1:tu-tien", fields: { "bac-1": "Phàm Nhân" } },
+			{ kind: "modal", id: namesId(1), fields: { "bac-1": "Phàm Nhân" } },
 		];
 		for (const call of denied)
 		{
@@ -612,7 +726,7 @@ describe("bảng điều khiển danh hiệu: quyền", () =>
 		assert.deepEqual(methods(set), ["update"]);
 		assert.equal(harness.context.deps.tierSets.currentKey(GUILD), "cay-xanh");
 
-		const role = await dispatch(harness, { kind: "role", id: "tierui:role:bac-1", values: [ROLE_A], caller });
+		const role = await dispatch(harness, { kind: "role", id: roleSelectId("bac-1"), values: [ROLE_A], caller });
 		assert.deepEqual(methods(role), ["deferUpdate", "editReply", "followUp"]);
 		assert.equal(privateText(role[2]), CALLER_NEEDS_MANAGE_ROLES);
 		assert.equal(defaultRoleOf(panelOf(role[1]), "bac-1"), null, "ô chọn trở về trạng thái chưa gán");
@@ -630,12 +744,13 @@ describe("bảng điều khiển danh hiệu: quyền", () =>
 		const harness = createHarness();
 		const cases: Call[] = [
 			{ kind: "button", id: "tierui:set" },
-			{ kind: "button", id: "tierui:role:bac-1" },
-			{ kind: "string", id: "tierui:role:bac-1", values: ["rank-game"] },
+			{ kind: "button", id: roleSelectId("bac-1") },
+			{ kind: "string", id: roleSelectId("bac-1"), values: ["rank-game"] },
 			{ kind: "role", id: "tierui:set", values: [ROLE_A] },
 			{ kind: "string", id: "tierui:setup", values: ["rank-game"] },
 			{ kind: "modal", id: "tierui:rename:1" },
-			{ kind: "modal", id: "tierui:names:1:tu-tien", fromMessage: false, fields: {} },
+			{ kind: "modal", id: namesId(1), fromMessage: false, fields: {} },
+			{ kind: "button", id: "tierui:reset" },
 			{ kind: "button", id: "tierui:bogus" },
 		];
 		for (const call of cases)
@@ -679,9 +794,10 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 	test("chọn role cho một bậc: kiểm tra như set-role (tải lại thông tin bot), lưu, vẽ lại bảng với role đã chọn", async () =>
 	{
 		const harness = createHarness(createWorld([{ id: ROLE_C, position: 5 }]));
-		const calls = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: [ROLE_C] });
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: [ROLE_C] });
 
 		assert.deepEqual(methods(calls), ["deferUpdate", "editReply"]);
+		assert.equal(roleSelectOf(panelOf(calls[1]), "bac-3").custom_id, roleSelectId("bac-3", ROLE_C), "bảng vẽ lại mang role vừa gán");
 		assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-3"), ROLE_C);
 		assert.equal(harness.world.fetchMeCalls, 1);
 		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_C, createdByBot: false }]);
@@ -692,13 +808,14 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 	{
 		const world = createWorld([{ id: ROLE_B, position: 4 }, { id: ROLE_C, position: 5 }]);
 		const harness = createHarness(world);
-		harness.tierRoles.set(GUILD, "bac-3", ROLE_B, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_B, ADMIN, { createdByBot: true });
 		world.bot.manageRoles = false;
 
-		const calls = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: [ROLE_C] });
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3", ROLE_B), values: [ROLE_C] });
 		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
 		const note = privateText(calls[2]);
 		assert.ok(note.includes(`Role cũ <@&${ROLE_B}> không còn do bot quản lý`), note);
+		assert.ok(note.includes("Role cũ do bot tạo; nếu không dùng nữa, hãy xoá thủ công"), note);
 		assert.ok(note.includes("⚠️ Bot chưa có quyền **Manage Roles**"), note);
 		assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-3"), ROLE_C);
 	});
@@ -708,14 +825,15 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		const harness = createHarness(createWorld([{ id: ROLE_C, position: 5 }]));
 		harness.tierRoles.set(GUILD, "bac-3", ROLE_C, ADMIN);
 
-		const calls = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: [] });
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3", ROLE_C), values: [] });
 		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
 		assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-3"), null);
 		assert.ok(privateText(calls[2]).startsWith(`Đã bỏ <@&${ROLE_C}> khỏi bậc 🟡 **Kim Đan** (từ Level 6).`));
 		assert.deepEqual(harness.tierRoles.list(GUILD), []);
 		assert.deepEqual(audits(harness.context, "tier_role").map(entry => entry.action), ["tier_role.set", "tier_role.clear"]);
+		assert.deepEqual(harness.world.calls, [], "role admin tự gán: không xoá role");
 
-		const again = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: [] });
+		const again = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: [] });
 		assert.deepEqual(methods(again), ["deferUpdate", "editReply"]);
 	});
 
@@ -741,14 +859,14 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		];
 		for (const [roleId, reason, caller] of cases)
 		{
-			const calls = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: [roleId], caller });
+			const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: [roleId], caller });
 			assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"], roleId);
 			assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-3"), null, "ô chọn trở về role đang gán (chưa gán)");
 			assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-2"), ROLE_A);
 			assert.ok(privateText(calls[2]).includes(reason), `${roleId}: ${privateText(calls[2])}`);
 		}
 
-		const unknown = await dispatch(harness, { kind: "role", id: "tierui:role:bac-3", values: ["560000000000000042"] });
+		const unknown = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: ["560000000000000042"] });
 		assert.equal(privateText(unknown[2]), "Không tìm thấy role vừa chọn trong server. Vui lòng thử lại.");
 		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-2", roleId: ROLE_A, createdByBot: false }]);
 		assert.deepEqual(audits(harness.context, "tier_role").length, 1);
@@ -763,13 +881,13 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		const open = await dispatch(harness, { kind: "button", id: "tierui:rename:1" });
 		assert.deepEqual(methods(open), ["showModal"]);
 		const modal = toJson(open[0].payload);
-		assert.equal(modal.custom_id, "tierui:names:1:tu-tien");
+		assert.equal(modal.custom_id, namesId(1, tierSets.current(GUILD)));
 		const prefilled = (modal.components ?? []).slice(1).map(label => label.component?.value);
 		assert.deepEqual(prefilled, ["🌱 Luyện Khí", "🧱 Nền Móng", "🟡 Kim Đan", "👶 Nguyên Anh"]);
 
 		const submit = await dispatch(harness, {
 			kind: "modal",
-			id: "tierui:names:1:tu-tien",
+			id: modal.custom_id ?? "",
 			fields: { "bac-1": "🌱 Luyện Khí", "bac-2": "", "bac-3": "🥇 Kim Đan Pro", "bac-4": "Anh Hài" },
 		});
 		assert.deepEqual(methods(submit), ["update"]);
@@ -789,7 +907,7 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		const harness = createHarness();
 		const calls = await dispatch(harness, {
 			kind: "modal",
-			id: "tierui:names:2:tu-tien",
+			id: namesId(2),
 			fields: { "bac-5": "🔥 Hỏa Thần", "bac-6": "Luyện *Hư*", "bac-7": "", "bac-8": "" },
 		});
 		assert.deepEqual(methods(calls), ["reply"]);
@@ -803,12 +921,13 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		harness.context.deps.tierSets.select(GUILD, "cay-xanh", ADMIN);
 		const calls = await dispatch(harness, {
 			kind: "modal",
-			id: "tierui:names:1:tu-tien",
+			id: namesId(1),
 			fields: { "bac-1": "Phàm Nhân", "bac-2": "", "bac-3": "", "bac-4": "" },
 		});
 		assert.deepEqual(methods(calls), ["update", "followUp"]);
 		assert.ok(panelText(panelOf(calls[0])).includes("Bộ đang dùng: **Cây xanh**"));
-		assert.equal(privateText(calls[1]), "Bộ danh hiệu vừa được đổi trong lúc bạn nhập tên, nên bot chưa lưu gì. Hãy mở lại form đổi tên.");
+		assert.equal(privateText(calls[1]), RENAME_SET_CHANGED);
+		assert.equal(RENAME_SET_CHANGED, "Bộ danh hiệu vừa được đổi trong lúc bạn nhập tên, nên bot chưa lưu gì. Hãy mở lại form đổi tên.");
 		assert.deepEqual(harness.context.deps.tierSets.overrides(GUILD, "tu-tien"), []);
 		assert.deepEqual(harness.context.deps.tierSets.overrides(GUILD, "cay-xanh"), []);
 	});
@@ -822,14 +941,154 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		tierSets.select(GUILD, "tu-tien", ADMIN);
 		tierSets.rename(GUILD, [{ tierKey: "bac-1", name: "Phàm Nhân", emoji: null }], ADMIN);
 
-		const calls = await dispatch(harness, { kind: "button", id: "tierui:reset" });
+		const calls = await dispatch(harness, { kind: "button", id: "tierui:reset:tu-tien" });
 		assert.deepEqual(methods(calls), ["update"]);
 		const panel = panelOf(calls[0]);
 		assert.ok(panelText(panel).includes("🌱 **Luyện Khí** · từ Level 0"));
-		assert.equal(nodeById(panel, "tierui:reset").disabled, true);
+		assert.equal(nodeById(panel, "tierui:reset:tu-tien").disabled, true);
 		assert.deepEqual(tierSets.overrides(GUILD, "tu-tien"), []);
 		assert.equal(tierSets.overrides(GUILD, "rank-game").length, 1);
 		assert.deepEqual(audits(harness.context, "tier_name.reset").map(entry => entry.details), [{ setKey: "tu-tien", count: 1 }]);
+	});
+});
+
+// ---------- Bảng điều khiển cũ, lỗi khi vẽ lại, bỏ gán role do bot tạo ----------
+
+describe("bảng điều khiển danh hiệu: bảng cũ, lỗi vẽ lại, bỏ gán role do bot tạo", () =>
+{
+	test("nút ↺ của bảng vẽ theo bộ cũ: không xoá tên nào, vẽ lại bảng theo bộ hiện tại và báo riêng", async () =>
+	{
+		const harness = createHarness();
+		const { tierSets } = harness.context.deps;
+		tierSets.rename(GUILD, [{ tierKey: "bac-1", name: "Phàm Nhân", emoji: null }], ADMIN);
+		tierSets.select(GUILD, "cay-xanh", ADMIN);
+		tierSets.rename(GUILD, [{ tierKey: "bac-1", name: "Mầm Non", emoji: null }], ADMIN);
+
+		const calls = await dispatch(harness, { kind: "button", id: "tierui:reset:tu-tien" });
+		assert.deepEqual(methods(calls), ["update", "followUp"]);
+		assert.ok(panelText(panelOf(calls[0])).includes("Bộ đang dùng: **Cây xanh**"));
+		assert.equal(nodeById(panelOf(calls[0]), "tierui:reset:cay-xanh").disabled, false);
+		assert.equal(privateText(calls[1]), RESET_SET_CHANGED);
+		assert.equal(tierSets.overrides(GUILD, "tu-tien").length, 1);
+		assert.equal(tierSets.overrides(GUILD, "cay-xanh").length, 1);
+		assert.deepEqual(audits(harness.context, "tier_name.reset"), []);
+	});
+
+	test("xoá lựa chọn trên bảng cũ (bậc đã đổi role sau khi vẽ): không bỏ gán, vẽ lại bảng với role hiện tại và báo riêng", async () =>
+	{
+		const harness = createHarness(createWorld([{ id: ROLE_B, position: 4 }, { id: ROLE_C, position: 5 }]));
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_C, ADMIN);
+
+		for (const drawn of [null, ROLE_B])
+		{
+			const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3", drawn), values: [] });
+			assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"], String(drawn));
+			assert.equal(defaultRoleOf(panelOf(calls[1]), "bac-3"), ROLE_C);
+			assert.equal(privateText(calls[2]), PANEL_ROLE_CHANGED);
+		}
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_C, createdByBot: false }]);
+		assert.deepEqual(audits(harness.context, "tier_role.clear"), []);
+
+		const fresh = await dispatch(harness, { kind: "role", id: roleSelectId("bac-2", ROLE_B), values: [] });
+		assert.equal(privateText(fresh[2]), PANEL_ROLE_CHANGED, "bậc vốn chưa gán mà bảng vẽ có role: cũng là bảng cũ");
+	});
+
+	test("form đổi tên mở trước khi tên trong nhóm bị đổi ở nơi khác: không lưu, vẽ lại bảng và báo mở lại form", async () =>
+	{
+		const harness = createHarness();
+		const { tierSets } = harness.context.deps;
+		const open = await dispatch(harness, { kind: "button", id: "tierui:rename:1" });
+		const staleId = toJson(open[0].payload).custom_id ?? "";
+		tierSets.rename(GUILD, [{ tierKey: "bac-2", name: "Nền Móng", emoji: null }], ADMIN);
+
+		const calls = await dispatch(harness, {
+			kind: "modal",
+			id: staleId,
+			fields: { "bac-1": "Phàm Nhân", "bac-2": "🧱 Trúc Cơ", "bac-3": "", "bac-4": "" },
+		});
+		assert.deepEqual(methods(calls), ["update", "followUp"]);
+		assert.ok(panelText(panelOf(calls[0])).includes("🧱 **Nền Móng** · từ Level 3"));
+		assert.equal(privateText(calls[1]), RENAME_NAMES_CHANGED);
+		assert.deepEqual(tierSets.overrides(GUILD, "tu-tien"), [{ tierKey: "bac-2", name: "Nền Móng", emoji: null }]);
+
+		const other = await dispatch(harness, { kind: "modal", id: namesId(2), fields: { "bac-5": "", "bac-6": "", "bac-7": "", "bac-8": "⚡ Phi Thăng" } });
+		assert.deepEqual(methods(other), ["update"], "tên nhóm khác đổi thì form của nhóm này vẫn lưu được");
+		assert.equal(tierSets.overrides(GUILD, "tu-tien").length, 2);
+	});
+
+	test("vẽ lại bảng lỗi (tin nhắn riêng đã đóng): lỗi gốc của thao tác chọn role vẫn được báo, không bị che", async (t) =>
+	{
+		const logged = t.mock.method(console, "error", () => undefined);
+		const harness = createHarness(createWorld([{ id: ROLE_B, position: 5, permissions: [PermissionFlagsBits.ManageMessages] }]));
+
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: [ROLE_B], failEditReply: true });
+		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
+		assert.ok(privateText(calls[2]).includes("có quyền quản trị hoặc kiểm duyệt (Manage Messages)"), privateText(calls[2]));
+		assert.equal(logged.mock.callCount(), 1);
+		assert.match(String(logged.mock.calls[0].arguments[0]), /\[WARN\] Không vẽ lại được bảng điều khiển danh hiệu/);
+		assert.deepEqual(harness.tierRoles.list(GUILD), []);
+	});
+
+	test("vẽ lại bảng lỗi khi thao tác thành công: vẫn lưu và vẫn gửi ghi chú riêng", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const world = createWorld([{ id: ROLE_C, position: 5 }]);
+		world.bot.manageRoles = false;
+		const harness = createHarness(world);
+
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3"), values: [ROLE_C], failEditReply: true });
+		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
+		assert.ok(privateText(calls[2]).includes("⚠️ Bot chưa có quyền **Manage Roles**"));
+		assert.deepEqual(harness.tierRoles.list(GUILD), [{ tierKey: "bac-3", roleId: ROLE_C, createdByBot: false }]);
+	});
+
+	test("nút ✨: vẽ lại bảng lỗi thì báo cáo vẫn được gửi riêng", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const harness = createHarness();
+		const calls = await dispatch(harness, { kind: "button", id: "tierui:setup", failEditReply: true });
+		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
+		assert.ok(privateText(calls[2]).startsWith("✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **8**"), privateText(calls[2]));
+		assert.equal(harness.tierRoles.list(GUILD).length, 8);
+	});
+
+	test("xoá lựa chọn của bậc có role do bot tạo: bỏ gán và xoá role khỏi server, audit ghi deletedRoleId, báo riêng", async () =>
+	{
+		const world = createWorld([{ id: ROLE_C, name: "🟡 Kim Đan", position: 5 }]);
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_C, ADMIN, { createdByBot: true });
+
+		const calls = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3", ROLE_C), values: [] });
+		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
+		assert.deepEqual(world.calls, [`delete:${ROLE_C}`]);
+		assert.equal(world.roles.has(ROLE_C), false);
+		assert.equal(world.fetchMeCalls, 1, "kiểm tra thứ bậc role theo thông tin bot vừa tải lại");
+		assert.deepEqual(harness.tierRoles.list(GUILD), []);
+		assert.deepEqual(audits(harness.context, "tier_role.clear"), [
+			{ action: "tier_role.clear", targetId: ROLE_C, details: { tierKey: "bac-3", deletedRoleId: ROLE_C } },
+		]);
+		assert.ok(privateText(calls[2]).startsWith("Đã bỏ gán và xoá role do bot tạo của bậc 🟡 **Kim Đan** (từ Level 6) khỏi server"), privateText(calls[2]));
+		assert.ok(panelText(panelOf(calls[1])).includes("Role đã gán: **0/8**"));
+	});
+
+	test("xoá lựa chọn của bậc có role do bot tạo mà bot hoặc người thao tác không xoá được: chỉ bỏ gán và nói rõ", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const world = createWorld([{ id: ROLE_C, name: "🟡 Kim Đan", position: 5 }, { id: ROLE_D, name: "👶 Nguyên Anh", position: 6 }]);
+		world.failDelete.add(ROLE_D);
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_C, ADMIN, { createdByBot: true });
+		harness.tierRoles.set(GUILD, "bac-4", ROLE_D, ADMIN, { createdByBot: true });
+
+		const caller = await dispatch(harness, { kind: "role", id: roleSelectId("bac-3", ROLE_C), values: [], caller: { highestPosition: 5 } });
+		assert.ok(privateText(caller[2]).includes(`⚠️ Role này do bot tạo nhưng bot chưa xoá khỏi server: Bạn không xoá được <@&${ROLE_C}>`), privateText(caller[2]));
+		const failed = await dispatch(harness, { kind: "role", id: roleSelectId("bac-4", ROLE_D), values: [] });
+		assert.ok(privateText(failed[2]).includes("Discord báo lỗi khi xoá role; xem log của bot."), privateText(failed[2]));
+
+		assert.deepEqual(world.calls, [`delete:${ROLE_D}`]);
+		assert.ok(world.roles.has(ROLE_C) && world.roles.has(ROLE_D));
+		assert.deepEqual(harness.tierRoles.list(GUILD), []);
+		assert.deepEqual(audits(harness.context, "tier_role.clear").map(entry => entry.details), [{ tierKey: "bac-3" }, { tierKey: "bac-4" }]);
 	});
 });
 
@@ -838,9 +1097,10 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 {
 	/**
-	 * Server có đủ các trường hợp: bậc 1 role sai tên (đổi tên), bậc 2 role đã bị xoá (tạo lại), bậc 3 role có quyền nguy hiểm
-	 * (bỏ qua), bậc 4 role cao hơn bot (bỏ qua), bậc 5 đã đúng tên và màu (giữ nguyên), bậc 6 chưa gán (tạo mới), bậc 7 chưa gán
-	 * nhưng Discord từ chối tạo (bỏ qua), bậc 8 Discord từ chối sửa (bỏ qua).
+	 * Server có đủ các trường hợp: bậc 1 role do bot tạo sai tên (đổi tên), bậc 2 role đã bị xoá (tạo lại), bậc 3 role do bot
+	 * tạo có quyền nguy hiểm (bỏ qua), bậc 4 role do bot tạo cao hơn bot (bỏ qua), bậc 5 role do admin gán đã đúng tên và màu
+	 * (đã đúng), bậc 6 chưa gán (tạo mới), bậc 7 chưa gán nhưng Discord lỗi khi tạo (bỏ qua), bậc 8 role do bot tạo nhưng
+	 * Discord báo thiếu quyền khi sửa (50013, bỏ qua).
 	 */
 	function mixedHarness(): Harness
 	{
@@ -851,15 +1111,16 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 			{ id: ROLE_E, name: "🔥 Hóa Thần", position: 7, color: colorOf(TU_TIEN.tiers[4].color) },
 			{ id: ROLE_H, name: "Cũ", position: 8 },
 		]);
-		world.failCreate.add("☯️ Hợp Thể");
-		world.failEdit.add(ROLE_H);
+		world.failCreate.set("☯️ Hợp Thể", null);
+		world.failEdit.set(ROLE_H, 50013);
 		const harness = createHarness(world);
-		const mappings: [TierKey, string][] = [["bac-1", ROLE_A], ["bac-2", ROLE_GONE], ["bac-3", ROLE_C], ["bac-4", ROLE_D], ["bac-5", ROLE_E], ["bac-8", ROLE_H]];
-		for (const [tierKey, roleId] of mappings) harness.tierRoles.set(GUILD, tierKey, roleId, ADMIN);
+		const byBot: [TierKey, string][] = [["bac-1", ROLE_A], ["bac-2", ROLE_GONE], ["bac-3", ROLE_C], ["bac-4", ROLE_D], ["bac-8", ROLE_H]];
+		for (const [tierKey, roleId] of byBot) harness.tierRoles.set(GUILD, tierKey, roleId, ADMIN, { createdByBot: true });
+		harness.tierRoles.set(GUILD, "bac-5", ROLE_E, ADMIN);
 		return harness;
 	}
 
-	test("nút ✨: đổi tên/màu, tạo mới (không quyền, không hoist, không mentionable), bỏ qua role không an toàn và lỗi API; ghi audit; báo riêng", async (t) =>
+	test("nút ✨: từ bậc 8 xuống bậc 1; đổi tên/màu role do bot tạo, tạo mới (không quyền, không hoist, không mentionable), bỏ qua role không an toàn và lỗi API; ghi audit; báo riêng", async (t) =>
 	{
 		const logged = t.mock.method(console, "error", () => undefined);
 		const harness = mixedHarness();
@@ -868,12 +1129,12 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 
 		assert.deepEqual(methods(calls), ["deferUpdate", "editReply", "followUp"]);
 		assert.deepEqual(world.calls, [
-			`edit:${ROLE_A}:🌱 Luyện Khí`,
-			"create:🧱 Trúc Cơ",
-			"create:🌀 Luyện Hư",
-			"create:☯️ Hợp Thể",
 			`edit:${ROLE_H}:⚡ Độ Kiếp`,
-		], "tuần tự từng bậc; bậc 3, 4 không gọi API, bậc 5 đã đúng");
+			"create:☯️ Hợp Thể",
+			"create:🌀 Luyện Hư",
+			"create:🧱 Trúc Cơ",
+			`edit:${ROLE_A}:🌱 Luyện Khí`,
+		], "tuần tự từ bậc 8 xuống bậc 1; bậc 3, 4 không gọi API, bậc 5 đã đúng");
 		assert.equal(world.roles.get(ROLE_A)?.name, "🌱 Luyện Khí");
 		assert.equal(world.roles.get(ROLE_A)?.colors.primaryColor, colorOf(TU_TIEN.tiers[0].color));
 		for (const options of world.created)
@@ -883,7 +1144,7 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 			assert.equal(options.mentionable, false);
 			assert.ok(options.reason?.includes("bộ Tu tiên"), options.reason);
 		}
-		assert.deepEqual(world.created.map(options => options.colors?.primaryColor), [1, 5, 6].map(index => colorOf(TU_TIEN.tiers[index].color)));
+		assert.deepEqual(world.created.map(options => options.colors?.primaryColor), [6, 5, 1].map(index => colorOf(TU_TIEN.tiers[index].color)));
 
 		const mappings = new Map(harness.tierRoles.list(GUILD).map(mapping => [mapping.tierKey, mapping]));
 		const recreated = mappings.get("bac-2");
@@ -892,33 +1153,69 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 		assert.ok(recreated.roleId !== ROLE_GONE && world.roles.has(recreated.roleId));
 		assert.equal(recreated.createdByBot, true);
 		assert.equal(created.createdByBot, true);
-		assert.equal(mappings.get("bac-1")?.createdByBot, false);
+		assert.equal(mappings.get("bac-5")?.createdByBot, false);
 		assert.equal(mappings.has("bac-7"), false);
 
-		assert.deepEqual(audits(harness.context, "tier_role.setup"), [
-			{ action: "tier_role.setup", targetId: null, details: { setKey: "tu-tien", created: 2, renamed: 1, skipped: 4 } },
-		]);
+		assert.deepEqual(audits(harness.context, "tier_role.setup"), [{
+			action: "tier_role.setup",
+			targetId: null,
+			details: {
+				setKey: "tu-tien",
+				created: 2,
+				renamed: 1,
+				skipped: 4,
+				renamedRoles: [{ roleId: ROLE_A, oldName: "Tân binh" }],
+				keptRoles: [],
+				orphanedRoles: [],
+			},
+		}]);
 
 		const panel = panelOf(calls[1]);
 		assert.equal(defaultRoleOf(panel, "bac-6"), created.roleId);
 		assert.equal(defaultRoleOf(panel, "bac-2"), recreated.roleId);
 		const report = privateText(calls[2]);
-		assert.ok(report.startsWith("✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **2** · đổi tên **1** · giữ nguyên **1** · bỏ qua **4**."), report);
+		assert.ok(report.startsWith("✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **2** · đổi tên **1** · giữ nguyên tên **0** · đã đúng **1** · bỏ qua **4**."), report);
 		assert.ok(report.includes(`• 🌱 **Luyện Khí**: đã đổi tên và màu <@&${ROLE_A}>`), report);
 		assert.ok(report.includes(`• 🧱 **Trúc Cơ**: role cũ không còn, đã tạo lại <@&${recreated.roleId}>`), report);
 		assert.ok(report.includes(`• 🟡 **Kim Đan**: bỏ qua <@&${ROLE_C}>. Không thể dùng <@&${ROLE_C}> làm role danh hiệu`), report);
 		assert.ok(report.includes(`• 👶 **Nguyên Anh**: bỏ qua <@&${ROLE_D}>. Bot không quản lý được`), report);
 		assert.ok(report.includes(`• ☯️ **Hợp Thể**: bỏ qua. ${SETUP_API_FAILURE}`), report);
-		assert.ok(report.includes(`• ⚡ **Độ Kiếp**: bỏ qua <@&${ROLE_H}>. ${SETUP_API_FAILURE}`), report);
-		assert.ok(!report.includes("Hóa Thần"), "bậc giữ nguyên không liệt kê");
+		assert.ok(report.includes(`• ⚡ **Độ Kiếp**: bỏ qua <@&${ROLE_H}>. ${SETUP_MISSING_PERMISSIONS}`), report);
+		assert.ok(!report.includes("Hóa Thần"), "bậc đã đúng không liệt kê");
+		assert.ok(report.includes("kéo các role danh hiệu lên trên role có màu khác (ví dụ role team) và vẫn nằm dưới role của bot"), report);
 		assert.equal(logged.mock.callCount(), 2, "mỗi lỗi API ghi một cảnh báo");
 	});
 
-	test("đồng bộ theo bộ đang dùng và tên tuỳ chỉnh; chạy lại khi đã đúng thì giữ nguyên, không gọi API sửa", async () =>
+	test("role do admin tự gán: giữ nguyên tên và màu (không gọi API sửa), báo cáo \"giữ nguyên tên\" kèm gợi ý đổi thủ công; role ai cũng @mention được thì bỏ qua", async () =>
+	{
+		const world = createWorld([
+			{ id: ROLE_A, name: "Tân binh", position: 5 },
+			{ id: ROLE_B, name: "Trúc Cơ cũ", position: 6, mentionable: true },
+		]);
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-2", ROLE_B, ADMIN, { createdByBot: true });
+
+		const calls = await dispatch(harness, { kind: "button", id: "tierui:setup" });
+		assert.deepEqual(world.calls.filter(call => call.startsWith("edit:")), [], "không sửa role admin gán, không sửa role không an toàn");
+		assert.equal(world.roles.get(ROLE_A)?.name, "Tân binh");
+		assert.equal(world.created.length, 6);
+
+		const report = privateText(calls[2]);
+		assert.ok(report.startsWith("✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **6** · đổi tên **0** · giữ nguyên tên **1** · đã đúng **0** · bỏ qua **1**."), report);
+		assert.ok(report.includes(`• 🌱 **Luyện Khí**: giữ nguyên tên <@&${ROLE_A}> (role do admin tự gán)`), report);
+		assert.ok(report.includes(`• 🧱 **Trúc Cơ**: bỏ qua <@&${ROLE_B}>. Không thể dùng <@&${ROLE_B}> làm role danh hiệu vì ai cũng @mention được role này`), report);
+		assert.ok(report.includes("-# Bot chỉ đổi tên role do bot tạo. Muốn role do admin tự gán theo tên mới thì đổi tên thủ công"), report);
+		const details = audits(harness.context, "tier_role.setup")[0]?.details as { keptRoles: string[]; renamedRoles: unknown[] };
+		assert.deepEqual(details.keptRoles, [ROLE_A]);
+		assert.deepEqual(details.renamedRoles, []);
+	});
+
+	test("đồng bộ theo bộ đang dùng và tên tuỳ chỉnh; chạy lại khi đã đúng thì không gọi API sửa và không ghi audit", async () =>
 	{
 		const world = createWorld([{ id: ROLE_A, name: "🌱 Luyện Khí", position: 5, color: colorOf(TU_TIEN.tiers[0].color) }]);
 		const harness = createHarness(world);
-		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN, { createdByBot: true });
 		const { tierSets } = harness.context.deps;
 		tierSets.select(GUILD, "rank-game", ADMIN);
 		tierSets.rename(GUILD, [{ tierKey: "bac-1", name: "Sắt Vụn", emoji: "🔩" }], ADMIN);
@@ -927,20 +1224,30 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 		assert.equal(first.entries[0].status, "renamed");
 		assert.equal(world.roles.get(ROLE_A)?.name, "🔩 Sắt Vụn");
 		assert.equal(world.roles.get(ROLE_A)?.colors.primaryColor, colorOf(TIER_SETS["rank-game"].tiers[0].color));
-		assert.deepEqual(first.summary, { setKey: "rank-game", created: 7, renamed: 1, skipped: 0 });
+		assert.deepEqual(first.summary, {
+			setKey: "rank-game",
+			created: 7,
+			renamed: 1,
+			skipped: 0,
+			renamedRoles: [{ roleId: ROLE_A, oldName: "🌱 Luyện Khí" }],
+			keptRoles: [],
+			orphanedRoles: [],
+		});
+		assert.equal(first.setChangedMeanwhile, false);
+		assert.deepEqual(first.entries.map(entry => entry.tier.key), TIER_KEYS, "kết quả theo thứ tự bậc dù xử lý từ bậc cao xuống");
 
 		world.calls.length = 0;
 		const second = await syncTierSetRoles(world.guild, tierSets.current(GUILD), servicesOf(harness), ACTOR);
 		assert.ok(second.entries.every(entry => entry.status === "unchanged"));
 		assert.deepEqual(world.calls, []);
-		assert.equal(audits(harness.context, "tier_role.setup").length, 2);
+		assert.equal(audits(harness.context, "tier_role.setup").length, 1, "không có gì thay đổi thì không ghi audit");
 	});
 
-	test("role nằm dưới bot nhưng không dưới role cao nhất của người thao tác: bỏ qua; chủ server thì sửa được", async () =>
+	test("role do bot tạo nằm dưới bot nhưng không dưới role cao nhất của người thao tác: bỏ qua; chủ server thì sửa được", async () =>
 	{
 		const world = createWorld([{ id: ROLE_A, name: "Cũ", position: 45 }]);
 		const harness = createHarness(world);
-		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN, { createdByBot: true });
 		const set = harness.context.deps.tierSets.current(GUILD);
 
 		const result = await syncTierSetRoles(world.guild, set, servicesOf(harness), ACTOR);
@@ -957,13 +1264,50 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 	{
 		const world = createWorld([{ id: ROLE_A, name: "Backend", position: 5 }]);
 		const harness = createHarness(world);
-		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN, { createdByBot: true });
 		harness.context.deps.teams.add(GUILD, ROLE_A, ADMIN);
 
 		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
 		assert.equal(result.entries[0].status, "skipped");
 		assert.equal(result.entries[0].reason, `<@&${ROLE_A}> đang là role của một team, nên bot không đổi tên role này. Hãy gán cho bậc này một role riêng.`);
 		assert.equal(world.roles.get(ROLE_A)?.name, "Backend");
+	});
+
+	test("Discord báo quá số role tối đa (30005): dừng tạo role cho các bậc còn lại, vẫn đổi tên role do bot tạo; lý do riêng", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const world = createWorld([{ id: ROLE_A, name: "Cũ", position: 5 }]);
+		world.failCreate.set("🌀 Luyện Hư", 30005);
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN, { createdByBot: true });
+
+		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		assert.deepEqual(world.calls, ["create:⚡ Độ Kiếp", "create:☯️ Hợp Thể", "create:🌀 Luyện Hư", `edit:${ROLE_A}:🌱 Luyện Khí`]);
+		assert.deepEqual(result.entries.map(entry => [entry.status, entry.reason]), [
+			["renamed", null],
+			["skipped", SETUP_ROLE_LIMIT_PENDING],
+			["skipped", SETUP_ROLE_LIMIT_PENDING],
+			["skipped", SETUP_ROLE_LIMIT_PENDING],
+			["skipped", SETUP_ROLE_LIMIT_PENDING],
+			["skipped", SETUP_ROLE_LIMIT],
+			["created", null],
+			["created", null],
+		]);
+		assert.deepEqual(harness.tierRoles.list(GUILD).map(mapping => mapping.tierKey), ["bac-1", "bac-7", "bac-8"]);
+		assert.equal(result.summary.skipped, 5);
+	});
+
+	test("Discord báo thiếu quyền (50013) khi tạo role: lý do riêng; lỗi khác: lý do chung", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const world = createWorld();
+		world.failCreate.set("⚡ Độ Kiếp", 50013);
+		world.failCreate.set("☯️ Hợp Thể", 500);
+		const harness = createHarness(world);
+
+		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		assert.deepEqual(result.entries.slice(6).map(entry => [entry.status, entry.reason]), [["skipped", SETUP_API_FAILURE], ["skipped", SETUP_MISSING_PERMISSIONS]]);
+		assert.equal(result.summary.created, 6, "các bậc khác vẫn được tạo");
 	});
 
 	test("người thao tác hoặc bot thiếu Manage Roles: UserError, không gọi API, không ghi audit", async () =>
@@ -1026,12 +1370,104 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 
 		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
 		assert.deepEqual(result.entries[0], { tier: TU_TIEN.tiers[0], status: "skipped", roleId: ROLE_B, reason: SETUP_CHANGED_MEANWHILE });
-		assert.equal(world.calls[1], "delete:570000000000000001");
+		assert.deepEqual(world.calls.slice(-2), ["create:🌱 Luyện Khí", "delete:570000000000000008"]);
+		assert.equal(world.roles.has("570000000000000008"), false);
 		assert.equal(harness.tierRoles.list(GUILD)[0].roleId, ROLE_B);
 		assert.equal(result.summary.created, 7);
+		assert.deepEqual(result.summary.orphanedRoles, []);
 	});
 
-	test("/config tier setup-roles: kiểm tra quyền trước khi defer; defer riêng rồi trả báo cáo", async () =>
+	test("bậc vừa được bỏ gán trong lúc bot tạo lại role: lý do riêng (khác \"gán role khác\"); xoá role vừa tạo không được thì báo role mồ côi", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const world = createWorld();
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-2", ROLE_GONE, ADMIN, { createdByBot: true });
+		world.failDelete.add("🧱 Trúc Cơ");
+		world.onCreate = name =>
+		{
+			if (name === "🧱 Trúc Cơ") harness.tierRoles.clear(GUILD, "bac-2", ADMIN);
+		};
+
+		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		const entry = result.entries[1];
+		assert.equal(entry.status, "skipped");
+		assert.equal(entry.roleId, null);
+		assert.equal(entry.reason, SETUP_CLEARED_MEANWHILE);
+		assert.ok(entry.orphanedRoleId !== undefined && world.roles.has(entry.orphanedRoleId), "role vừa tạo còn trong server");
+		assert.deepEqual(result.summary.orphanedRoles, [entry.orphanedRoleId]);
+		assert.equal(harness.tierRoles.list(GUILD).some(mapping => mapping.tierKey === "bac-2"), false);
+
+		const details = audits(harness.context, "tier_role.setup")[0]?.details as { orphanedRoles: string[] };
+		assert.deepEqual(details.orphanedRoles, [entry.orphanedRoleId]);
+		const report = buildTierSetupReport(TU_TIEN, result);
+		assert.ok(report.includes(`⚠️ Bot vừa tạo nhưng không dùng được, cũng không xoá lại được: <@&${entry.orphanedRoleId}>`), report);
+	});
+
+	test("bậc được gán role khác ngay trong lúc bot đổi tên role cũ: vẫn tính là đã đổi tên nhưng ghi chú role không còn thuộc bậc", async () =>
+	{
+		const world = createWorld([{ id: ROLE_A, name: "Cũ", position: 5 }, { id: ROLE_B, position: 4 }]);
+		const harness = createHarness(world);
+		harness.tierRoles.set(GUILD, "bac-1", ROLE_A, ADMIN, { createdByBot: true });
+		world.onEdit = roleId =>
+		{
+			if (roleId !== ROLE_A) return;
+			harness.tierRoles.clear(GUILD, "bac-1", ADMIN);
+			harness.tierRoles.set(GUILD, "bac-1", ROLE_B, ADMIN);
+		};
+
+		const result = await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		assert.deepEqual(result.entries[0], {
+			tier: TU_TIEN.tiers[0],
+			status: "renamed",
+			roleId: ROLE_A,
+			reason: SETUP_REASSIGNED_AFTER_RENAME,
+			previousName: "Cũ",
+		});
+	});
+
+	test("bộ hoặc tên bậc đổi trong lúc bot đang chạy: kết quả báo cần bấm lại", async () =>
+	{
+		const world = createWorld();
+		const harness = createHarness(world);
+		const { tierSets } = harness.context.deps;
+		world.onCreate = name =>
+		{
+			if (name === "🌀 Luyện Hư") tierSets.rename(GUILD, [{ tierKey: "bac-1", name: "Phàm Nhân", emoji: null }], ADMIN);
+		};
+
+		const result = await syncTierSetRoles(world.guild, tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		assert.equal(result.setChangedMeanwhile, true);
+		assert.equal(world.roles.get(harness.tierRoles.list(GUILD)[0].roleId)?.name, "🌱 Luyện Khí", "role tạo theo tên lúc bắt đầu");
+		assert.ok(buildTierSetupReport(tierSets.current(GUILD), result).split("\n")[1].startsWith("⚠️ Bộ danh hiệu hoặc tên bậc vừa được đổi"));
+
+		world.onCreate = null;
+		const again = await syncTierSetRoles(world.guild, tierSets.current(GUILD), servicesOf(harness), ACTOR);
+		assert.equal(again.setChangedMeanwhile, false);
+	});
+
+	test("lỗi bất ngờ giữa chừng: vẫn ghi audit cho các bậc đã làm, rồi ném lỗi", async (t) =>
+	{
+		const world = createWorld();
+		const harness = createHarness(world);
+		const original = harness.tierRoles.list.bind(harness.tierRoles);
+		let listCalls = 0;
+		t.mock.method(harness.tierRoles, "list", (guildId: string) =>
+		{
+			listCalls++;
+			if (listCalls > 2) throw new Error("database is locked");
+			return original(guildId);
+		});
+
+		await assert.rejects(syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR), /database is locked/);
+		assert.deepEqual(world.calls, ["create:⚡ Độ Kiếp"]);
+		t.mock.restoreAll();
+		const details = audits(harness.context, "tier_role.setup").map(entry => entry.details as { created: number });
+		assert.deepEqual(details.map(entry => entry.created), [1]);
+		await syncTierSetRoles(world.guild, harness.context.deps.tierSets.current(GUILD), servicesOf(harness), ACTOR);
+	});
+
+	test("/config tier setup-roles: kiểm tra quyền trước khi defer; defer riêng rồi trả báo cáo; tạo từ bậc 8 xuống bậc 1", async () =>
 	{
 		const harness = createHarness();
 		const denied = await dispatch(harness, { kind: "chat", id: "setup-roles", caller: { manageRoles: false } });
@@ -1045,6 +1481,7 @@ describe("tạo/đồng bộ role theo bộ danh hiệu", () =>
 		assert.ok(String(calls[1].payload).startsWith("✨ Đồng bộ role theo bộ **Tu tiên**: tạo mới **8**"), String(calls[1].payload));
 		assert.equal(harness.tierRoles.list(GUILD).length, 8);
 		assert.ok(harness.tierRoles.list(GUILD).every(mapping => mapping.createdByBot));
+		assert.deepEqual(harness.world.calls, [...TU_TIEN.tiers].reverse().map(tier => `create:${tier.emoji} ${tier.name}`));
 	});
 
 	test("/config tier panel qua dispatcher: role đã gán mà không còn trong server thì không điền sẵn", async () =>

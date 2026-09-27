@@ -49,6 +49,7 @@ interface RoleSpec
 	id: string;
 	position: number;
 	managed?: boolean;
+	mentionable?: boolean;
 	permissions?: bigint[];
 	guildId?: string;
 	/** Các kênh của server (mặc định không có kênh nào). */
@@ -62,6 +63,7 @@ function fakeRole(spec: RoleSpec): Role
 		id: spec.id,
 		position: spec.position,
 		managed: spec.managed ?? false,
+		mentionable: spec.mentionable ?? false,
 		guild: { id: spec.guildId ?? GUILD, channels: { cache: channels } },
 		permissions: new PermissionsBitField(spec.permissions ?? []),
 	} as unknown as Role;
@@ -195,6 +197,9 @@ describe("tierRoleSafetyIssue", () =>
 			[PermissionFlagsBits.PinMessages, "Pin Messages"],
 			[PermissionFlagsBits.BypassSlowmode, "Bypass Slowmode"],
 			[PermissionFlagsBits.ViewGuildInsights, "View Server Insights"],
+			[PermissionFlagsBits.CreateGuildExpressions, "Create Expressions"],
+			[PermissionFlagsBits.CreateEvents, "Create Events"],
+			[PermissionFlagsBits.ViewCreatorMonetizationAnalytics, "View Creator Monetization Analytics"],
 		];
 		for (const [flag, name] of dangerous)
 		{
@@ -248,6 +253,18 @@ describe("tierRoleSafetyIssue", () =>
 			],
 		});
 		assert.equal(tierRoleSafetyIssue(role, bot), null);
+	});
+
+	test("chặn role ai cũng @mention được (role bậc thấp gần như ai cũng có), hướng dẫn tắt Allow anyone to @mention", () =>
+	{
+		const issue = tierRoleSafetyIssue(fakeRole({ id: ROLE_KIM_DAN, position: 3, mentionable: true }), bot);
+		assert.equal(
+			issue,
+			`Không thể dùng <@&${ROLE_KIM_DAN}> làm role danh hiệu vì ai cũng @mention được role này: role danh hiệu bậc thấp gần như `
+				+ "mọi thành viên đều có, nên bất kỳ ai cũng ping được cả server. Vào **Server Settings → Roles → chọn role**, tắt "
+				+ "**Allow anyone to @mention this role** rồi thử lại.",
+		);
+		assert.equal(tierRoleSafetyIssue(fakeRole({ id: ROLE_KIM_DAN, position: 3, mentionable: false }), bot), null);
 	});
 
 	test("chặn role không thấp hơn role cao nhất của bot, hướng dẫn kéo role của bot lên trên", () =>
@@ -383,6 +400,20 @@ describe("syncTierRoles", () =>
 		t.mock.method(console, "error", () => undefined);
 		const tierRoles = tierRolesFor(GUILD);
 		const guildRoles = [{ id: ROLE_LUYEN_KHI, position: 1 }, { id: ROLE_KIM_DAN, position: 3, permissions: [PermissionFlagsBits.ManageMessages] }];
+
+		const climbing = fakeMember({ roleIds: [], guildRoles });
+		assert.deepEqual(await syncTierRoles(climbing.member, KIM_DAN_LEVEL, tierRoles, REASON), { added: [], removed: [], skipped: [ROLE_KIM_DAN] });
+		assert.deepEqual(climbing.calls, []);
+
+		const reset = fakeMember({ roleIds: [ROLE_KIM_DAN], guildRoles });
+		assert.deepEqual(await syncTierRoles(reset.member, 0, tierRoles, REASON), { added: [ROLE_LUYEN_KHI], removed: [ROLE_KIM_DAN], skipped: [] });
+	});
+
+	test("role cảnh giới bị bật \"ai cũng @mention được\" sau khi gán: không tự gán nữa, nhưng vẫn gỡ được", async (t) =>
+	{
+		t.mock.method(console, "error", () => undefined);
+		const tierRoles = tierRolesFor(GUILD);
+		const guildRoles = [{ id: ROLE_LUYEN_KHI, position: 1 }, { id: ROLE_KIM_DAN, position: 3, mentionable: true }];
 
 		const climbing = fakeMember({ roleIds: [], guildRoles });
 		assert.deepEqual(await syncTierRoles(climbing.member, KIM_DAN_LEVEL, tierRoles, REASON), { added: [], removed: [], skipped: [ROLE_KIM_DAN] });
