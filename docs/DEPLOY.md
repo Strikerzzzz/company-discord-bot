@@ -38,11 +38,11 @@ Không cần C++ build tools: better-sqlite3 13 đã kèm sẵn binary, và `.np
      | Send Messages in Threads | 274877906944 | Thông báo lên level trong thread |
      | Embed Links | 16384 | Embed của vote, contribution, lệnh quản trị |
      | Attach Files | 32768 | Ảnh thẻ `/rank`, `/leaderboard` và Bảng vàng (DEC-030) |
-     | Manage Roles | 268435456 | Tự gán role theo cảnh giới (DEC-031) |
+     | Manage Roles | 268435456 | Tự gán role danh hiệu theo level; tạo và đổi tên role danh hiệu (DEC-031, DEC-033) |
 
    - Tổng permissions: 1024 + 2048 + 274877906944 + 16384 + 32768 + 268435456 = **275146394624**. Link mời có dạng:
      `https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=275146394624`
-   - Không dùng role cảnh giới thì bỏ Manage Roles: 275146394624 − 268435456 = **274877959168**.
+   - Không dùng role danh hiệu thì bỏ Manage Roles: 275146394624 − 268435456 = **274877959168** (danh hiệu vẫn hiện trên thông báo, `/rank` và bảng xếp hạng).
    - Không cấp Administrator hay quyền quản lý nào khác. Manage Roles chỉ cho bot gán các role **nằm dưới** role của bot, và bot tự từ chối role có quyền quản trị/kiểm duyệt (mục 7.1).
    - Mở URL vừa tạo để mời bot vào server.
    - Bot đã được mời từ trước (bản chưa có Attach Files, Manage Roles): mở lại link mời mới để cập nhật quyền, hoặc thêm hai quyền này cho role của bot trong **Server Settings → Roles**.
@@ -158,29 +158,78 @@ Người có quyền **Manage Server** chạy các lệnh sau (mọi thay đổi
 
    Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
 5. `/config poll` để đặt XP mặc định khi vote, role được tạo vote và `gioi-han-xp-ngay`: XP tối đa một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028).
-6. Role cảnh giới (tuỳ chọn, cần quyền Manage Roles, DEC-031), xem mục 7.1.
+6. Bộ danh hiệu và role danh hiệu (tuỳ chọn; role cần quyền Manage Roles, DEC-031, DEC-033): `/config tier panel`, xem mục 7.1.
 7. Bảng vàng (tuỳ chọn, DEC-030), xem mục 7.2.
 8. Kiểm tra lại bằng `/config view`.
 
 Nên tắt quyền **Use Application Commands** của thành viên ở các kênh chỉ đọc (ví dụ #thong-bao). Bot cũng đã tự chặn việc đăng contribution hay vote vào kênh mà người đó không có quyền gửi tin.
 
-### 7.1. Role cảnh giới
+### 7.1. Danh hiệu và role danh hiệu
 
-Bot tự gán cho mỗi thành viên đúng một role theo cảnh giới tu luyện (mốc level: Luyện Khí 0, Trúc Cơ 3, Kim Đan 6, Nguyên Anh 10, Hóa Thần 15, Luyện Hư 20, Hợp Thể 30, Độ Kiếp 40).
+Mỗi thành viên có một **bậc danh hiệu** theo level: 8 bậc, mốc level 0, 3, 6, 10, 15, 20, 30, 40. Danh hiệu chỉ để hiển thị (thông báo lên level, `/rank`, bảng xếp hạng, Bảng vàng), không đổi công thức XP hay level. Mỗi server chọn một trong 5 bộ có sẵn (DEC-033):
 
-Tính năng này tuỳ chọn: chưa gán role cho cảnh giới nào thì bot không đụng tới role của ai (cảnh giới vẫn hiện trên `/rank` và bảng xếp hạng). Role cảnh giới là **role thường do admin tự tạo** trong server, không phải role của bot. Role của bot là role mang tên bot mà Discord tự tạo khi mời bot vào server.
+| Bộ | Bậc 1 → bậc 8 | Tên gọi bậc |
+| --- | --- | --- |
+| Tu tiên (mặc định) | Luyện Khí, Trúc Cơ, Kim Đan, Nguyên Anh, Hóa Thần, Luyện Hư, Hợp Thể, Độ Kiếp | Cảnh giới |
+| Rank game | Đồng, Bạc, Vàng, Bạch Kim, Kim Cương, Tinh Anh, Cao Thủ, Thách Đấu | Hạng |
+| Kiếm hiệp | Tân Thủ, Kiếm Khách, Hiệp Sĩ, Tráng Sĩ, Đại Hiệp, Tông Sư, Chưởng Môn, Võ Lâm Minh Chủ | Danh hiệu |
+| Cây xanh | Hạt Giống, Nảy Mầm, Cây Non, Ra Hoa, Kết Trái, Cây Lớn, Cổ Thụ, Đại Thụ Ngàn Năm | Giai đoạn |
+| Vũ trụ | Thiên Thạch, Tiểu Hành Tinh, Hành Tinh, Ngôi Sao, Sao Khổng Lồ, Tinh Vân, Thiên Hà, Vũ Trụ | Thiên thể |
 
-1. Trong **Server Settings → Roles**, **tạo role mới dành riêng** cho các cảnh giới muốn dùng (không cần đủ 8). Không dùng lại role đang có ý nghĩa khác (role nhân viên, role mở kênh, role team, role admin bot, role tạo vote): bot **gỡ** role cảnh giới khỏi mọi người không ở đúng cảnh giới khi họ nhắn tin, và **gán** cho mọi người đủ level. Bot từ chối role đang là role admin bot, role tạo vote hoặc role team; ngược lại, role cảnh giới cũng không đặt được làm các role đó.
-2. Các role cảnh giới **không được có** quyền quản trị/kiểm duyệt: Administrator, Manage Server, Manage Roles, Manage Channels, Manage Webhooks, Manage Expressions, Manage Events, Manage Threads, Manage Messages, Manage Nicknames, Kick/Ban/Timeout Members, Mention Everyone, View Audit Log, Move/Mute/Deafen Members, Pin Messages, Bypass Slowmode, View Server Insights. Điều này áp dụng cả ở **phân quyền riêng của từng kênh** (permission overwrite): role được cho phép một trong các quyền trên ở bất kỳ kênh hay category nào cũng bị từ chối. Bot kiểm tra lại mỗi lần định gán role, nên cấp thêm quyền nguy hiểm sau này thì bot ngừng gán role đó.
-3. Đặt role của bot (role mang tên bot) **ngay trên** các role cảnh giới (kéo trong Server Settings → Roles). Discord chỉ cho bot gán role nằm dưới role cao nhất của bot; không cần và không nên đặt role của bot cao hơn mức đó (ví dụ trên role quản lý).
-4. Người gán role cảnh giới phải tự gán được role đó theo luật của Discord: có quyền **Manage Roles** và role cảnh giới nằm dưới role cao nhất của mình (chủ server luôn được). Người chỉ có role admin bot mà không có Manage Roles thì không gán được.
-5. Gán role cho từng cảnh giới: `/config tier set-role canh-gioi:<cảnh giới> role:<role>`. Bot kiểm tra lại các điều kiện trên (theo thông tin mới nhất của bot) và báo nếu còn thiếu quyền Manage Roles.
-6. Kiểm tra bằng `/config tier list`. Bỏ gán bằng `/config tier clear-role`.
+Mỗi bộ có giọng văn riêng cho thông báo lên level, thông báo lên bậc và chữ trên ảnh thẻ. Đổi bộ có hiệu lực ngay với thông báo, `/rank` và `/leaderboard`; Bảng vàng đổi chậm nhất ở lượt cập nhật định kỳ kế tiếp (khoảng 10 phút).
+
+#### Bảng điều khiển `/config tier panel`
+
+Cách dễ nhất là chạy `/config tier panel`. Bảng chỉ admin dùng được và bot trả lời riêng cho người gọi. Bảng gồm:
+
+- menu **chọn bộ danh hiệu**;
+- 8 ô **chọn role**, mỗi bậc một ô, điền sẵn role đang gán;
+- nút **đổi tên bậc**: mở form để sửa tên và emoji của từng bậc trong bộ đang dùng;
+- nút **tạo/đồng bộ role**, xem "Cách 1" bên dưới;
+- nút **khôi phục tên mặc định** của bộ đang dùng.
+
+Mọi thao tác trên bảng được kiểm tra quyền giống lệnh gõ tay và ghi vào audit log. Các lệnh gõ tay tương ứng:
+
+| Lệnh | Việc |
+| --- | --- |
+| `/config tier style` | Chọn bộ danh hiệu |
+| `/config tier rename` | Đổi tên và emoji một bậc của bộ đang dùng |
+| `/config tier reset-names` | Khôi phục tên mặc định của bộ đang dùng |
+| `/config tier setup-roles` | Tạo role cho bậc chưa có role; đổi tên và màu role đã gán theo bộ đang dùng |
+| `/config tier set-role` · `clear-role` | Gán hoặc bỏ role của một bậc |
+| `/config tier list` | Xem bộ đang dùng và role của từng bậc |
+
+Quy tắc đổi tên bậc:
+
+- Tên dài 1 đến 32 ký tự, không chứa các ký tự `<` `>` `@` `*` `_` `~` `` ` `` `|` `\` `[` `]` hay ký tự điều khiển (để tên không làm hỏng định dạng tin nhắn hoặc thành mention).
+- Emoji là đúng một emoji Unicode, đặt ở đầu tên, ví dụ `🟡 Kim Đan`. Emoji riêng của server không dùng được. Bỏ trống thì dùng tên và emoji mặc định.
+- Tên tuỳ chỉnh lưu theo từng bộ: đổi sang bộ khác rồi quay lại thì tên cũ vẫn còn. Màu và mốc level luôn theo bộ, không đổi được.
+
+#### Role danh hiệu
+
+Tính năng này tuỳ chọn. Chưa gán role cho bậc nào thì bot không đụng tới role của ai. Khi đã gán, bot giữ cho mỗi thành viên **đúng một** role danh hiệu, là role của bậc hiện tại. Role gán theo **vị trí bậc** (bậc 1 đến bậc 8, dùng chung cho mọi bộ), nên đổi bộ không làm mất role đã gán.
+
+Role của bot là role mang tên bot mà Discord tự tạo khi mời bot vào server. Role danh hiệu là một role khác, dành riêng cho việc này. Có hai cách để có role danh hiệu:
+
+**Cách 1: bot tự tạo (khuyên dùng).** Bấm nút **tạo/đồng bộ role** trên bảng điều khiển, hoặc chạy `/config tier setup-roles`.
+
+- Bậc chưa có role: bot tạo role mới mang tên bậc, màu theo bộ. Role do bot tạo **không có quyền gì**; đừng cấp thêm quyền cho các role này về sau.
+- Bậc đã có role: bot đổi tên và màu role đó theo bộ đang dùng. Sau khi đổi bộ hoặc đổi tên bậc, bấm lại nút này để tên role khớp với danh hiệu.
+- Bot bỏ qua role không an toàn hoặc không thấp hơn role của bot, rồi báo số role đã tạo, đã đổi tên và đã bỏ qua.
+
+**Cách 2: admin tự tạo role** trong **Server Settings → Roles**, rồi chọn trong ô của bậc tương ứng trên bảng điều khiển (hoặc `/config tier set-role`). Không cần tạo đủ 8 role. Không dùng lại role đang có ý nghĩa khác (role nhân viên, role mở kênh, role team, role admin bot, role tạo vote): bot **gỡ** role danh hiệu khỏi mọi người không ở đúng bậc khi họ nhắn tin, và **gán** cho mọi người đủ level. Bot từ chối role đang là role admin bot, role tạo vote hoặc role team; ngược lại, role danh hiệu cũng không đặt được làm các role đó.
+
+Điều kiện chung cho cả hai cách:
+
+1. **Role của bot vẫn phải nằm trên mọi role danh hiệu** (kéo trong Server Settings → Roles). Discord chỉ cho bot gán, đổi tên role nằm dưới role cao nhất của bot. Không cần và không nên đặt role của bot cao hơn mức đó (ví dụ trên role quản lý).
+2. Role danh hiệu **không được có** quyền quản trị/kiểm duyệt: Administrator, Manage Server, Manage Roles, Manage Channels, Manage Webhooks, Manage Expressions, Manage Events, Manage Threads, Manage Messages, Manage Nicknames, Kick/Ban/Timeout Members, Mention Everyone, View Audit Log, Move/Mute/Deafen Members, Pin Messages, Bypass Slowmode, View Server Insights. Điều này áp dụng cả ở **phân quyền riêng của từng kênh** (permission overwrite): role được cho phép một trong các quyền trên ở bất kỳ kênh hay category nào cũng bị từ chối. Bot kiểm tra lại mỗi lần định gán hoặc đổi tên role, nên cấp thêm quyền nguy hiểm sau này thì bot ngừng dùng role đó.
+3. Người gán role, tạo hoặc đồng bộ role phải tự làm được việc đó theo luật của Discord: có quyền **Manage Roles** và role danh hiệu nằm dưới role cao nhất của mình (chủ server luôn được). Người chỉ có role admin bot mà không có Manage Roles thì không gán, tạo hay đồng bộ role được.
+4. Kiểm tra bằng `/config tier list` hoặc `/config view`.
 
 Lưu ý:
 - Bot không đọc danh sách thành viên (không dùng Server Members Intent), nên role chỉ được cập nhật khi thành viên **nhắn tin được XP**, hoặc khi admin dùng `/admin xp give/remove/reset` cho người đó. Sau `/admin xp reset-all`, role của từng người tự cập nhật khi họ nhắn tin.
 - Thêm hoặc bỏ role cho một người mà Discord báo lỗi (ví dụ thiếu quyền) thì bot ghi cảnh báo vào log và **chờ 10 phút** mới thử lại với đúng người và role đó. Sửa quyền xong mà role chưa đổi ngay là bình thường.
-- Bỏ gán hoặc đổi role của một cảnh giới thì bot không tự gỡ role cũ khỏi những người đang có; gỡ thủ công hoặc xoá role cũ nếu cần.
+- Bỏ gán hoặc đổi role của một bậc thì bot không tự gỡ role cũ khỏi những người đang có và không xoá role đó khỏi server; gỡ thủ công hoặc xoá role cũ nếu cần.
 
 ### 7.2. Bảng vàng
 
@@ -206,8 +255,11 @@ Bảng vàng là một message bảng xếp hạng dạng ảnh bot giữ trong 
 | `/config board` báo thiếu quyền | "Bot thiếu quyền": cấp cho bot View Channel, Send Messages, Attach Files ở kênh Bảng vàng. "Bạn không có quyền": người chạy lệnh phải xem được và gửi được tin ở kênh đó (mục 7.2) |
 | Bảng vàng không còn message hoặc không cập nhật | Message bị xoá tay hoặc bot mất quyền ở kênh; cấp lại quyền rồi chạy lại `/config board kenh:<kênh>` |
 | Ảnh có chữ cái thay cho avatar | Server không tải được avatar từ `cdn.discordapp.com` (firewall, mạng chậm); ảnh vẫn dùng được |
-| Role cảnh giới không đổi | Bot thiếu **Manage Roles**, hoặc role của bot nằm dưới role cảnh giới (kéo role của bot lên ngay trên), hoặc role cảnh giới đã bị cấp quyền quản trị/kiểm duyệt ở server hay ở phân quyền riêng của một kênh (bot từ chối gán). Role chỉ cập nhật khi thành viên nhắn tin được XP; sau một lần lỗi, bot chờ 10 phút mới thử lại với người đó. Log của bot có cảnh báo `role cảnh giới` |
-| `/config tier set-role` từ chối role | Đọc lý do trong phản hồi: @everyone, role do integration quản lý, role đang là role admin bot/role tạo vote/role team, người gán thiếu Manage Roles hoặc role không thấp hơn role cao nhất của người gán, role có quyền nguy hiểm (kể cả ở phân quyền riêng của kênh), hoặc role không thấp hơn role của bot (mục 7.1) |
-| `/config admin-role`, `/config poll role-tao-vote` hoặc `/config team add` báo role đang là role cảnh giới | Role cảnh giới do bot tự thêm/gỡ theo level, không dùng được vào việc khác. Chọn role khác, hoặc bỏ gán bằng `/config tier clear-role` trước |
+| Role danh hiệu không đổi | Bot thiếu **Manage Roles**, hoặc role của bot nằm dưới role danh hiệu (kéo role của bot lên ngay trên), hoặc role danh hiệu đã bị cấp quyền quản trị/kiểm duyệt ở server hay ở phân quyền riêng của một kênh (bot từ chối gán). Role chỉ cập nhật khi thành viên nhắn tin được XP; sau một lần lỗi, bot chờ 10 phút mới thử lại với người đó. Log của bot có cảnh báo kèm ID role |
+| Nút tạo/đồng bộ role (hoặc `/config tier setup-roles`) báo bỏ qua một số bậc | Role đã gán của bậc đó nằm trên role của bot, có quyền quản trị/kiểm duyệt, hoặc Discord báo lỗi (ví dụ server đã đủ số role tối đa). Kéo role của bot lên trên, gỡ quyền nguy hiểm hoặc bỏ gán role đó rồi bấm lại (mục 7.1) |
+| Tên role không khớp danh hiệu sau khi đổi bộ hoặc đổi tên bậc | Bấm lại nút **tạo/đồng bộ role** trên `/config tier panel` để bot đổi tên và màu role theo bộ đang dùng |
+| Đổi tên bậc bị từ chối | Tên quá 32 ký tự, chứa ký tự định dạng hoặc mention (danh sách ở mục 7.1), chứa emoji ở giữa tên, hoặc dùng emoji riêng của server |
+| `/config tier set-role` hoặc ô chọn role trên bảng điều khiển từ chối role | Đọc lý do trong phản hồi: @everyone, role do integration quản lý, role đang là role admin bot/role tạo vote/role team, người gán thiếu Manage Roles hoặc role không thấp hơn role cao nhất của người gán, role có quyền nguy hiểm (kể cả ở phân quyền riêng của kênh), hoặc role không thấp hơn role của bot (mục 7.1) |
+| `/config admin-role`, `/config poll role-tao-vote` hoặc `/config team add` báo role đang là role danh hiệu | Role danh hiệu do bot tự thêm/gỡ theo level, không dùng được vào việc khác. Chọn role khác, hoặc bỏ gán bằng `/config tier panel` hay `/config tier clear-role` trước |
 | Người vote báo không được cộng XP | Đã chạm giới hạn XP từ vote trong ngày (`/config poll gioi-han-xp-ngay`); bot có ghi rõ trong phản hồi riêng |
 | Bot không khởi động sau khi quay về bản cũ | Database mới hơn code; dùng lại bản code mới |

@@ -18,8 +18,8 @@ import { LeaderboardCardData, RankCardData, RenderedCard } from "../src/discord/
 import { leaderboardEmbed, rankEmbed, RankView } from "../src/discord/views/activity";
 import MessageCreate from "../src/events/messageCreate";
 import { GuildMember } from "discord.js";
-import { breakthroughText, levelUpText } from "../src/discord/views/progression";
-import { tierByKey } from "../src/modules/activity/tiers";
+import { levelUpText, promotionText } from "../src/discord/views/progression";
+import { applyTierOverrides, TIER_SETS, tierByKey, TierSet } from "../src/modules/activity/tiers";
 import { TierRoleServiceApi, TierRoleSyncPlan } from "../src/modules/gamification/types";
 import { cooldownMessage, RenderGate } from "../src/discord/renderGate";
 import LeaderboardCmd from "../src/interactions/commands/leaderboard";
@@ -28,6 +28,7 @@ import { levelInfo } from "../src/modules/activity/levels";
 import { DEFAULT_TIER_SET, nextTier, tierForLevel } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageInput, MessageXpResult } from "../src/modules/activity/types";
 import { ContributionProfile, ContributionServiceApi } from "../src/modules/contribution/types";
+import { TierSetServiceApi } from "../src/modules/gamification/TierSetService";
 import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
 import { GamificationServiceApi } from "../src/modules/gamification/types";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
@@ -54,6 +55,8 @@ interface FakeServiceOptions
 	contribution?: ContributionProfile;
 	configuredTeams?: string[];
 	board?: LeaderboardPage;
+	/** Bộ danh hiệu guild đang dùng (mặc định Tu tiên). */
+	tierSet?: TierSet;
 }
 
 interface BoardCall
@@ -71,6 +74,8 @@ interface FakeServices
 	messages: MessageInput[];
 	profileCalls: string[];
 	boardCalls: BoardCall[];
+	/** Guild đã được hỏi bộ danh hiệu (tierSets.current). */
+	tierSetCalls: string[];
 }
 
 function activityProfile(userId: string, totalXp: number, rank: number | null, totalRanked: number): ActivityProfile
@@ -90,6 +95,7 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 	const messages: MessageInput[] = [];
 	const profileCalls: string[] = [];
 	const boardCalls: BoardCall[] = [];
+	const tierSetCalls: string[] = [];
 
 	const activity: Pick<ActivityServiceApi, "handleMessage" | "getProfile"> = {
 		handleMessage: input =>
@@ -128,8 +134,16 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 		userPosition: () => { throw new Error("không dùng trong test này"); },
 	};
 
-	const services = { activity, contributions, teams, guildConfig, leaderboard } as unknown as AppServices;
-	return { services, messages, profileCalls, boardCalls };
+	const tierSets: Pick<TierSetServiceApi, "current"> = {
+		current: guildId =>
+		{
+			tierSetCalls.push(guildId);
+			return options.tierSet ?? DEFAULT_TIER_SET;
+		},
+	};
+
+	const services = { activity, contributions, teams, guildConfig, leaderboard, tierSets } as unknown as AppServices;
+	return { services, messages, profileCalls, boardCalls, tierSetCalls };
 }
 
 /** Client giả: chỉ phục vụ GUILD; `user` là tài khoản bot (dùng khi kiểm tra quyền gửi tin của bot). */
@@ -300,8 +314,8 @@ function cardClient(services: AppServices, avatarUrls: (string | null)[] = [], g
 	} as unknown as DiscordClient;
 }
 
-/** Thêm hồ sơ gamification giả (level theo `totalXp`, chưa có huy hiệu) cho /rank. */
-function withGamification(services: AppServices, totalXp = 0): AppServices
+/** Thêm hồ sơ gamification giả (level theo `totalXp`, chưa có huy hiệu, bậc theo `tierSet`) cho /rank. */
+function withGamification(services: AppServices, totalXp = 0, tierSet: TierSet = DEFAULT_TIER_SET): AppServices
 {
 	const gamification: GamificationServiceApi = {
 		profile: (_guildId, userId) =>
@@ -310,9 +324,9 @@ function withGamification(services: AppServices, totalXp = 0): AppServices
 			return {
 				userId,
 				level,
-				tierSet: DEFAULT_TIER_SET,
-				tier: tierForLevel(level.level),
-				nextTier: nextTier(level.level),
+				tierSet,
+				tier: tierForLevel(level.level, tierSet),
+				nextTier: nextTier(level.level, tierSet),
 				streak: { current: 0, best: 0, activeToday: false, lastActiveDay: null },
 				stats: { messages: 0, bestStreak: 0, recognitionsReceived: 0, recognitionsGiven: 0, pollsJoined: 0, contributions: 0 },
 				achievements: ACHIEVEMENTS.map(achievement => ({ achievement, unlocked: false, current: 0 })),
@@ -561,21 +575,52 @@ describe("event messageCreate", () =>
 		assert.equal(fake.messages[0].hasAttachments, false);
 	});
 
-	test("lên level thì thông báo phong cách tu tiên và chỉ ping đúng người đó; kiểm tra quyền của chính bot", async () =>
+	test("lên level thì thông báo theo bộ mặc định (Tu tiên) và chỉ ping đúng người đó; kiểm tra quyền của chính bot", async () =>
 	{
 		const fake = messageServices({ xpResult: PLAIN_LEVEL_UP });
 		const { message, sent, permissionChecks } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: levelUpText(USER_A, 4), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: levelUpText(DEFAULT_TIER_SET, USER_A, 4), allowedMentions: { users: [USER_A] } }]);
 		assert.deepEqual(permissionChecks, [{ id: BOT_ID }]);
+		assert.deepEqual(fake.tierSetCalls, [GUILD], "hỏi bộ danh hiệu của đúng guild, một lần");
 	});
 
-	test("lên level vượt mốc cảnh giới thì gửi thông báo đột phá thay cho thông báo lên level", async () =>
+	test("lên level vượt mốc bậc thì gửi thông báo lên bậc thay cho thông báo lên level", async () =>
 	{
 		const fake = messageServices({ xpResult: LEVEL_UP });
 		const { message, sent } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: breakthroughText(USER_A, tierByKey("bac-2"), 3), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: promotionText(DEFAULT_TIER_SET, USER_A, tierByKey("bac-2"), 3), allowedMentions: { users: [USER_A] } }]);
+	});
+
+	test("bộ danh hiệu của guild quyết định câu chữ: Rank game, có tên bậc tuỳ chỉnh", async () =>
+	{
+		const rankGame = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-2", name: "Bạc Ròng", emoji: "🥈" }]);
+
+		const plain = messageServices({ xpResult: PLAIN_LEVEL_UP, tierSet: rankGame });
+		const first = fakeMessage();
+		await new MessageCreate(fakeClient(plain.services)).execute(first.message);
+		assert.deepEqual(first.sent, [{ content: levelUpText(rankGame, USER_A, 4), allowedMentions: { users: [USER_A] } }]);
+		assert.equal(levelUpText(rankGame, USER_A, 4), `📈 <@${USER_A}> vừa lên **Level 4**!`);
+
+		const promoted = messageServices({ xpResult: LEVEL_UP, tierSet: rankGame });
+		const second = fakeMessage();
+		await new MessageCreate(fakeClient(promoted.services)).execute(second.message);
+		assert.deepEqual(second.sent, [{
+			content: `🏆 Thăng hạng! <@${USER_A}> đã leo lên hạng Bạc! 🥈 Hạng **Bạc Ròng** · Level 3`,
+			allowedMentions: { users: [USER_A] },
+		}]);
+	});
+
+	test("không lên level, hoặc tắt thông báo, thì không cần hỏi bộ danh hiệu", async () =>
+	{
+		const quiet = messageServices({ xpResult: NO_LEVEL_UP });
+		await new MessageCreate(fakeClient(quiet.services)).execute(fakeMessage().message);
+		assert.deepEqual(quiet.tierSetCalls, []);
+
+		const muted = messageServices({ xpResult: LEVEL_UP, levelUpAnnouncements: false });
+		await new MessageCreate(fakeClient(muted.services)).execute(fakeMessage().message);
+		assert.deepEqual(muted.tierSetCalls, []);
 	});
 
 	test("bot không có quyền gửi tin ở channel: bỏ qua thông báo, không gây lỗi", async () =>
@@ -754,8 +799,22 @@ describe("/rank", () =>
 		assert.deepEqual(avatarUrls, [AVATAR]);
 
 		assert.equal(onlyFile(calls).name, "rank.png");
-		assert.equal(calls.edits[0].content, `🟡 **Kim Đan** · Level 6\n${NO_BADGE_TEXT}\n🎯 Sắp đạt: 💬 Khai Khẩu (0/100)`);
+		assert.equal(calls.edits[0].content, `🟡 Cảnh giới **Kim Đan** · Level 6\n${NO_BADGE_TEXT}\n🎯 Sắp đạt: 💬 Khai Khẩu (0/100)`);
 		assert.equal(calls.edits[0].embeds, undefined);
+	});
+
+	test("guild dùng bộ khác: ảnh và phần chữ theo bộ đó (tên gọi bậc, tên bậc, emoji)", async () =>
+	{
+		const cayXanh = TIER_SETS["cay-xanh"];
+		const fake = createFakeServices({ activity: activityProfile(USER_A, 1915, 1, 3) });
+		const { command, cards } = rankCommand(withGamification(fake.services, 1915, cayXanh));
+		const { interaction, calls } = fakeInteraction();
+		await command.execute(interaction);
+
+		assert.equal(cards[0].tierSet.key, "cay-xanh");
+		assert.equal(cards[0].tier.name, "Cây Non");
+		assert.equal(cards[0].nextTier?.name, "Ra Hoa");
+		assert.ok(String(calls.edits[0].content).startsWith("🌿 Giai đoạn **Cây Non** · Level 6\n"), String(calls.edits[0].content));
 	});
 
 	test("người không được gửi tin ở kênh, hoặc bot thiếu Attach Files, chỉ nhận kết quả riêng", async () =>
@@ -807,7 +866,7 @@ describe("/rank", () =>
 		assert.equal(embed.author?.name, "Anh A");
 		assert.match(fieldValue(embed, "⚡ Activity XP"), /\*\*Level 6\*\*/);
 		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_BACKEND}>`);
-		assert.match(calls.edits[0].content ?? "", /^🟡 \*\*Kim Đan\*\* · Level 6/);
+		assert.match(calls.edits[0].content ?? "", /^🟡 Cảnh giới \*\*Kim Đan\*\* · Level 6/);
 		assert.equal(calls.edits[0].files, undefined);
 		assert.equal(logged.mock.callCount(), 1);
 		assert.match(String(logged.mock.calls[0].arguments[0]), /\[ERROR\]/);
@@ -902,6 +961,21 @@ describe("/leaderboard", () =>
 		await command.execute(interaction);
 		assert.deepEqual(calls.deferred, [{ flags: MessageFlags.Ephemeral }]);
 		assert.equal(onlyFile(calls).name, "leaderboard.png");
+	});
+
+	test("bậc trên các dòng theo bộ danh hiệu của guild (tên tuỳ chỉnh), hỏi bộ đúng guild", async () =>
+	{
+		const vuTru = applyTierOverrides(TIER_SETS["vu-tru"], [{ tierKey: "bac-3", name: "Trái Đất", emoji: null }]);
+		const fake = createFakeServices({
+			board: { entries: [{ rank: 1, id: USER_A, value: 1915 }], page: 1, totalPages: 1, totalEntries: 1, period: "all", since: null },
+			tierSet: vuTru,
+		});
+		const { command, cards } = leaderboardCommand(fake.services);
+		await command.execute(fakeInteraction().interaction);
+
+		assert.deepEqual(fake.tierSetCalls, [GUILD]);
+		assert.equal(cards[0].rows[0].tier?.setKey, "vu-tru");
+		assert.equal(cards[0].rows[0].tier?.name, "Trái Đất");
 	});
 
 	test("bảng team Contribution tuần này, trang được chọn", async () =>

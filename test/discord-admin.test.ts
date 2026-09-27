@@ -26,12 +26,14 @@ import {
 	formatXpEvent,
 	inlineText,
 	signed,
+	TIER_PANEL_HINT,
+	tierRoleSyncLine,
 } from "../src/discord/views/admin";
 import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
 import ConfigCmd from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
-import { DEFAULT_TIER_SET } from "../src/modules/activity/tiers";
+import { applyTierOverrides, DEFAULT_TIER_SET, TIER_SETS } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageXpResult, XpAdjustInput, XpEventView } from "../src/modules/activity/types";
 import { AuditAction, AuditEntry } from "../src/modules/audit/AuditService";
 import {
@@ -661,12 +663,37 @@ describe("views quản trị", () =>
 		const fields = Object.fromEntries((embed.fields ?? []).map(field => [field.name, field.value]));
 		assert.equal(fields["Level"], String(levelInfo(1234).level));
 		assert.equal(fields["Tổng XP"], "1.234");
-		assert.equal(fields["Hạng"], "#3 / 1.500");
+		assert.equal(fields["Xếp hạng"], "#3 / 1.500");
 		assert.equal(fields["Cảnh giới"], "🧱 Trúc Cơ");
 
 		const empty = buildXpDetailEmbed({ ...profile, rank: null, level: levelInfo(0) }, [], DEFAULT_TIER_SET).toJSON();
 		assert.ok(empty.description?.includes("Chưa có biến động nào."));
 		assert.ok(embedText(empty).includes("Chưa xếp hạng"));
+	});
+
+	test("embed chi tiết XP theo bộ danh hiệu: tên gọi bậc của bộ, tên tuỳ chỉnh; không trùng tên field", () =>
+	{
+		const profile: ActivityProfile = { userId: USER_A, level: levelInfo(1234), rank: 3, totalRanked: 1500 };
+		const rankGame = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-2", name: "Bạc Ròng", emoji: "🥈" }]);
+		const embed = buildXpDetailEmbed(profile, [], rankGame).toJSON();
+		const fieldNames = (embed.fields ?? []).map(field => field.name);
+		assert.equal(new Set(fieldNames).size, fieldNames.length, `tên field bị trùng: ${fieldNames.join(", ")}`);
+		const fields = Object.fromEntries((embed.fields ?? []).map(field => [field.name, field.value]));
+		assert.equal(fields["Hạng"], "🥈 Bạc Ròng");
+		assert.equal(fields["Xếp hạng"], "#3 / 1.500");
+		for (const set of Object.values(TIER_SETS))
+		{
+			const json = buildXpDetailEmbed(profile, [], set).toJSON();
+			assert.ok(json.fields?.some(field => field.name === set.texts.tierLabel && field.value === `${set.tiers[1].emoji} ${set.tiers[1].name}`), set.key);
+		}
+	});
+
+	test("dòng đồng bộ role danh hiệu: từ ngữ trung tính, không có thay đổi thì null", () =>
+	{
+		assert.equal(tierRoleSyncLine({ added: [], removed: [], skipped: [] }), null);
+		const line = tierRoleSyncLine({ added: [ROLE_FRONTEND], removed: [ROLE_BACKEND], skipped: [] });
+		assert.equal(line, `🏅 Role danh hiệu: đã thêm <@&${ROLE_FRONTEND}> · đã bỏ <@&${ROLE_BACKEND}>.`);
+		assert.ok(!String(line).includes("cảnh giới"));
 	});
 
 	test("embed thống kê: số định dạng vi-VN, top channel dạng <#id>", () =>
@@ -751,6 +778,7 @@ describe("views quản trị", () =>
 			"Danh hiệu: bộ Tu tiên · role đã gán 2/8",
 			`🌱 Luyện Khí (Lv 0+): <@&${ROLE_LUYEN_KHI}>`,
 			`🧱 Trúc Cơ (Lv 3+): <@&${ROLE_TRUC_CO}>`,
+			TIER_PANEL_HINT,
 		])
 		{
 			assert.ok(text.includes(expected), `thiếu "${expected}"`);
@@ -761,7 +789,23 @@ describe("views quản trị", () =>
 		assert.ok(empty.includes("Mọi channel dùng cấu hình chung"));
 		assert.ok(empty.includes("Giới hạn XP từ vote mỗi ngày: **không giới hạn**"));
 		assert.ok(empty.includes("Đang tắt. Dùng `/config board` để bật."));
-		assert.ok(empty.includes("Chưa gán role nào. Dùng `/config tier set-role` để gán."));
+		assert.ok(empty.includes(`Chưa gán role nào. ${TIER_PANEL_HINT}`));
+		assert.ok(TIER_PANEL_HINT.includes("`/config tier panel`"));
+	});
+
+	test("embed cấu hình: mục danh hiệu theo bộ đang dùng (tên bộ, tên bậc tuỳ chỉnh, số role đã gán)", () =>
+	{
+		const vuTru = applyTierOverrides(TIER_SETS["vu-tru"], [{ tierKey: "bac-3", name: "Trái Đất", emoji: null }]);
+		const gamification = {
+			boardChannelId: null,
+			tierRoles: [{ tierKey: "bac-3", roleId: ROLE_TRUC_CO, createdByBot: true }] as const,
+			tierSet: vuTru,
+		};
+		const embed = buildConfigEmbed(DEFAULT_GUILD_SETTINGS, [], [], gamification).toJSON();
+		const field = embed.fields?.find(candidate => candidate.name.startsWith("🏅"));
+		assert.ok(field);
+		assert.equal(field.name, "🏅 Danh hiệu: bộ Vũ trụ · role đã gán 1/8");
+		assert.equal(field.value, `🌍 Trái Đất (Lv 6+): <@&${ROLE_TRUC_CO}>\n${TIER_PANEL_HINT}`);
 	});
 
 	test("embed cấu hình rất nhiều channel vẫn vừa giới hạn field", () =>
@@ -802,6 +846,19 @@ describe("/admin", () =>
 		assert.equal(activity.recentLimit, 10);
 		assert.ok(embed.description?.includes(`<@${USER_A}>`));
 		assert.ok(embed.description?.includes("~~**−50 XP** · admin · spam"));
+	});
+
+	test("xp view: bậc theo bộ danh hiệu guild đang dùng (đổi bộ, đổi tên)", async () =>
+	{
+		const { admin, context } = createHarness();
+		const tierFieldOf = async (): Promise<string | undefined> =>
+		{
+			const embed = replyEmbed(await run(admin, { group: "xp", subcommand: "view", options: { "thanh-vien": user(USER_A) } }));
+			return embed.fields?.find(field => !["Level", "Tổng XP", "Xếp hạng"].includes(field.name) && !field.name.startsWith("Tiến độ"))?.name;
+		};
+		assert.equal(await tierFieldOf(), "Cảnh giới");
+		context.deps.tierSets.select(GUILD, "kiem-hiep", ADMIN);
+		assert.equal(await tierFieldOf(), "Danh hiệu");
 	});
 
 	test("xp give: delta dương, lý do đã trim, role của thành viên; reply tổng mới", async () =>
@@ -859,11 +916,11 @@ describe("/admin", () =>
 		assert.equal(activity.resetAllCalls, 1);
 		assert.equal(
 			replyText(fake),
-			"Đã reset XP toàn server: huỷ 1.500 biến động của 42 thành viên.\nRole cảnh giới sẽ tự cập nhật khi từng thành viên nhắn tin được XP.",
+			"Đã reset XP toàn server: huỷ 1.500 biến động của 42 thành viên.\nRole danh hiệu sẽ tự cập nhật khi từng thành viên nhắn tin được XP.",
 		);
 	});
 
-	test("xp give: thành viên là GuildMember thì đồng bộ role cảnh giới theo tổng XP mới, rồi sửa phản hồi thêm một dòng", async () =>
+	test("xp give: thành viên là GuildMember thì đồng bộ role danh hiệu theo tổng XP mới, rồi sửa phản hồi thêm một dòng", async () =>
 	{
 		const { admin, tierRoles } = createHarness();
 		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
@@ -874,13 +931,13 @@ describe("/admin", () =>
 		const text = `Đã cộng 50 XP cho <@${USER_A}>. Tổng: 1.284 XP.`;
 		assert.equal(replyText(fake), text, "trả lời trước khi gọi API role");
 		assert.deepEqual(changes, [
-			{ action: "add", roleId: ROLE_TRUC_CO, reason: "Cảnh giới tu luyện (admin điều chỉnh XP)" },
-			{ action: "remove", roleId: ROLE_LUYEN_KHI, reason: "Cảnh giới tu luyện (admin điều chỉnh XP)" },
+			{ action: "add", roleId: ROLE_TRUC_CO, reason: "Danh hiệu theo level (admin điều chỉnh XP)" },
+			{ action: "remove", roleId: ROLE_LUYEN_KHI, reason: "Danh hiệu theo level (admin điều chỉnh XP)" },
 		]);
-		assert.deepEqual(fake.edits, [`${text}\n☯️ Role cảnh giới: đã thêm <@&${ROLE_TRUC_CO}> · đã bỏ <@&${ROLE_LUYEN_KHI}>.`]);
+		assert.deepEqual(fake.edits, [`${text}\n🏅 Role danh hiệu: đã thêm <@&${ROLE_TRUC_CO}> · đã bỏ <@&${ROLE_LUYEN_KHI}>.`]);
 	});
 
-	test("xp reset: về Level 0 thì chuyển về role Luyện Khí; xp remove không đổi cảnh giới thì không sửa phản hồi", async () =>
+	test("xp reset: về Level 0 thì chuyển về role bậc 1; xp remove không đổi bậc thì không sửa phản hồi", async () =>
 	{
 		const { admin, tierRoles } = createHarness();
 		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
@@ -890,7 +947,7 @@ describe("/admin", () =>
 		const fake = await run(admin, { group: "xp", subcommand: "reset", options: { "thanh-vien": user(USER_A) }, member: reset.member });
 		assert.deepEqual(reset.changes.map(change => [change.action, change.roleId]), [["add", ROLE_LUYEN_KHI], ["remove", ROLE_TRUC_CO]]);
 		assert.equal(fake.edits.length, 1);
-		assert.ok(String(fake.edits[0]).startsWith(`${replyText(fake)}\n☯️ Role cảnh giới:`));
+		assert.ok(String(fake.edits[0]).startsWith(`${replyText(fake)}\n🏅 Role danh hiệu:`));
 
 		const unchanged = fakeGuildMember([ROLE_TRUC_CO]);
 		const removed = await run(admin, { group: "xp", subcommand: "remove", options: { "thanh-vien": user(USER_A), "so-xp": 10 }, member: unchanged.member });
@@ -898,7 +955,7 @@ describe("/admin", () =>
 		assert.deepEqual(removed.edits, []);
 	});
 
-	test("xp give: role cảnh giới không đổi được (nằm trên role của bot) thì phản hồi ghi rõ", async (t) =>
+	test("xp give: role danh hiệu không đổi được (nằm trên role của bot) thì phản hồi ghi rõ", async (t) =>
 	{
 		t.mock.method(console, "error", () => undefined);
 		const { admin, tierRoles } = createHarness();

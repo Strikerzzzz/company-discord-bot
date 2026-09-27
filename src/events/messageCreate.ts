@@ -2,16 +2,17 @@ import { Events, Message, PermissionFlagsBits } from "discord.js";
 import Event from "../classes/Event";
 import { roleIdsOf } from "../discord/members";
 import { syncTierRoles } from "../discord/roleSync";
-import { breakthroughText, levelUpText } from "../discord/views/progression";
+import { levelUpText, promotionText } from "../discord/views/progression";
 import { tierUp } from "../modules/activity/tiers";
 import { MessageInput } from "../modules/activity/types";
 import { logger } from "../shared/logger";
 
-/** Lý do ghi vào audit log của Discord khi bot đổi role cảnh giới. */
-const TIER_ROLE_REASON = "Cảnh giới tu luyện";
+/** Lý do ghi vào audit log của Discord khi bot đổi role danh hiệu. */
+const TIER_ROLE_REASON = "Danh hiệu theo level";
 
-// Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023), thông báo lên level hoặc đột phá cảnh giới (DEC-029),
-// rồi đồng bộ role cảnh giới (DEC-031). Không ghi log nội dung tin nhắn; lỗi của service để EventHandler bắt và ghi log.
+// Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023), thông báo lên level hoặc lên bậc theo giọng văn của bộ danh hiệu
+// guild đang dùng (DEC-029, DEC-033), rồi đồng bộ role danh hiệu (DEC-031). Không ghi log nội dung tin nhắn; lỗi của service
+// để EventHandler bắt và ghi log.
 export default class MessageCreate extends Event
 {
 	name = Events.MessageCreate;
@@ -41,14 +42,18 @@ export default class MessageCreate extends Event
 		if (message.member) await syncTierRoles(message.member, result.levelAfter, tierRoles, TIER_ROLE_REASON);
 	}
 
-	/** Thông báo lên level, hoặc đột phá nếu vượt mốc cảnh giới. Không ném lỗi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo. */
+	/**
+	 * Thông báo lên level, hoặc lên bậc nếu vượt mốc bậc, theo bộ danh hiệu của guild (đã áp tên tuỳ chỉnh).
+	 * Không ném lỗi khi gửi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo.
+	 */
 	private async announceLevelUp(message: Message<true>, levelBefore: number, levelAfter: number): Promise<void>
 	{
 		if (!this.client.services.guildConfig.getSettings(message.guildId).levelUpAnnouncements) return;
 		if (!this.canAnnounceIn(message)) return;
 
-		const tier = tierUp(levelBefore, levelAfter);
-		const content = tier ? breakthroughText(message.author.id, tier, levelAfter) : levelUpText(message.author.id, levelAfter);
+		const set = this.client.services.tierSets.current(message.guildId);
+		const tier = tierUp(levelBefore, levelAfter, set);
+		const content = tier ? promotionText(set, message.author.id, tier, levelAfter) : levelUpText(set, message.author.id, levelAfter);
 		try
 		{
 			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level.

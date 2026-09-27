@@ -148,7 +148,7 @@ function settingLines(settings: GuildSettings, keys: readonly (keyof GuildSettin
 	return keys.map(key => settingLine(key, settings[key])).join("\n");
 }
 
-/** Phần cấu hình gamification hiển thị trong `/config view` (DEC-030, DEC-031). */
+/** Phần cấu hình gamification hiển thị trong `/config view` (DEC-030, DEC-031, DEC-033). */
 export interface GamificationConfigView
 {
 	/** Kênh Bảng vàng; null = đang tắt. */
@@ -158,6 +158,9 @@ export interface GamificationConfigView
 	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh, DEC-033). */
 	tierSet: TierSet;
 }
+
+/** Gợi ý trong `/config view`: mọi chỉnh sửa danh hiệu (chọn bộ, đổi tên bậc, tạo/gán role) nằm ở bảng điều khiển. */
+export const TIER_PANEL_HINT = "Dùng `/config tier panel` để chọn bộ, đổi tên bậc, tạo hoặc gán role.";
 
 /** Một dòng "emoji Tên (Lv n+)" của bậc `tierKey` trong bộ `set`. */
 function tierLabel(tierKey: TierRoleMapping["tierKey"], set: TierSet): string
@@ -182,9 +185,10 @@ export function buildConfigEmbed(
 	const boardText = gamification.boardChannelId === null
 		? "Đang tắt. Dùng `/config board` để bật."
 		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
-	const tierRoleText = gamification.tierRoles.length > 0
-		? gamification.tierRoles.map(mapping => `${tierLabel(mapping.tierKey, gamification.tierSet)}: ${roleMention(mapping.roleId)}`).join("\n")
-		: "Chưa gán role nào. Dùng `/config tier set-role` để gán.";
+	const { tierSet, tierRoles } = gamification;
+	const tierRoleText = tierRoles.length > 0
+		? [...tierRoles.map(mapping => `${tierLabel(mapping.tierKey, tierSet)}: ${roleMention(mapping.roleId)}`), TIER_PANEL_HINT].join("\n")
+		: `Chưa gán role nào. ${TIER_PANEL_HINT}`;
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
@@ -197,7 +201,7 @@ export function buildConfigEmbed(
 			{ name: `👥 Team (${teams.length}/${MAX_TEAMS})`, value: teamText },
 			{ name: `📺 Channel có cấu hình riêng (${channels.length})`, value: channelText },
 			{ name: "🏆 Bảng vàng", value: boardText },
-			{ name: `🏅 Danh hiệu: bộ ${gamification.tierSet.name} · role đã gán ${gamification.tierRoles.length}/${gamification.tierSet.tiers.length}`, value: tierRoleText },
+			{ name: `🏅 Danh hiệu: bộ ${tierSet.name} · role đã gán ${tierRoles.length}/${tierSet.tiers.length}`, value: tierRoleText },
 		);
 }
 
@@ -253,7 +257,7 @@ export function buildTierRoleListEmbed(set: TierSet, mappings: readonly TierRole
 		.setFooter({ text: TIER_ROLE_SYNC_NOTE });
 }
 
-/** Một dòng mô tả kết quả đồng bộ role cảnh giới; null nếu không có gì thay đổi hay bị bỏ qua. */
+/** Một dòng mô tả kết quả đồng bộ role danh hiệu; null nếu không có gì thay đổi hay bị bỏ qua. */
 export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
 {
 	const mentions = (roleIds: readonly string[]): string => roleIds.map(roleId => roleMention(roleId)).join(", ");
@@ -264,7 +268,7 @@ export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
 	{
 		parts.push(`không đổi được ${mentions(result.skipped)} (kiểm tra quyền Manage Roles và thứ bậc role của bot; vừa lỗi thì bot chờ 10 phút mới thử lại)`);
 	}
-	return parts.length > 0 ? `☯️ Role cảnh giới: ${parts.join(" · ")}.` : null;
+	return parts.length > 0 ? `🏅 Role danh hiệu: ${parts.join(" · ")}.` : null;
 }
 
 // ---------- Activity XP ----------
@@ -290,6 +294,10 @@ function rankText(rank: number | null, totalRanked: number): string
 	return rank === null ? "Chưa xếp hạng" : `#${formatNumber(rank)} / ${formatNumber(totalRanked)}`;
 }
 
+/**
+ * Chi tiết Activity XP của một thành viên; bậc theo bộ danh hiệu `set` của guild, field mang tên gọi bậc của bộ.
+ * Field vị trí trên bảng tên "Xếp hạng" để không trùng tên gọi bậc "Hạng" của bộ Rank game.
+ */
 export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly XpEventView[], set: TierSet): EmbedBuilder
 {
 	const { level } = profile;
@@ -306,7 +314,7 @@ export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly Xp
 		.addFields(
 			{ name: "Level", value: formatNumber(level.level), inline: true },
 			{ name: "Tổng XP", value: formatNumber(level.totalXp), inline: true },
-			{ name: "Hạng", value: rankText(profile.rank, profile.totalRanked), inline: true },
+			{ name: "Xếp hạng", value: rankText(profile.rank, profile.totalRanked), inline: true },
 			{ name: set.texts.tierLabel, value: `${tier.emoji} ${tier.name}`, inline: true },
 			{
 				name: `Tiến độ lên level ${formatNumber(level.level + 1)}`,
@@ -378,8 +386,8 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"contribution.reset_all": "Reset contribution toàn server",
 	"poll.create": "Tạo vote",
 	"poll.close": "Đóng vote",
-	"tier_role.set": "Gán role cho cảnh giới",
-	"tier_role.clear": "Bỏ role của cảnh giới",
+	"tier_role.set": "Gán role danh hiệu cho bậc",
+	"tier_role.clear": "Bỏ role danh hiệu của bậc",
 	"tier_role.setup": "Tạo/đồng bộ role danh hiệu",
 	"tier_set.set": "Chọn bộ danh hiệu",
 	"tier_name.set": "Đổi tên bậc danh hiệu",
@@ -390,7 +398,7 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 };
 
 // Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
-// poll.* không có target (mã vote nằm trong details), tier_role.* có target là role (khoá cảnh giới trong details.tierKey),
+// poll.* không có target (mã vote nằm trong details), tier_role.set/clear có target là role (khoá bậc trong details.tierKey),
 // board.* có target là channel của Bảng vàng.
 type AuditTargetKind = "user" | "role" | "channel" | "none";
 

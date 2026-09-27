@@ -1,31 +1,51 @@
-import { Tier } from "../../modules/activity/tiers";
+import { Tier, TierSet } from "../../modules/activity/tiers";
 import { formatNumber, userMention } from "../format";
 
-// Thông báo lên level và đột phá cảnh giới phong cách tu tiên (DEC-029). Hàm thuần, test được không cần Discord client.
+/*
+ * Thông báo lên level và lên bậc theo giọng văn của bộ danh hiệu guild đang dùng (DEC-029, DEC-033).
+ * Hàm thuần, test được không cần Discord client.
+ */
 
-type LevelUpTemplate = (mention: string, level: string) => string;
+/** Dùng khi một bộ không có câu lên level nào (không xảy ra với các bộ có sẵn). */
+const FALLBACK_LEVEL_UP = "🎉 {user} đã đạt **Level {level}**.";
 
-/** Các biến thể thông báo lên level; chọn xác định theo level để test được và không lặp một câu liên tục. */
-const LEVEL_UP_TEMPLATES: readonly LevelUpTemplate[] = [
-	(mention, level) => `✨ Tu vi tăng tiến! ${mention} đã đạt **Level ${level}**.`,
-	(mention, level) => `🌿 Linh khí hội tụ, ${mention} tiến thêm một tầng: **Level ${level}**!`,
-	(mention, level) => `📜 Công pháp thêm một bậc viên mãn, ${mention} đã lên **Level ${level}**.`,
-	(mention, level) => `🍃 Bế quan có thành quả, ${mention} đã đạt **Level ${level}**!`,
-];
+/** Chỉ các placeholder đã biết; placeholder lạ giữ nguyên chữ. */
+const PLACEHOLDER = /\{(user|level|tier|emoji|phrase)\}/g;
 
-/** Số biến thể của thông báo lên level. */
-export const LEVEL_UP_VARIANTS = LEVEL_UP_TEMPLATES.length;
+type TemplateValues = Readonly<Partial<Record<string, string>>>;
 
-/** Thông báo lên level (không vượt mốc cảnh giới), gửi vào channel nơi người đó vừa nhắn. */
-export function levelUpText(userId: string, level: number): string
+/**
+ * Thay placeholder trong một lượt quét: giá trị đã thay (ví dụ tên bậc do admin đặt chứa "{user}") không bị quét lại,
+ * và ký tự "$" trong giá trị không bị hiểu thành mẫu thay thế của String.replace.
+ */
+function fillTemplate(template: string, values: TemplateValues): string
 {
-	const index = ((Math.trunc(level) % LEVEL_UP_VARIANTS) + LEVEL_UP_VARIANTS) % LEVEL_UP_VARIANTS;
-	return LEVEL_UP_TEMPLATES[index](userMention(userId), formatNumber(level));
+	return template.replace(PLACEHOLDER, (match: string, name: string) => values[name] ?? match);
 }
 
-/** Thông báo đột phá khi lên level vượt qua mốc của một cảnh giới mới. */
-export function breakthroughText(userId: string, tier: Tier, level: number): string
+/** Vị trí biến thể theo level: cùng level luôn cùng câu, các level liên tiếp xoay vòng qua mọi câu. */
+function variantIndex(level: number, count: number): number
 {
-	return `⚡ Thiên kiếp giáng xuống… ${userMention(userId)} đã ${tier.breakthrough}! `
-		+ `${tier.emoji} Cảnh giới **${tier.name}** · Level ${formatNumber(level)}`;
+	const whole = Number.isFinite(level) ? Math.trunc(level) : 0;
+	return ((whole % count) + count) % count;
+}
+
+/** Thông báo lên level (không vượt mốc bậc) theo bộ `set`, gửi vào channel nơi người đó vừa nhắn. */
+export function levelUpText(set: TierSet, userId: string, level: number): string
+{
+	const templates = set.texts.levelUp;
+	const template = templates.length > 0 ? templates[variantIndex(level, templates.length)] : FALLBACK_LEVEL_UP;
+	return fillTemplate(template, { user: userMention(userId), level: formatNumber(level) });
+}
+
+/** Thông báo khi lên level vượt qua mốc của bậc mới `tier` (thuộc bộ `set`). */
+export function promotionText(set: TierSet, userId: string, tier: Tier, level: number): string
+{
+	return fillTemplate(set.texts.promotion, {
+		user: userMention(userId),
+		phrase: tier.breakthrough,
+		emoji: tier.emoji,
+		tier: tier.name,
+		level: formatNumber(level),
+	});
 }

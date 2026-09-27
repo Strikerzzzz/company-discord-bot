@@ -1,5 +1,6 @@
 import { AttachmentBuilder, Channel, PermissionFlagsBits, RESTJSONErrorCodes } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
+import { TierSet } from "../modules/activity/tiers";
 import { LeaderboardPage, LeaderboardPeriod, LeaderboardScope, ScoreKind } from "../modules/leaderboard/LeaderboardService";
 import { LiveBoard } from "../modules/live-board/LiveBoardService";
 import { logger } from "../shared/logger";
@@ -107,20 +108,24 @@ async function fetchChannel(client: DiscordClient, channelId: string): Promise<C
 	}
 }
 
-/** Nội dung chữ của message Bảng vàng. */
-export function liveBoardContent(now: number): string
+/** Nội dung chữ của message Bảng vàng; tên thẻ /rank theo giọng văn của bộ danh hiệu (ví dụ "thẻ tu luyện", "thẻ xếp hạng"). */
+export function liveBoardContent(now: number, tierSet: TierSet): string
 {
 	return [
 		`🏆 **BẢNG VÀNG** · cập nhật lần cuối ${relativeTime(now)}`,
-		"Dùng `/rank` xem thẻ tu luyện, `/leaderboard` xem đầy đủ.",
+		`Dùng \`/rank\` xem ${tierSet.texts.cardName}, \`/leaderboard\` xem đầy đủ.`,
 	].join("\n");
 }
 
-/** Chữ ký những gì hiện trên ảnh (kỳ, tổng số dòng, hạng/điểm từng dòng); không đổi thì không cần sửa message. */
-function signatureOf(channelId: string, pages: readonly LeaderboardPage[]): string
+/**
+ * Chữ ký những gì hiện trên message (bộ danh hiệu và tên bậc, kỳ, tổng số dòng, hạng/điểm từng dòng); không đổi thì không
+ * cần sửa message. Có bộ danh hiệu để admin đổi bộ hay đổi tên bậc thì lượt định kỳ sau vẽ lại dù điểm không đổi.
+ */
+function signatureOf(channelId: string, pages: readonly LeaderboardPage[], tierSet: TierSet): string
 {
 	return JSON.stringify({
 		channelId,
+		tierSet: [tierSet.key, ...tierSet.tiers.map(tier => tier.name)],
 		boards: pages.map(page => ({
 			since: page.since,
 			total: page.totalEntries,
@@ -185,7 +190,8 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 		page: 1,
 		pageSize: CARD_PAGE_SIZE,
 	}));
-	const signature = signatureOf(board.channelId, pages);
+	const tierSet = client.services.tierSets.current(guildId);
+	const signature = signatureOf(board.channelId, pages, tierSet);
 	const postedAt = state.postedAt.get(guildId);
 	const recent = postedAt !== undefined && clock.now() - postedAt < LIVE_BOARD_RECHECK_MS;
 	if (!force && board.messageId !== null && state.signatures.get(guildId) === signature && recent) return false;
@@ -208,13 +214,13 @@ async function publish(client: DiscordClient, guildId: string, force: boolean): 
 	const guild = client.guilds.cache.get(guildId) ?? null;
 	const cards = await Promise.all(sections.map(async (section, index) =>
 	{
-		const data = await loadLeaderboardCardData(client, guild, guildId, { kind: section.kind, scope: section.scope, page: pages[index] }, null);
+		const data = await loadLeaderboardCardData(client, guild, guildId, { kind: section.kind, scope: section.scope, page: pages[index] }, null, tierSet);
 		return client.renderGate.run(() => renderLeaderboardCard(data));
 	}));
 	const files = cards.map((card, index) => new AttachmentBuilder(card.png, { name: sections[index].fileName }));
 
 	const now = clock.now();
-	const posted = await upsertMessage(client, board, channel, { content: liveBoardContent(now), files });
+	const posted = await upsertMessage(client, board, channel, { content: liveBoardContent(now, tierSet), files });
 	if (posted)
 	{
 		state.signatures.set(guildId, signature);

@@ -24,13 +24,14 @@ const CARD_AVATAR: ImageURLOptions = { extension: "png", size: 256, forceStatic:
 
 type AnyMember = GuildMember | APIInteractionGuildMember | APIInteractionDataResolvedGuildMember | null;
 
-// Thẻ tu luyện của một thành viên dạng ảnh (DEC-030): level, cảnh giới, Activity XP, Contribution, chuỗi ngày, huy hiệu, team.
+// Thẻ rank của một thành viên dạng ảnh (DEC-030): level, bậc danh hiệu theo bộ guild đang dùng (DEC-033), Activity XP,
+// Contribution, chuỗi ngày, huy hiệu, team. Bộ danh hiệu đi theo hồ sơ gamification nên ảnh và phần chữ luôn cùng bộ.
 // Hai loại điểm hiển thị tách biệt (DEC-004). Vẽ ảnh lỗi thì trả embed cũ.
 export default class RankCmd extends Command
 {
 	data = new SlashCommandBuilder()
 		.setName("rank")
-		.setDescription("Xem thẻ tu luyện (level, cảnh giới, điểm, huy hiệu) của bạn hoặc một thành viên")
+		.setDescription("Xem thẻ rank (level, danh hiệu, điểm, huy hiệu) của bạn hoặc một thành viên")
 		.addUserOption(option => option
 			.setName(TARGET_OPTION)
 			.setDescription("Thành viên cần xem (mặc định là bạn)"));

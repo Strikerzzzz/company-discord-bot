@@ -36,9 +36,9 @@ const AUDIT_MAX = 25;
 const TITLE_DISPLAY_MAX = 100;
 /** Khoảng tối thiểu giữa hai lần sao lưu thủ công, chống spam lệnh làm đầy ổ đĩa. */
 const MANUAL_BACKUP_COOLDOWN_MS = 10 * 60 * 1000;
-/** Lý do ghi vào audit log của Discord khi bot đổi role cảnh giới sau thao tác của admin (DEC-031). */
-const TIER_ROLE_REASON = "Cảnh giới tu luyện (admin điều chỉnh XP)";
-const RESET_ALL_TIER_ROLE_NOTE = "Role cảnh giới sẽ tự cập nhật khi từng thành viên nhắn tin được XP.";
+/** Lý do ghi vào audit log của Discord khi bot đổi role danh hiệu sau thao tác của admin (DEC-031). */
+const TIER_ROLE_REASON = "Danh hiệu theo level (admin điều chỉnh XP)";
+const RESET_ALL_TIER_ROLE_NOTE = "Role danh hiệu sẽ tự cập nhật khi từng thành viên nhắn tin được XP.";
 
 interface AdminContext
 {
@@ -289,7 +289,7 @@ export default class AdminCmd extends Command
 	}
 
 	/**
-	 * Đưa role cảnh giới của thành viên được thao tác về đúng tổng XP mới (DEC-031), rồi sửa phản hồi `text` thêm một dòng
+	 * Đưa role danh hiệu của thành viên được thao tác về đúng tổng XP mới (DEC-031), rồi sửa phản hồi `text` thêm một dòng
 	 * nếu có role thay đổi hoặc bị bỏ qua. Trả lời trước rồi mới gọi API role, để không quá hạn 3 giây của interaction.
 	 * Thành viên đã rời server (không có GuildMember) thì bỏ qua.
 	 */
