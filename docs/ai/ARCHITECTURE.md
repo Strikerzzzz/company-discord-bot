@@ -58,7 +58,9 @@ src/
     ├── messages.ts           Sửa message đã đăng (contribution, vote); lỗi chỉ ghi log
     ├── pollScheduler.ts      Tự đóng vote quá hạn và sửa message
     ├── cards/                Vẽ ảnh PNG bằng @napi-rs/canvas (DEC-030): rankCard, leaderboardCard, draw, decor, icons,
-    │                         theme, fonts (tìm assets/fonts theo __dirname); types.ts là hợp đồng dữ liệu ảnh
+    │                         theme, fonts (tìm assets/fonts theo __dirname); types.ts là hợp đồng dữ liệu ảnh.
+    │                         Theo bộ danh hiệu (DEC-033): emblems (40 biểu tượng bậc), frames (khung avatar), styles
+    │                         (nền, hiệu ứng bậc cao nhất). Bảng không có bậc (Contribution, team) dùng phong cách trung tính
     ├── cardData.ts           Dựng dữ liệu ảnh từ service (hàm thuần) + loader tên/avatar; rankSummaryText
     ├── avatars.ts            AvatarFetcher: tải avatar từ CDN Discord (allowlist host, timeout, giới hạn dung lượng, cache)
     ├── memberDirectory.ts    Tên hiển thị + avatar URL theo user ID: cache discord.js → cache TTL → REST từng người
