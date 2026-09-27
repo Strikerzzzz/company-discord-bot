@@ -19,7 +19,7 @@ const MAX_LIST_LIMIT = 50;
 
 const NOT_FOUND = "Không tìm thấy contribution này.";
 const ALREADY_REMOVED = "Contribution này đã bị gỡ.";
-const VOTE_RESET = "Lượt ghi nhận của bạn cho đóng góp này đã bị admin reset nên không thể ghi nhận lại.";
+const VOTE_LOCKED = "Lượt ghi nhận của bạn cho đóng góp này đã bị huỷ (do admin reset, hoặc bạn đã rút ghi nhận khi tác giả đang bị trừ điểm) nên không thể ghi nhận lại.";
 const COMPENSATION_REASON = "Tự động bù để điểm không âm (PROP-024)";
 
 function isContributionCategory(value: string): value is ContributionCategory
@@ -115,6 +115,7 @@ function toContribution(row: ContributionRow): Contribution
  * Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
  * Lượt ghi nhận có điểm đã bị admin reset vẫn tính là đã dùng: người đó không ghi nhận lại được contribution ấy.
  * Điểm không bao giờ âm (DEC-028, PROP-024): rút ghi nhận hoặc gỡ contribution làm tổng âm thì tự ghi event bù trong cùng transaction.
+ * Rút ghi nhận mà phải bù (tác giả đang bị trừ điểm) thì người rút không ghi nhận lại được, để hình phạt không bị xoá (DEC-032, PROP-031).
  */
 export class ContributionService implements ContributionServiceApi
 {
@@ -185,12 +186,14 @@ export class ContributionService implements ContributionServiceApi
 			const existing = this.repo.findVote(contributionId, voterId);
 			if (existing !== null)
 			{
-				// Lượt đã bị admin reset (event bị huỷ) vẫn tính là đã dùng: giữ nguyên dòng vote để không bấm hai lần mà lấy lại điểm.
-				if (existing.voided) throw new UserError(VOTE_RESET);
+				// Lượt có event đã bị huỷ (admin reset, hoặc rút khi đang bị phạt) vẫn tính là đã dùng: bấm lại không lấy lại điểm.
+				if (existing.voided) throw new UserError(VOTE_LOCKED);
 				this.deps.contributionLedger.voidEvent(existing.eventId);
-				this.repo.deleteVote(contributionId, voterId);
-				this.compensateNegative(guildId, contribution.authorId, contributionId);
-				return { voted: false, contribution: this.require(guildId, contributionId) };
+				// PROP-031: lần rút làm phát sinh điểm bù thì giữ dòng vote (event đã huỷ) để người này không ghi nhận lại được,
+				// nếu không thì rút rồi ghi nhận lại sẽ xoá dần hình phạt của admin.
+				const locked = this.compensateNegative(guildId, contribution.authorId, contributionId) > 0;
+				if (!locked) this.repo.deleteVote(contributionId, voterId);
+				return { voted: false, locked, contribution: this.require(guildId, contributionId) };
 			}
 
 			const event = this.deps.contributionLedger.record({
@@ -203,7 +206,7 @@ export class ContributionService implements ContributionServiceApi
 				teamRoleIds: this.repo.teamRoleIds(contributionId),
 			});
 			this.repo.insertVote(contributionId, voterId, event.id, this.deps.clock.now());
-			return { voted: true, contribution: this.require(guildId, contributionId) };
+			return { voted: true, locked: false, contribution: this.require(guildId, contributionId) };
 		})();
 	}
 

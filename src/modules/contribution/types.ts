@@ -58,6 +58,11 @@ export interface ContributionVoteResult
 {
 	/** true = vừa ghi nhận, false = vừa rút ghi nhận. */
 	voted: boolean;
+	/**
+	 * true nếu vừa rút ghi nhận và lần rút đó làm phát sinh điểm bù (tác giả đang bị admin trừ điểm, PROP-031):
+	 * người này sẽ không ghi nhận lại được contribution đó. Luôn false khi voted = true.
+	 */
+	locked: boolean;
 	contribution: Contribution;
 }
 

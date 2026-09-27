@@ -92,7 +92,7 @@ export default class ContributionCmd extends Command
 		const result = this.client.services.contributions.toggleVote({ guildId, contributionId, voterId: interaction.user.id });
 
 		await interaction.update(contributionMessage(result.contribution));
-		await interaction.followUp({ content: voteFeedback(result.voted), flags: MessageFlags.Ephemeral });
+		await interaction.followUp({ content: voteFeedback(result), flags: MessageFlags.Ephemeral });
 	}
 
 	/** Trả lời CÔNG KHAI bằng embed + nút ghi nhận, rồi lưu vị trí message để cập nhật sau này. */

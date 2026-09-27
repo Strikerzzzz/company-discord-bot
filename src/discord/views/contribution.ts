@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown, messageLink } from "discord.js";
-import { Contribution, CONTRIBUTION_CATEGORIES, CONTRIBUTION_LIMITS, ContributionCategory } from "../../modules/contribution/types";
+import { Contribution, CONTRIBUTION_CATEGORIES, CONTRIBUTION_LIMITS, ContributionCategory, ContributionVoteResult } from "../../modules/contribution/types";
 import { UserError } from "../../shared/errors";
 import { COLORS, disableMaskedLinks, DISCORD_LIMITS, fitLines, relativeTime, truncate, userMention } from "../format";
 
@@ -117,9 +117,11 @@ export function contributionDetailMessage(contribution: Contribution): Contribut
 	return { embeds: [contributionEmbed(contribution)], components };
 }
 
-export function voteFeedback(voted: boolean): string
+export function voteFeedback(result: Pick<ContributionVoteResult, "voted" | "locked">): string
 {
-	return voted ? "✅ Bạn đã ghi nhận đóng góp này." : "↩️ Bạn đã rút ghi nhận.";
+	if (result.voted) return "✅ Bạn đã ghi nhận đóng góp này.";
+	if (result.locked) return "↩️ Bạn đã rút ghi nhận. Vì tác giả đang bị admin trừ điểm, bạn sẽ không ghi nhận lại được đóng góp này.";
+	return "↩️ Bạn đã rút ghi nhận.";
 }
 
 /** Một dòng trong danh sách: `#id · **tiêu đề** · 👍 N · <thời gian tương đối>`. */

@@ -27,6 +27,7 @@ import {
 	MESSAGE_CONTRIBUTION_DESCRIPTION,
 	messageContributionTitle,
 	parseContributionButtonId,
+	voteFeedback,
 } from "../src/discord/views/contribution";
 import {
 	parsePollButtonId,
@@ -201,7 +202,7 @@ class FakeContributions
 		this.toggles.push(input);
 		const voted = this.nextVoted;
 		this.nextVoted = !voted;
-		return { voted, contribution: makeContribution({ id: input.contributionId, votes: voted ? 4 : 3, ...this.location }) };
+		return { voted, locked: false, contribution: makeContribution({ id: input.contributionId, votes: voted ? 4 : 3, ...this.location }) };
 	}
 }
 
@@ -723,6 +724,13 @@ describe("view vote", () =>
 		assert.equal(pollSelectionText({ poll, selected: [0, 2], xpAwarded: 5, xpCapped: false, dailyCap: 25 }), "Bạn đang chọn: Lựa chọn 1, Lựa chọn 3 · +5 XP");
 		assert.equal(pollSelectionText({ poll, selected: [1], xpAwarded: 0, xpCapped: false, dailyCap: 25 }), "Bạn đang chọn: Lựa chọn 2");
 		assert.equal(pollSelectionText({ poll, selected: [], xpAwarded: 0, xpCapped: false, dailyCap: 25 }), "Bạn chưa chọn lựa chọn nào.");
+	});
+
+	test("phản hồi ghi nhận contribution: rút khi tác giả đang bị trừ điểm thì báo không ghi nhận lại được (PROP-031)", () =>
+	{
+		assert.equal(voteFeedback({ voted: true, locked: false }), "✅ Bạn đã ghi nhận đóng góp này.");
+		assert.equal(voteFeedback({ voted: false, locked: false }), "↩️ Bạn đã rút ghi nhận.");
+		assert.match(voteFeedback({ voted: false, locked: true }), /không ghi nhận lại được/);
 	});
 
 	test("phản hồi riêng khi XP bị cắt vì giới hạn XP từ vote trong ngày (DEC-028)", () =>
