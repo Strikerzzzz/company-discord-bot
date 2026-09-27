@@ -22,7 +22,8 @@
 | 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
 | 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
 | 12 | Gamification và giao diện ảnh | **Đã merge vào `main`** (DEC-032) | DEC-028…032 |
-| 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **ĐANG LÀM** trên `phase-13/tier-sets` | DEC-033 |
+| 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **Đã merge vào `main`** (DEC-034) | DEC-033 |
+| 14 | Hoàn tất trước khi chạy thật | **ĐANG LÀM** trên `phase-14/hoan-tat` | DEC-034 |
 
 ## Chi tiết
 
@@ -102,7 +103,11 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 - **Cách làm:** nền móng chung, rồi đợt 1 (3 agent: dữ liệu theo kỳ và gamification; quy tắc nghiệp vụ; vẽ ảnh), rồi đợt 2 (2 agent: lệnh xem và Bảng vàng; cấu hình, sự kiện và role), sau đó review độc lập.
 - **Điều kiện hoàn thành:** `npm run check` pass; ảnh render đúng trên máy dev Windows và trên Linux khi chạy thật; review độc lập không còn lỗi đã xác nhận.
 
-### Phase 13 — Bộ danh hiệu chọn được, bảng điều khiển role · ĐANG LÀM
+### Phase 14 — Hoàn tất trước khi chạy thật · ĐANG LÀM
+
+- **Phạm vi (DEC-034):** PROP-030 (đưa riêng XP/cooldown của channel về giá trị chung); ảnh bảng Contribution/team theo bộ danh hiệu; lệnh `npm run selfcheck` kiểm tra môi trường server trước khi bật bot; checklist chạy thật `docs/TEST-PLAN.md`.
+
+### Phase 13 — Bộ danh hiệu chọn được, bảng điều khiển role · ĐÃ MERGE (DEC-034)
 
 - **Mục tiêu:** hệ thống danh hiệu/role "có lựa chọn chứ không cứng" (DEC-033).
 - **Phạm vi:**
@@ -131,3 +136,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`. Thêm Phase 12 (gamification và ảnh thẻ, DEC-029…031) |
 | 2026-09-27 | DEC-032: duyệt và merge Phase 12 vào `main` |
 | 2026-09-27 | DEC-033: thêm Phase 13 (5 bộ danh hiệu, bot tự tạo role, bảng điều khiển trực quan) |
+| 2026-09-27 | DEC-034: merge Phase 13 vào `main`; thêm Phase 14 (hoàn tất trước khi chạy thật) |

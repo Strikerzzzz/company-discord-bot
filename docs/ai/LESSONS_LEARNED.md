@@ -224,3 +224,10 @@ Format mỗi mục:
 - **Hiện tượng:** Kiểm tra "người gọi có Manage Roles" trước khi gán role danh hiệu dùng `interaction.memberPermissions`. Giá trị này là quyền của người gọi **ở kênh đang gõ lệnh**, đã tính permission overwrite. Trong overwrite của kênh, bit `ManageRoles` hiển thị là "Manage Permissions" (quyền sửa phân quyền của riêng kênh đó). Vì vậy một admin bot chỉ được Manage Permissions ở một kênh vẫn qua được kiểm tra, rồi dùng bot để gán role cấp server.
 - **Xử lý:** kiểm tra quyền cấp server bằng `member.permissions` (GuildMember), không dùng `memberPermissions`.
 - **Bài học:** Quyền cấp server (Manage Roles, Manage Server, Administrator...) phải lấy từ `member.permissions`. `memberPermissions` và `permissionsIn(channel)` chỉ dùng cho quyền gắn với kênh (Send Messages, View Channel...). Review mọi chỗ đang kiểm quyền theo tiêu chí này. Chỗ `memberAccess()` dùng `ManageGuild` cho admin bot cũng nên rà lại (`ManageGuild` không có dạng overwrite theo kênh nên hiện không bị ảnh hưởng).
+
+## LL-020 — Mở database WAL ở chế độ read-only vẫn tạo file `-wal`/`-shm`
+
+- **Phát hiện:** 2026-09-27 (Phase 14, agent viết `npm run selfcheck`) · **Mức độ:** Thấp · **Trạng thái:** Đã xử lý
+- **Hiện tượng:** Mở `bot.db` (đang ở chế độ WAL) bằng better-sqlite3 với `readonly: true` vẫn sinh `bot.db-wal` và `bot.db-shm` cạnh database, và các file này còn lại sau khi đóng. Công cụ "chỉ đọc" vì vậy vẫn thay đổi thư mục dữ liệu của bot đang chạy.
+- **Xử lý:** selfcheck đọc `user_version` thẳng từ header file (offset 60). Muốn kiểm tra sâu hơn thì chép file vào RAM (`new Database(buffer)`, đổi byte 18/19 từ WAL sang rollback) rồi chạy `quick_check` và chạy thử migration trên bản sao. File lớn thì chỉ đọc header.
+- **Bài học:** Công cụ chẩn đoán không được mở database thật bằng SQLite, kể cả read-only. Phải có test xác nhận file thật giữ nguyên hash và không sinh file phụ.

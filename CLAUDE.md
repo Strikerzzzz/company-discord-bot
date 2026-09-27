@@ -39,6 +39,7 @@ npm test         # dọn build-test/, compile test/ rồi node --test
 npm run check    # build + lint + test — phải pass trước khi coi một task là xong
 npm run dev      # build rồi chạy với file .env (node --env-file=.env)
 npm run prod     # chạy build/index.js, nạp .env nếu có
+npm run selfcheck # sau khi build: tự kiểm tra môi trường (cấu hình, quyền ghi, DB, font, vẽ ảnh); không gọi mạng, không sửa DB
 ```
 
 - Chạy một file test: `node --test build-test/test/activity.test.js`. Lọc theo tên: `node --test --test-name-pattern="cooldown" "build-test/test/**/*.test.js"`. Cả hai cách đều cần `npm test` hoặc `npx tsc -p test` chạy trước.

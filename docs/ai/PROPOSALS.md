@@ -39,7 +39,7 @@
 | PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | REJECTED |
 | PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | IMPLEMENTED |
 | PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | IMPLEMENTED |
-| PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | APPROVED |
+| PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | IMPLEMENTED |
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
 | PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | REJECTED |
 
@@ -1212,7 +1212,7 @@ Discord option không truyền được giá trị "trống", nên muốn một 
 
 ### Đề xuất
 
-Thêm option kiểu boolean `dung-mac-dinh-xp` và `dung-mac-dinh-cooldown` cho `/config channel set`.
+Thêm option kiểu boolean cho `/config channel set` (tên thực tế khi làm: `dung-chung-xp`, `dung-chung-cooldown`).
 
 ### Lý do
 
@@ -1237,7 +1237,7 @@ Thấp.
 
 ### Trạng thái
 
-APPROVED (2026-09-27, DEC-034): người phụ trách bảo làm hết việc còn lại. Làm trong Phase 14.
+IMPLEMENTED (2026-09-27, Phase 14): option `dung-chung-xp`, `dung-chung-cooldown` đưa giá trị riêng của channel về giá trị chung (null), giữ cấu hình bật/tắt XP; vừa nhập số vừa chọn dùng chung thì báo lỗi.
 
 ---
 

@@ -21,6 +21,8 @@ Discord ──► Tầng Discord (mỏng) ──► Service nghiệp vụ ──
 ```
 src/
 ├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login
+├── selfcheck.ts              Entry point thứ hai (`npm run selfcheck`): tự kiểm tra môi trường trước khi bật bot; logic ở selfcheck/
+│                             (không gọi mạng, không mở DB thật bằng SQLite: đọc header và chạy thử trên bản sao trong RAM, LL-020)
 ├── config.ts                 Đọc và validate biến môi trường (DEC-015)
 ├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
 ├── shared/                   clock (inject được), errors (UserError), logger (che token), time (ngày/tuần/tháng giờ Việt Nam)
@@ -60,7 +62,8 @@ src/
     ├── cards/                Vẽ ảnh PNG bằng @napi-rs/canvas (DEC-030): rankCard, leaderboardCard, draw, decor, icons,
     │                         theme, fonts (tìm assets/fonts theo __dirname); types.ts là hợp đồng dữ liệu ảnh.
     │                         Theo bộ danh hiệu (DEC-033): emblems (40 biểu tượng bậc), frames (khung avatar), styles
-    │                         (nền, hiệu ứng bậc cao nhất). Bảng không có bậc (Contribution, team) dùng phong cách trung tính
+    │                         (nền, hiệu ứng bậc cao nhất). Mọi bảng (kể cả Contribution, team, bảng trống) trang trí theo
+    │                         `LeaderboardCardData.tierSet` của guild
     ├── cardData.ts           Dựng dữ liệu ảnh từ service (hàm thuần) + loader tên/avatar; rankSummaryText
     ├── avatars.ts            AvatarFetcher: tải avatar từ CDN Discord (allowlist host, timeout, giới hạn dung lượng, cache)
     ├── memberDirectory.ts    Tên hiển thị + avatar URL theo user ID: cache discord.js → cache TTL → REST từng người
