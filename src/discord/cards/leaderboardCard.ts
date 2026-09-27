@@ -1,5 +1,5 @@
 import { createCanvas, Image } from "@napi-rs/canvas";
-import { drawFormation } from "./decor";
+import { TIER_KEYS } from "../../modules/activity/tiers";
 import {
 	cleanDisplayName,
 	cleanText,
@@ -22,6 +22,7 @@ import {
 	strokeCircle,
 	strokeRoundedRect,
 } from "./draw";
+import { drawTierEmblem } from "./emblems";
 import { ensureFonts, font } from "./fonts";
 import { drawMedal, drawSparkle, drawTrophy, medalColor } from "./icons";
 import { CardStyle, cardStyle } from "./styles";
@@ -31,8 +32,8 @@ import { LeaderboardCardData, LeaderboardCardRow, RenderedCard } from "./types";
 /*
  * Ảnh bảng xếp hạng "Bảng vàng" (DEC-030): header có cúp vàng trong khung trang trí, tối đa 10 dòng (top 3 có huy chương),
  * dòng của người xem được làm nổi bật, chân ảnh. Chiều cao đổi theo số dòng.
- * Bảng có bậc (Activity cá nhân) mang phong cách của bộ danh hiệu (DEC-033), suy ra từ bậc của các dòng (luôn cùng bộ);
- * bảng không có bậc (Contribution, team) dùng phong cách trung tính.
+ * Mọi bảng (Activity, Contribution, cá nhân và team, kể cả bảng trống) mang phong cách của bộ danh hiệu guild đang dùng
+ * (`data.tierSet`, DEC-033): nền, khung cúp, viền, hình bảng trống. Dòng có bậc (Activity cá nhân) vẽ thêm viên thuốc bậc.
  */
 
 const WIDTH = 1000;
@@ -46,6 +47,8 @@ const FOOTER_H = 66;
 const MAX_ROWS = 10;
 const EMBLEM_X = PAD + 42;
 const EMBLEM_Y = 70;
+const TOP_TIER_INDEX = TIER_KEYS.length - 1;
+const NEUTRAL_RING = "#5c6391";
 
 interface RowView
 {
@@ -167,7 +170,16 @@ function drawRankLabel(ctx: Ctx, row: RowView, x: number, centerY: number): void
 	ctx.restore();
 }
 
-function drawRow(ctx: Ctx, row: RowView, y: number): void
+/** Viền avatar: màu bậc; không có bậc thì màu riêng của dòng (màu role team), rồi màu huy chương top 3, rồi màu dịu của bộ. */
+function avatarRingColor(style: CardStyle, row: RowView, medal: string | null): string
+{
+	if (row.source.tier) return tierColors(row.source.tier).color;
+	if (row.accent) return row.accent;
+	if (medal) return mix(medal, "#ffffff", 0.15);
+	return mix(style.boardSoft, NEUTRAL_RING, 0.5);
+}
+
+function drawRow(ctx: Ctx, style: CardStyle, row: RowView, y: number): void
 {
 	const x = PAD;
 	const width = WIDTH - PAD * 2;
@@ -211,7 +223,7 @@ function drawRow(ctx: Ctx, row: RowView, y: number): void
 	const avatarX = x + 110;
 	const avatarR = 25;
 	const tier = row.source.tier;
-	const ringColor = tier ? tierColors(tier).color : row.accent ?? "#5c6391";
+	const ringColor = avatarRingColor(style, row, medal);
 	fillCircle(ctx, avatarX, centerY, avatarR + 4, rgba(ringColor, 0.25));
 	drawAvatar(ctx, row.avatar, row.name, avatarX, centerY, avatarR, row.accent);
 	strokeCircle(ctx, avatarX, centerY, avatarR + 2, ringColor, 2.5);
@@ -249,12 +261,20 @@ function drawRow(ctx: Ctx, row: RowView, y: number): void
 	}
 }
 
-function drawEmpty(ctx: Ctx, text: string): void
+/** Bảng trống: khung lớn theo bộ, giữa là biểu tượng bậc cao nhất của bộ (phong cách trung tính thì là ngôi sao). */
+function drawEmpty(ctx: Ctx, style: CardStyle, text: string): void
 {
 	const centerY = ROWS_TOP + EMPTY_H / 2 - 22;
-	drawGlow(ctx, WIDTH / 2, centerY, 120, "#7c4dff", 0.25);
-	drawFormation(ctx, WIDTH / 2, centerY, 62, "#b39ddb", 1);
-	drawSparkle(ctx, WIDTH / 2, centerY, 16, "#e8e0ff", 0.9);
+	style.boardEmpty(ctx, WIDTH / 2, centerY, 62);
+	if (style.key === null)
+	{
+		drawSparkle(ctx, WIDTH / 2, centerY, 16, "#e8e0ff", 0.9);
+	}
+	else
+	{
+		drawGlow(ctx, WIDTH / 2, centerY, 50, style.boardSoft, 0.3);
+		drawTierEmblem(ctx, style.key, TOP_TIER_INDEX, WIDTH / 2, centerY, 50, style.boardSoft);
+	}
 	ctx.save();
 	ctx.textAlign = "center";
 	ctx.textBaseline = "alphabetic";
@@ -303,9 +323,15 @@ function toRowView(row: LeaderboardCardRow, avatar: Image | null): RowView
 	};
 }
 
-/** Phong cách của bảng: theo bộ danh hiệu của dòng đầu tiên có bậc hợp lệ; không dòng nào có bậc thì trung tính. */
-export function boardStyle(rows: readonly LeaderboardCardRow[]): CardStyle
+/**
+ * Phong cách của bảng theo bộ danh hiệu của guild (`data.tierSet`), áp cho mọi bảng. Bộ hỏng (dữ liệu sửa tay) thì lấy bộ
+ * của dòng đầu tiên có bậc hợp lệ; vẫn không có thì trung tính.
+ */
+export function boardStyle(data: Pick<LeaderboardCardData, "tierSet" | "rows">): CardStyle
 {
+	const byTierSet = cardStyle(data.tierSet?.key);
+	if (byTierSet.key !== null) return byTierSet;
+	const rows = Array.isArray(data.rows) ? data.rows : [];
 	for (const row of rows)
 	{
 		const key = tierSetKeyOf(row?.tier);
@@ -323,7 +349,7 @@ export async function renderLeaderboardCard(data: LeaderboardCardData): Promise<
 	const rows = source.map((row, index) => toRowView(row, avatars[index]));
 	const height = cardHeight(rows.length);
 	const seed = hashString(`${data.title}|${data.subtitle}`);
-	const style = boardStyle(source);
+	const style = boardStyle({ tierSet: data.tierSet, rows: source });
 
 	const canvas = createCanvas(WIDTH, height);
 	const ctx = canvas.getContext("2d");
@@ -332,8 +358,8 @@ export async function renderLeaderboardCard(data: LeaderboardCardData): Promise<
 
 	drawBackground(ctx, style, height, seed);
 	drawHeader(ctx, style, data, seed);
-	if (rows.length === 0) drawEmpty(ctx, cleanText(data.emptyText));
-	rows.forEach((row, index) => drawRow(ctx, row, ROWS_TOP + index * (ROW_H + ROW_GAP)));
+	if (rows.length === 0) drawEmpty(ctx, style, cleanText(data.emptyText));
+	rows.forEach((row, index) => drawRow(ctx, style, row, ROWS_TOP + index * (ROW_H + ROW_GAP)));
 	drawFooter(ctx, cleanText(data.footer), height);
 	strokeRoundedRect(ctx, 1, 1, WIDTH - 2, height - 2, CARD_RADIUS - 1, linearGradient(ctx, 0, 0, WIDTH, height, [rgba(PALETTE.gold, 0.55), rgba(style.boardAccent, 0.2), rgba(PALETTE.gold, 0.4)]), 2);
 

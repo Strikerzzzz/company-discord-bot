@@ -349,6 +349,24 @@ describe("dữ liệu ảnh bảng xếp hạng", () =>
 		assert.equal(row.tier?.name, "Tinh Anh", "kỳ tổng cũng theo bộ");
 	});
 
+	test("ảnh mọi bảng (Contribution, team, bảng trống) mang bộ danh hiệu của guild", () =>
+	{
+		const renamed = applyTierOverrides(TIER_SETS["cay-xanh"], [{ tierKey: "bac-8", name: "Cổ Thụ", emoji: null }]);
+		const pages: [string, number, number][][] = [[], [[USER_A, 1, 120]]];
+		for (const kind of ["activity", "contribution"] as const)
+		{
+			for (const scope of ["individual", "team"] as const)
+			{
+				for (const entries of pages)
+				{
+					const data = buildLeaderboardCardData(cardInput({ kind, scope, page: boardPage(entries), tierSet: renamed }));
+					assert.equal(data.tierSet, renamed, `${kind} ${scope} ${entries.length}`);
+				}
+			}
+		}
+		assert.equal(buildLeaderboardCardData(cardInput({})).tierSet, DEFAULT_TIER_SET);
+	});
+
 	test("Contribution cá nhân: \"N điểm\", không có cảnh giới hay dòng phụ", () =>
 	{
 		const [row] = buildLeaderboardCardData(cardInput({ kind: "contribution", page: boardPage([[USER_A, 1, 1234]]), viewerId: USER_A })).rows;
@@ -760,6 +778,12 @@ describe("/leaderboard: ảnh và nút", () =>
 
 		assert.deepEqual(h.rendered[0].rows.map(row => [row.name, row.accentColor, row.value]), [["Backend", "#3498db", "300 XP"]]);
 		assert.deepEqual(h.resolved, [], "bảng team không tra thành viên");
+		assert.equal(h.rendered[0].tierSet.key, "tu-tien");
+
+		h.services.tierSets.select(GUILD, "vu-tru", ADMIN);
+		h.clock.advanceSeconds(5);
+		await h.command.execute(fakeCommand({ strings: { "pham-vi": "team" }, guild }).interaction);
+		assert.equal(h.rendered[1].tierSet.key, "vu-tru", "bảng team trang trí theo bộ danh hiệu guild đang dùng");
 	});
 
 	test("chủ bảng bấm nút: sửa chính message đó, thay ảnh cũ bằng ảnh mới", async () =>

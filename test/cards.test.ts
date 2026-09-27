@@ -123,8 +123,34 @@ function board(rows: LeaderboardCardRow[], overrides: Partial<LeaderboardCardDat
 		rows,
 		footer: `Trang 1/1 · ${rows.length} người`,
 		emptyText: "Chưa có ai trên bảng này",
+		tierSet: DEFAULT_TIER_SET,
 		...overrides,
 	};
+}
+
+/** 10 dòng bảng Contribution cá nhân: không bậc, không dòng phụ, vài avatar. */
+function contributionRows(): LeaderboardCardRow[]
+{
+	return Array.from({ length: 10 }, (_, index) => row(index + 1, {
+		value: `${186 - index * 17} điểm`,
+		detail: null,
+		tier: null,
+		avatar: index % 3 === 0 ? fakeAvatar() : null,
+		highlight: index === 4,
+	}));
+}
+
+/** 6 dòng bảng team: tên role, màu role (có dòng không màu), không avatar, không bậc. */
+function teamRows(): LeaderboardCardRow[]
+{
+	const teams: [string, string | null][] = [["Backend", "#3498db"], ["Frontend", "#e91e63"], ["QA", null], ["DevOps", "#2ecc71"], ["Design", "#f1c40f"], ["Data", null]];
+	return teams.map(([name, accentColor], index) => row(index + 1, { name, accentColor, value: `${12400 - index * 1900} XP`, detail: null, tier: null }));
+}
+
+/** Bộ danh hiệu mang khoá lạ như khi dữ liệu bị sửa tay; Object.assign giữ kiểu TierSet nên không cần ép kiểu. */
+function corruptTierSet(key: string): TierSet
+{
+	return Object.assign({}, DEFAULT_TIER_SET, { key });
 }
 
 before(async () =>
@@ -323,18 +349,25 @@ describe("bộ danh hiệu trên ảnh thẻ", () =>
 		assert.ok(!hasTierEmblem(null, 0));
 	});
 
-	test("phong cách ảnh theo bộ; bộ lạ dùng phong cách trung tính; bảng xếp hạng lấy bộ từ bậc của các dòng", () =>
+	test("phong cách ảnh theo bộ; bộ lạ dùng phong cách trung tính; mọi bảng xếp hạng lấy bộ danh hiệu của guild", () =>
 	{
 		for (const key of TIER_SET_KEYS)
 		{
+			const tierSet = TIER_SETS[key];
 			assert.equal(cardStyle(key).key, key);
-			assert.equal(boardStyle(setRows(TIER_SETS[key])).key, key);
+			assert.equal(boardStyle({ tierSet, rows: setRows(tierSet) }).key, key);
+			assert.equal(boardStyle({ tierSet, rows: contributionRows() }).key, key, `${key}: bảng Contribution`);
+			assert.equal(boardStyle({ tierSet, rows: teamRows() }).key, key, `${key}: bảng team`);
+			assert.equal(boardStyle({ tierSet, rows: [] }).key, key, `${key}: bảng trống`);
 		}
 		assert.equal(cardStyle("khong-co").key, null);
 		assert.equal(cardStyle(null).key, null);
-		assert.equal(boardStyle([]).key, null);
-		assert.equal(boardStyle([row(1, { tier: null }), row(2, { tier: tierForLevel(20, TIER_SETS["vu-tru"]) })]).key, "vu-tru");
-		assert.equal(boardStyle([row(1, { tier: corruptTier(TIERS[0], { setKey: "khong-co" }) })]).key, null);
+		assert.equal(boardStyle({ tierSet: TIER_SETS["cay-xanh"], rows: setRows(TIER_SETS["vu-tru"]) }).key, "cay-xanh", "bộ của guild được ưu tiên");
+
+		const broken = corruptTierSet("khong-co");
+		assert.equal(boardStyle({ tierSet: broken, rows: [] }).key, null);
+		assert.equal(boardStyle({ tierSet: broken, rows: [row(1, { tier: null }), row(2, { tier: tierForLevel(20, TIER_SETS["vu-tru"]) })] }).key, "vu-tru");
+		assert.equal(boardStyle({ tierSet: broken, rows: [row(1, { tier: corruptTier(TIERS[0], { setKey: "khong-co" }) })] }).key, null);
 	});
 
 	test("viên thuốc bậc thu nhỏ rồi cắt tên dài cho vừa khung", () =>
@@ -561,12 +594,42 @@ describe("renderLeaderboardCard", () =>
 		const images = new Set<string>();
 		for (const key of TIER_SET_KEYS)
 		{
-			const card = await timed(() => renderLeaderboardCard(board(setRows(TIER_SETS[key]))));
+			const card = await timed(() => renderLeaderboardCard(board(setRows(TIER_SETS[key]), { tierSet: TIER_SETS[key] })));
 			await assertCard(card, "leaderboard.png");
 			assert.equal(card.width, 1000);
 			images.add(card.png.toString("base64"));
 		}
 		assert.equal(images.size, TIER_SET_KEYS.length);
+	});
+
+	test("bảng Contribution, bảng team và bảng trống vẽ được cho từng bộ, trang trí khác nhau giữa các bộ", async () =>
+	{
+		const variants: [string, () => LeaderboardCardData["rows"], Partial<LeaderboardCardData>][] = [
+			["contribution", contributionRows, { title: "BẢNG XẾP HẠNG · CONTRIBUTION", subtitle: "Cá nhân · Tháng này (09/2026)" }],
+			["team", teamRows, { subtitle: "Team · Tổng", footer: "Trang 1/1 · 6 team" }],
+			["trống", () => [], { subtitle: "Team · Tuần này (từ 21/09)", emptyText: "Tuần này chưa team nào ghi điểm — gửi contribution để mở hàng!" }],
+		];
+		for (const [name, rows, overrides] of variants)
+		{
+			const images = new Set<string>();
+			for (const key of TIER_SET_KEYS)
+			{
+				const card = await timed(() => renderLeaderboardCard(board(rows(), { ...overrides, tierSet: TIER_SETS[key] })));
+				await assertCard(card, "leaderboard.png");
+				assert.equal(card.width, 1000);
+				images.add(card.png.toString("base64"));
+			}
+			assert.equal(images.size, TIER_SET_KEYS.length, `bảng ${name}: mỗi bộ một kiểu trang trí`);
+		}
+	});
+
+	test("bộ danh hiệu hỏng vẫn vẽ được (phong cách trung tính hoặc theo bậc của dòng)", async () =>
+	{
+		const broken = corruptTierSet("khong-co");
+		for (const rows of [[], contributionRows(), setRows(TIER_SETS["kiem-hiep"])])
+		{
+			await assertCard(await timed(() => renderLeaderboardCard(board(rows, { tierSet: broken }))), "leaderboard.png");
+		}
 	});
 
 	test("tên bậc tuỳ chỉnh dài và bậc có bộ lạ trong bảng xếp hạng", async () =>

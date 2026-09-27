@@ -60,7 +60,10 @@ export interface LeaderboardCardInput
 	 * (bậc luôn theo level tổng, không theo điểm của kỳ). Kỳ "all" thì điểm của dòng chính là tổng XP.
 	 */
 	totalXp?: ReadonlyMap<string, number>;
-	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh, DEC-033): bậc trên các dòng bảng Activity cá nhân lấy từ bộ này. */
+	/**
+	 * Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh, DEC-033): bậc trên các dòng bảng Activity cá nhân lấy từ bộ này,
+	 * và ảnh của mọi bảng (kể cả Contribution, team) trang trí theo bộ này.
+	 */
 	tierSet: TierSet;
 	/** Bảng team: role còn tồn tại; thiếu = role đã bị xoá. */
 	roles?: ReadonlyMap<string, CardRole>;
@@ -153,6 +156,7 @@ export function buildLeaderboardCardData(input: LeaderboardCardInput): Leaderboa
 		rows: page.entries.slice(0, CARD_PAGE_SIZE).map(entry => scope === "team" ? teamRow(input, entry) : personRow(input, entry)),
 		footer: `Trang ${formatNumber(page.page)}/${formatNumber(page.totalPages)} · ${formatNumber(page.totalEntries)} ${unit}`,
 		emptyText: leaderboardEmptyText(kind, scope, page.period),
+		tierSet: input.tierSet,
 	};
 }
 

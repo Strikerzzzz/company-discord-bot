@@ -81,6 +81,11 @@ export interface LeaderboardCardData
 	footer: string;
 	/** Chữ hiển thị khi rows rỗng, ví dụ "Chưa có ai trên bảng này". */
 	emptyText: string;
+	/**
+	 * Bộ danh hiệu guild đang dùng (DEC-033): chọn trang trí, nền, khung cúp ở tiêu đề và hình trạng thái bảng trống
+	 * cho mọi bảng (Activity, Contribution, cá nhân và team), kể cả bảng có dòng không mang bậc.
+	 */
+	tierSet: TierSet;
 }
 
 /** Ảnh đã vẽ, gửi lên Discord dưới dạng file đính kèm. */

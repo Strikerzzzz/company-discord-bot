@@ -34,7 +34,7 @@ import { PALETTE } from "./theme";
 
 /*
  * Phong cách ảnh thẻ theo bộ danh hiệu (DEC-033): hoa văn nền, khung quanh avatar, hiệu ứng bậc cao nhất, góc viền,
- * nền và khung cúp của bảng xếp hạng. Bộ lạ dùng phong cách trung tính (nền núi đêm, vòng vạch chia, không hoa văn riêng).
+ * nền, khung cúp và hình bảng trống của bảng xếp hạng. Bộ lạ dùng phong cách trung tính (nền núi đêm, vòng vạch chia, không hoa văn riêng).
  */
 
 export interface TopColors
@@ -83,6 +83,10 @@ export interface CardStyle
 	boardBackground(ctx: Ctx, rand: Random, width: number, height: number, avoid: readonly Area[]): void;
 	/** Khung nhỏ quanh cúp ở đầu bảng xếp hạng. */
 	boardRing(ctx: Ctx, x: number, y: number, radius: number, seed: number): void;
+	/** Màu dịu của bảng xếp hạng: biểu tượng ở bảng trống, pha vào viền avatar của dòng không có bậc hay màu riêng. */
+	boardSoft: string;
+	/** Quầng sáng và khung lớn ở giữa bảng trống; biểu tượng bậc cao nhất của bộ do leaderboardCard vẽ đè lên. */
+	boardEmpty(ctx: Ctx, x: number, y: number, radius: number): void;
 }
 
 const GOLD_TOP: TopColors = { primary: PALETTE.gold, secondary: "#b388ff", light: "#fff3b0" };
@@ -105,6 +109,13 @@ function ground(scene: RankScene): Area
 function nothing(): void
 {
 	return;
+}
+
+/** Quầng sáng sau khung bảng trống: quầng lớn màu nhấn của bộ, quầng nhỏ màu dịu. */
+function emptyGlow(ctx: Ctx, x: number, y: number, radius: number, accent: string, soft: string): void
+{
+	drawGlow(ctx, x, y, radius * 2.1, accent, 0.22);
+	drawGlow(ctx, x, y, radius * 1.1, soft, 0.12);
 }
 
 function sparkleCorners(ctx: Ctx, width: number, height: number, color: string): void
@@ -166,6 +177,12 @@ const TU_TIEN_STYLE: CardStyle = {
 	corners: (ctx, width, height) => sparkleCorners(ctx, width, height, GOLD_TOP.light),
 	boardBackground: tuTienBoardBackground,
 	boardRing: (ctx, x, y, radius, seed) => drawFormation(ctx, x, y, radius, PALETTE.gold, 2 + (seed % 2)),
+	boardSoft: "#c9b8f0",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, "#7c4dff", "#c9b8f0");
+		drawFormation(ctx, x, y, radius, "#c9b8f0", 3);
+	},
 };
 
 const NEUTRAL_STYLE: CardStyle = {
@@ -182,6 +199,12 @@ const NEUTRAL_STYLE: CardStyle = {
 	corners: (ctx, width, height) => sparkleCorners(ctx, width, height, GOLD_TOP.light),
 	boardBackground: tuTienBoardBackground,
 	boardRing: (ctx, x, y, radius) => drawFormation(ctx, x, y, radius, PALETTE.gold, 1),
+	boardSoft: "#b39ddb",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		drawGlow(ctx, x, y, radius * 2, "#7c4dff", 0.25);
+		drawFormation(ctx, x, y, radius, "#b39ddb", 1);
+	},
 };
 
 const RANK_TOP: TopColors = { primary: "#ffd166", secondary: "#ff5252", light: "#fff3b0" };
@@ -265,6 +288,12 @@ const RANK_GAME_STYLE: CardStyle = {
 		drawSparks(ctx, rand, { x: 0, y: 0, width, height }, Math.round(height / 8), ["#ffffff", PALETTE.gold, "#93c5fd"], avoid);
 	},
 	boardRing: (ctx, x, y, radius) => drawHexCrest(ctx, x, y, radius, { color: PALETTE.gold, accent: PALETTE.gold, complexity: 4, detailed: false }),
+	boardSoft: "#a9cdfb",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, "#1d4ed8", "#ef4444");
+		drawHexCrest(ctx, x, y, radius, { color: "#a9cdfb", accent: RANK_TOP.primary, complexity: 5, detailed: false });
+	},
 };
 
 const KIEM_TOP: TopColors = { primary: "#f5c451", secondary: "#e53935", light: "#fff1c1" };
@@ -329,6 +358,12 @@ const KIEM_HIEP_STYLE: CardStyle = {
 		drawPetals(ctx, rand, { x: 0, y: 0, width, height }, Math.round(height / 14), PETALS, avoid);
 	},
 	boardRing: (ctx, x, y, radius) => drawEnsoFrame(ctx, x, y, radius, { color: PALETTE.gold, accent: PALETTE.gold, complexity: 4, detailed: false }),
+	boardSoft: "#f3d9a4",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, "#dc2626", "#f3d9a4");
+		drawEnsoFrame(ctx, x, y, radius, { color: "#f3d9a4", accent: KIEM_TOP.secondary, complexity: 2, detailed: false });
+	},
 };
 
 const CAY_TOP: TopColors = { primary: "#ffd54f", secondary: "#66bb6a", light: "#fff8d6" };
@@ -390,6 +425,12 @@ const CAY_XANH_STYLE: CardStyle = {
 		drawFireflies(ctx, rand, { x: 0, y: 0, width, height }, Math.round(height / 30), "#fff59d", avoid);
 	},
 	boardRing: (ctx, x, y, radius) => drawVineWreath(ctx, x, y, radius, { color: "#86efac", accent: PALETTE.gold, complexity: 7, detailed: false }),
+	boardSoft: "#a7f3c0",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, "#15803d", "#fff59d");
+		drawVineWreath(ctx, x, y, radius, { color: "#86efac", accent: CAY_TOP.primary, complexity: 7, detailed: false });
+	},
 };
 
 const VU_TRU_TOP: TopColors = { primary: "#f0abfc", secondary: "#818cf8", light: "#fdf4ff" };
@@ -443,6 +484,12 @@ const VU_TRU_STYLE: CardStyle = {
 		drawShootingStar(ctx, width - 230, 30, 110, Math.PI * 0.88, "#ffffff", 1.5);
 	},
 	boardRing: (ctx, x, y, radius) => drawOrbitFrame(ctx, x, y, radius, { color: PALETTE.gold, accent: PALETTE.gold, complexity: 6, detailed: false }),
+	boardSoft: "#c7d2fe",
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, "#7c4dff", "#f0abfc");
+		drawOrbitFrame(ctx, x, y, radius, { color: "#c7d2fe", accent: VU_TRU_TOP.primary, complexity: 6, detailed: false });
+	},
 };
 
 const STYLES: Readonly<Record<TierSetKey, CardStyle>> = {
