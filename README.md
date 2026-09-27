@@ -44,8 +44,8 @@ Cần quyền **Manage Server** hoặc role admin do bot cấu hình.
 | `/admin stats` · `audit` · `backup` | Thống kê, nhật ký quản trị, sao lưu ngay |
 | `/config view · xp · channel · team · admin-role · contribution` | Cấu hình XP, cooldown, channel, team, quyền, điểm contribution |
 | `/config poll` | XP mặc định khi vote, giới hạn XP từ vote mỗi ngày (`gioi-han-xp-ngay`), role được tạo vote |
-| `/config canh-gioi gan-role · bo-role · list` | Gán, bỏ, xem role Discord của từng cảnh giới |
-| `/config bang-vang kenh` · `tat` | Đặt kênh hoặc tắt Bảng vàng |
+| `/config tier set-role · clear-role · list` | Gán, bỏ, xem role Discord của từng cảnh giới (dùng role mới tạo riêng; người gán cần Manage Roles) |
+| `/config board kenh` · `tat` | Đặt kênh hoặc tắt Bảng vàng |
 
 ## Phát triển
 

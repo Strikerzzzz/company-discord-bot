@@ -377,6 +377,24 @@ describe("ContributionService.adjust", () =>
 		assert.equal(deps.audit.list(GUILD, 10).filter(entry => entry.action === "contribution.adjust").length, 2);
 	});
 
+	test("tổng đang âm (dữ liệu cũ): vẫn cộng được, kể cả khi cộng xong vẫn âm; trừ thêm thì bị chặn", () =>
+	{
+		const { service, deps } = setup();
+		deps.contributionLedger.record({ guildId: GUILD, userId: USER_A, amount: -5, source: "admin", reason: "dữ liệu cũ" });
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), -5);
+
+		assert.deepEqual(service.adjust({ guildId: GUILD, userId: USER_A, delta: 2, actorId: ADMIN, reason: null, roleIds: [] }), { score: -3 });
+		assert.throws(
+			() => service.adjust({ guildId: GUILD, userId: USER_A, delta: -1, actorId: ADMIN, reason: null, roleIds: [] }),
+			userError("Không thể trừ quá số điểm hiện có (hiện có -3 điểm)."),
+		);
+		assert.deepEqual(service.adjust({ guildId: GUILD, userId: USER_A, delta: 3, actorId: ADMIN, reason: null, roleIds: [] }), { score: 0 });
+		assert.deepEqual(
+			deps.audit.list(GUILD, 10).filter(entry => entry.action === "contribution.adjust").map(entry => entry.details),
+			[{ delta: 3, reason: null, score: 0 }, { delta: 2, reason: null, score: -3 }],
+		);
+	});
+
 	test("delta phải là số nguyên khác 0, trị tuyệt đối tối đa 1.000.000", () =>
 	{
 		const context = setup();

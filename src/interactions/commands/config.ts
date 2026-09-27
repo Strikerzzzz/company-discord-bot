@@ -5,6 +5,7 @@ import {
 	GuildMember,
 	MessageFlags,
 	PermissionFlagsBits,
+	PermissionsBitField,
 	Role,
 	SlashCommandBuilder,
 	SlashCommandSubcommandBuilder,
@@ -25,6 +26,7 @@ import {
 	ephemeral,
 	ephemeralEmbed,
 	settingLine,
+	TIER_ROLE_DEDICATED_NOTE,
 	TIER_ROLE_SYNC_NOTE,
 } from "../../discord/views/admin";
 import { isTierKey, Tier, tierByKey, TIERS } from "../../modules/activity/tiers";
@@ -32,6 +34,7 @@ import { TierRoleMapping } from "../../modules/gamification/types";
 import { ChannelSettings, GuildSettings, NumericSettingKey, SETTING_LIMITS } from "../../modules/guild-config/types";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
+import { logger } from "../../shared/logger";
 
 const NO_CHANGE_MESSAGE = "Hãy chọn ít nhất một giá trị để thay đổi.";
 
@@ -56,11 +59,19 @@ const XP_CHANNEL_TYPES = [
 /** Loại channel đặt được Bảng vàng: kênh chữ thường và kênh thông báo. */
 const BOARD_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement] as const;
 
+type PermissionList = readonly (readonly [bigint, string])[];
+
 /** Quyền bot cần ở kênh Bảng vàng để đăng message kèm ảnh (DEC-030). */
-const BOARD_PERMISSIONS: readonly (readonly [bigint, string])[] = [
+const BOARD_PERMISSIONS: PermissionList = [
 	[PermissionFlagsBits.ViewChannel, "View Channel"],
 	[PermissionFlagsBits.SendMessages, "Send Messages"],
 	[PermissionFlagsBits.AttachFiles, "Attach Files"],
+];
+
+/** Quyền người gọi phải tự có ở kênh Bảng vàng, để không mượn bot đăng vào kênh mình không được gửi tin (LL-013). */
+const BOARD_CALLER_PERMISSIONS: PermissionList = [
+	[PermissionFlagsBits.ViewChannel, "View Channel"],
+	[PermissionFlagsBits.SendMessages, "Send Messages"],
 ];
 
 /** Lựa chọn cảnh giới, ví dụ "Luyện Khí (Lv 0+)"; value là khoá cảnh giới. */
@@ -175,21 +186,21 @@ function tierOption(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandB
 function tierRoleGroup(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder
 {
 	return group
-		.setName("canh-gioi")
+		.setName("tier")
 		.setDescription("Role Discord bot tự gán theo cảnh giới tu luyện")
 		.addSubcommand(sub => addRole(
-			tierOption(sub.setName("gan-role").setDescription("Gán role cho một cảnh giới")),
-			"Role bot sẽ tự gán cho thành viên đạt cảnh giới này",
+			tierOption(sub.setName("set-role").setDescription("Gán role cho một cảnh giới (nên dùng role mới tạo riêng)")),
+			"Role mới tạo riêng, bot sẽ tự gán cho thành viên đạt cảnh giới này",
 			true,
 		))
-		.addSubcommand(sub => tierOption(sub.setName("bo-role").setDescription("Bỏ role của một cảnh giới")))
+		.addSubcommand(sub => tierOption(sub.setName("clear-role").setDescription("Bỏ role của một cảnh giới")))
 		.addSubcommand(sub => sub.setName("list").setDescription("Xem role của từng cảnh giới"));
 }
 
 function liveBoardSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
 {
 	return sub
-		.setName("bang-vang")
+		.setName("board")
 		.setDescription("Đặt kênh Bảng vàng (bảng xếp hạng dạng ảnh tự cập nhật) hoặc tắt Bảng vàng")
 		.addChannelOption(option => option
 			.setName("kenh")
@@ -212,6 +223,46 @@ function botMemberOf(interaction: ChatInputCommandInteraction<"cached">): GuildM
 	const me = interaction.guild.members.me;
 	if (!me) throw new UserError(BOT_MEMBER_UNAVAILABLE);
 	return me;
+}
+
+/** Thông tin mới nhất của bot từ Discord (role, quyền), để kiểm tra thứ bậc role không dựa vào cache cũ. */
+async function freshBotMemberOf(interaction: ChatInputCommandInteraction<"cached">): Promise<GuildMember>
+{
+	try
+	{
+		return await interaction.guild.members.fetchMe({ force: true });
+	}
+	catch (error)
+	{
+		logger.warn(`Không tải được thông tin của bot ở server "${interaction.guildId}":`, error);
+		throw new UserError(BOT_MEMBER_UNAVAILABLE);
+	}
+}
+
+/** Tên (in đậm) các quyền trong `list` mà `permissions` không có. */
+function missingPermissions(permissions: Readonly<PermissionsBitField>, list: PermissionList): string[]
+{
+	return list.filter(([flag]) => !permissions.has(flag)).map(([, name]) => `**${name}**`);
+}
+
+/**
+ * Người gọi phải tự gán được `role` theo luật Discord áp cho người thường: có Manage Roles và role nằm dưới role cao nhất
+ * của họ (chủ server luôn được). Như vậy role admin bot không đủ để mượn bot gán role mà chính người gọi không gán được.
+ */
+function callerRoleIssue(interaction: ChatInputCommandInteraction<"cached">, role: Role): string | null
+{
+	if (interaction.guild.ownerId === interaction.user.id) return null;
+	if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageRoles))
+	{
+		return "Bạn cần quyền **Manage Roles** để gán role cảnh giới, vì bot sẽ thay bạn gán role này cho thành viên.";
+	}
+	const highest = interaction.member.roles.highest;
+	if (role.position >= highest.position)
+	{
+		return `Bạn không gán được ${roleMention(role.id)} vì role này không thấp hơn role cao nhất của bạn (${roleMention(highest.id)}). `
+			+ "Discord chỉ cho gán role nằm dưới role cao nhất của mình.";
+	}
+	return null;
 }
 
 function tierOf(interaction: ChatInputCommandInteraction): Tier
@@ -303,13 +354,13 @@ export default class ConfigCmd extends Command
 
 		if (group === "channel") await this.executeChannel(context, subcommand);
 		else if (group === "team") await this.executeTeam(context, subcommand);
-		else if (group === "canh-gioi") await this.executeTierRoles(context, subcommand);
+		else if (group === "tier") await this.executeTierRoles(context, subcommand);
 		else if (subcommand === "view") await this.view(context);
 		else if (subcommand === "xp") await this.updateXp(context);
 		else if (subcommand === "admin-role") await this.updateAdminRole(context);
 		else if (subcommand === "poll") await this.updatePoll(context);
 		else if (subcommand === "contribution") await this.updateContribution(context);
-		else if (subcommand === "bang-vang") await this.updateLiveBoard(context);
+		else if (subcommand === "board") await this.updateLiveBoard(context);
 		else throw new Error(`Subcommand không hợp lệ: /config ${group ?? ""} ${subcommand}`);
 	}
 
@@ -353,17 +404,17 @@ export default class ConfigCmd extends Command
 	{
 		switch (subcommand)
 		{
-		case "gan-role":
+		case "set-role":
 			await this.assignTierRole(context);
 			break;
-		case "bo-role":
+		case "clear-role":
 			await this.clearTierRole(context);
 			break;
 		case "list":
 			await context.interaction.reply(ephemeralEmbed(buildTierRoleListEmbed(this.services.tierRoles.list(context.guildId))));
 			break;
 		default:
-			throw new Error(`Subcommand không hợp lệ: /config canh-gioi ${subcommand}`);
+			throw new Error(`Subcommand không hợp lệ: /config tier ${subcommand}`);
 		}
 	}
 
@@ -435,6 +486,7 @@ export default class ConfigCmd extends Command
 	{
 		const role = interaction.options.getRole("role", true);
 		assertAssignableRole(role, guildId, "làm team");
+		this.assertNotTierRole(guildId, role.id, "làm team");
 		const added = this.services.teams.add(guildId, role.id, actorId);
 		await interaction.reply(ephemeral(added
 			? `Đã thêm ${roleMention(role.id)} làm team. Điểm team chỉ tính từ các lượt kiếm điểm kể từ bây giờ.`
@@ -456,6 +508,7 @@ export default class ConfigCmd extends Command
 		if (role)
 		{
 			assertAssignableRole(role, context.guildId, "làm role admin bot");
+			this.assertNotTierRole(context.guildId, role.id, "làm role admin bot");
 			this.updateSettings(context, { adminRoleId: role.id });
 			await context.interaction.reply(ephemeral([
 				`Đã đặt ${roleMention(role.id)} làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.`,
@@ -481,6 +534,7 @@ export default class ConfigCmd extends Command
 		if (role)
 		{
 			assertAssignableRole(role, context.guildId, "làm role tạo vote");
+			this.assertNotTierRole(context.guildId, role.id, "làm role tạo vote");
 			patch.pollCreatorRoleId = role.id;
 		}
 		if (clearRole) patch.pollCreatorRoleId = null;
@@ -499,21 +553,53 @@ export default class ConfigCmd extends Command
 		));
 	}
 
-	/** Gán role cho một cảnh giới sau khi kiểm tra role an toàn và bot quản lý được (DEC-031). */
+	/** Vai trò khác của role trong cấu hình bot (role admin bot, role tạo vote, team); null nếu không có. */
+	private otherRoleUsage(guildId: string, roleId: string): string | null
+	{
+		const settings = this.services.guildConfig.getSettings(guildId);
+		if (settings.adminRoleId === roleId) return "role admin bot";
+		if (settings.pollCreatorRoleId === roleId) return "role được tạo vote";
+		if (this.services.teams.list(guildId).includes(roleId)) return "role của một team";
+		return null;
+	}
+
+	/** Role cảnh giới không được dùng vào việc khác: bot tự thêm và gỡ role cảnh giới theo level của từng người (DEC-031). */
+	private assertNotTierRole(guildId: string, roleId: string, purpose: string): void
+	{
+		const mapping = this.services.tierRoles.list(guildId).find(entry => entry.roleId === roleId);
+		if (!mapping) return;
+		throw new UserError(`Không thể dùng ${roleMention(roleId)} ${purpose} vì role này đang là role của cảnh giới ${tierByKey(mapping.tierKey).name}: `
+			+ "bot tự thêm và gỡ role cảnh giới theo level của từng người. Hãy chọn role khác, hoặc bỏ gán bằng `/config tier clear-role` trước.");
+	}
+
+	/**
+	 * Gán role cho một cảnh giới (DEC-031) sau khi kiểm tra: người gọi tự gán được role đó, role an toàn và bot quản lý được
+	 * (theo thông tin mới nhất của bot), role không đang giữ vai trò khác trong cấu hình bot.
+	 */
 	private async assignTierRole({ interaction: base, guildId, actorId }: ConfigContext): Promise<void>
 	{
 		const interaction = requireCachedGuild(base);
 		const tier = tierOf(interaction);
 		const role = interaction.options.getRole("role", true);
-		const me = botMemberOf(interaction);
+		const callerIssue = callerRoleIssue(interaction, role);
+		if (callerIssue !== null) throw new UserError(callerIssue);
+
+		const me = await freshBotMemberOf(interaction);
 		const issue = tierRoleSafetyIssue(role, me);
 		if (issue !== null) throw new UserError(issue);
 
+		// Kiểm tra vai trò khác của role sau await, liền trước bước ghi, để không có await chen giữa bước đọc và bước ghi.
+		const usage = this.otherRoleUsage(guildId, role.id);
+		if (usage !== null)
+		{
+			throw new UserError(`Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì role này đang là ${usage}. `
+				+ "Bot tự gán role cảnh giới cho người đủ level và gỡ khỏi người khác, nên hãy tạo một role mới dành riêng cho cảnh giới.");
+		}
 		const { tierRoles } = this.services;
 		const previous = assignedRole(tierRoles.list(guildId), tier);
 		tierRoles.set(guildId, tier.key, role.id, actorId);
 
-		const lines = [`Đã gán ${roleMention(role.id)} cho cảnh giới ${tierTitle(tier)}.`, TIER_ROLE_SYNC_NOTE];
+		const lines = [`Đã gán ${roleMention(role.id)} cho cảnh giới ${tierTitle(tier)}.`, TIER_ROLE_SYNC_NOTE, TIER_ROLE_DEDICATED_NOTE];
 		if (previous !== null && previous !== role.id)
 		{
 			lines.push(`Role cũ ${roleMention(previous)} không còn do bot quản lý; bot không tự gỡ role đó khỏi những người đang có.`);
@@ -557,8 +643,12 @@ export default class ConfigCmd extends Command
 	{
 		const interaction = requireCachedGuild(base);
 		const channel = interaction.options.getChannel("kenh", true, BOARD_CHANNEL_TYPES);
-		const permissions = channel.permissionsFor(botMemberOf(interaction));
-		const missing = BOARD_PERMISSIONS.filter(([flag]) => !permissions.has(flag)).map(([, name]) => `**${name}**`);
+		const callerMissing = missingPermissions(channel.permissionsFor(interaction.member), BOARD_CALLER_PERMISSIONS);
+		if (callerMissing.length > 0)
+		{
+			throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể đặt Bảng vàng ở kênh đó.`);
+		}
+		const missing = missingPermissions(channel.permissionsFor(botMemberOf(interaction)), BOARD_PERMISSIONS);
 		if (missing.length > 0)
 		{
 			throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
