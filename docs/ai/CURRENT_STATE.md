@@ -34,10 +34,10 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | Hạng mục | Kết quả |
 | --- | --- |
 | `npm ci` (bản copy sạch) | OK |
-| `npm run check` | OK: build, lint, **601/601 test** trên bản copy sạch; **603/603** sau PROP-031 (máy dev) |
+| `npm run check` | OK: build, lint, **725/725 test** trên bản copy sạch (Phase 13, `phase-13/tier-sets`) |
 | `npm audit` | 0 lỗ hổng |
-| Vẽ ảnh từ `build/` với service thật | OK (thẻ rank và bảng xếp hạng, font tiếng Việt đúng) |
-| Khởi động từ bản build (token giả, DB mới) | Đủ 3 migration (21 bảng); nạp 7 command, 1 context menu, 3 event và 3 namespace nút; tự backup; Discord từ chối token; token không lọt log |
+| Vẽ ảnh từ `build/` với service thật | OK, kể cả bộ Rank game có tên bậc tuỳ chỉnh (font tiếng Việt đúng) |
+| Khởi động từ bản build (token giả, DB mới) | Đủ 4 migration (23 bảng); nạp 7 command, 1 context menu, 3 event và 4 namespace component (`tierui`, `contrib`, `lb`, `poll`); tự backup; Discord từ chối token; token không lọt log |
 | Test tích hợp | `test/integration.test.ts`, `test/integration-gamification.test.ts` (qua service thật và hàm vẽ thật) |
 | Hiệu năng (200k event) | Bảng tuần ~7 ms, tháng ~28 ms, team tháng ~61 ms; "Hạng của tôi" với 2000 người bằng điểm ~55–75 ms (trước khi sửa ~7 s) |
 | Review độc lập (3 agent) | Đúng đắn dữ liệu, Discord API, bảo mật: mọi lỗi kỹ thuật đã xác nhận đều đã sửa (LL-017); quy tắc nghiệp vụ còn lại đã chốt ở DEC-032 |
@@ -59,6 +59,7 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 
 ## 5. Đang chờ người phụ trách quyết định
 
+- Duyệt merge Phase 13 (`phase-13/tier-sets`) và PROP-032 (`/config admin-role` chỉ người có Manage Server đặt được).
 - PEND-004: remote git nội bộ. PEND-005: máy chủ cụ thể và process manager (đề xuất systemd). PEND-013: thời gian giữ dữ liệu.
 
 ## 6. Cách làm việc với repo
