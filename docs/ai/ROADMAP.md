@@ -21,7 +21,7 @@
 | 9 | Contribution Leaderboards (cá nhân và team) | **Đã merge vào `main`** | DEC-024 |
 | 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
 | 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
-| 12 | Gamification và giao diện ảnh | **ĐANG LÀM** trên `phase-12/gamification` | DEC-028…031 |
+| 12 | Gamification và giao diện ảnh | **ĐÃ CODE**, đã review và sửa lỗi; chờ duyệt merge | DEC-028…031 |
 
 ## Chi tiết
 
@@ -90,7 +90,7 @@ Individual Contribution Leaderboard và Team Contribution Leaderboard. Tuỳ ch�
 
 Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống kê.
 
-### Phase 12 — Gamification và giao diện ảnh · ĐANG LÀM
+### Phase 12 — Gamification và giao diện ảnh · ĐÃ CODE (chờ duyệt)
 
 - **Mục tiêu:** làm level và bảng xếp hạng thú vị hơn, có giao diện riêng ngay trong Discord.
 - **Phạm vi:**
