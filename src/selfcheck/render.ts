@@ -153,6 +153,7 @@ export function sampleLeaderboard(avatar: Buffer | null): LeaderboardCardData
 		rows,
 		footer: `Trang 1/1 · ${rows.length} người`,
 		emptyText: "Chưa có ai trên bảng này",
+		tierSet: DEFAULT_TIER_SET,
 	};
 }
 
