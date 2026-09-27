@@ -168,3 +168,32 @@ Format mỗi mục:
   - Với mọi thay đổi lớn, chạy review độc lập theo từng góc nhìn (đúng đắn, API bên ngoài, bảo mật/lạm dụng), yêu cầu reviewer **kiểm chứng** từng lỗi.
   - Spec giao việc phải được đối chiếu với luật trong `CLAUDE.md`, vì chính spec cũng có thể sai.
   - Mỗi lệnh đọc dữ liệu phải trả lời được câu hỏi: người gọi có quyền xem dữ liệu này không.
+
+## LL-014 — Agent bị dừng khi phiên kết thúc: kiểm tra worktree trước khi giao lại
+
+- **Phát hiện:** 2026-09-27 (Phase 12, agent vẽ ảnh) · **Mức độ:** Thấp · **Trạng thái:** Đã xử lý
+- **Hiện tượng:** Phiên Claude Code kết thúc khi agent đang chạy nền. Harness báo agent "không hoàn thành", nhưng thực ra agent đã commit xong toàn bộ code, test và ảnh mẫu; chỉ chưa kịp gửi báo cáo.
+- **Bài học:** Khi agent bị dừng, trước khi giao lại việc cho agent khác:
+  - xem `git log` và `git status` trong worktree của agent đó;
+  - chạy `npm run check` ngay trong worktree;
+  - review nhanh phần code nhạy cảm, rồi mới gộp.
+  Làm vậy tránh làm lại việc đã xong.
+
+## LL-015 — SQLite: partial index `WHERE voided_at IS NULL` không được coi là index phủ; planner có thể chọn thứ tự join tệ
+
+- **Phát hiện:** 2026-09-26 (Phase 12, bảng xếp hạng theo kỳ) · **Mức độ:** Trung bình · **Trạng thái:** Đã xử lý
+- **Hiện tượng:**
+  - Index `(guild_id, created_at, user_id, amount) WHERE voided_at IS NULL` vẫn phải đọc dòng bảng, trái với comment ban đầu. SQLite chỉ coi cột trong điều kiện partial là "đã biết" khi điều kiện có dạng `col = hằng` hoặc `col IS hằng`, không phải `IS NULL`.
+  - Truy vấn team theo kỳ: planner tra `team_roles` trước snapshot, bảng team tháng mất khoảng 240 ms với 200k event.
+- **Xử lý:**
+  - Dùng `CROSS JOIN` để cố định thứ tự event → snapshot → team_roles, còn khoảng 56 ms.
+  - Có thử index phủ thật (thêm `voided_at` vào index): chỉ nhanh hơn khoảng 10%, nên không đổi, chỉ sửa comment.
+- **Bài học:**
+  - Mọi truy vấn quét nhiều dòng phải có test hiệu năng với dữ liệu lớn và kiểm `EXPLAIN QUERY PLAN`.
+  - Không ghi trong comment rằng index "chỉ cần đọc index" khi chưa kiểm chứng.
+
+## LL-016 — Bash tool trên máy dev Windows làm mất dấu `\` cả trong heredoc
+
+- **Phát hiện:** 2026-09-26 · **Mức độ:** Thấp · **Trạng thái:** Đã biết, có cách tránh
+- **Hiện tượng:** Script Node viết ra file bằng heredoc `<<'EOF'` qua Bash tool bị mất một dấu `\`: `\\d` thành `\d`, `\\|` thành `\|` (chính đoạn này khi ghi bằng heredoc cũng bị mất dấu như vậy). Hậu quả là chuỗi neo không khớp, hoặc regex không hợp lệ. Hiện tượng giống lỗi của `node -e` đã ghi ở `CURRENT_STATE.md`.
+- **Bài học:** Script có `\` (regex, escape) thì viết bằng công cụ Write/Edit, không qua heredoc. Script sửa file phải kiểm tra chuỗi neo và báo lỗi nếu không khớp, không được lặng lẽ bỏ qua.
