@@ -2,13 +2,16 @@ import { before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import path from "path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
-import { renderRankCard } from "../src/discord/cards/rankCard";
+import { boardStyle, renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
+import { renderRankCard, streakHint } from "../src/discord/cards/rankCard";
 import { cleanDisplayName, colorForName, decodeAvatar, fitList, fitText, graphemes, hashString, initialOf, MAX_AVATAR_SIDE, mulberry32, sniffImageSize } from "../src/discord/cards/draw";
+import { hasTierEmblem } from "../src/discord/cards/emblems";
 import { ensureFonts, findFontDir, font } from "../src/discord/cards/fonts";
+import { cardStyle } from "../src/discord/cards/styles";
+import { cardTexts, drawTierPill, isTopTier, measureTierPill, NEUTRAL_TEXTS, tierPosition, tierSetKeyOf } from "../src/discord/cards/theme";
 import { LeaderboardCardData, LeaderboardCardRow, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { LevelInfo, levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
-import { DEFAULT_TIER_SET, nextTier, Tier, tierForLevel, TIERS } from "../src/modules/activity/tiers";
+import { applyTierOverrides, DEFAULT_TIER_SET, nextTier, Tier, tierForLevel, TIER_SET_KEYS, TIER_SETS, TierSet, TIERS } from "../src/modules/activity/tiers";
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_RENDER_MS = 1000;
@@ -86,6 +89,31 @@ function row(rank: number, overrides: Partial<LeaderboardCardRow> = {}): Leaderb
 		...overrides,
 	};
 }
+
+/** Dữ liệu thẻ rank ở bậc `tier` của bộ `set` (level vừa qua mốc của bậc). */
+function tierRankData(set: TierSet, tier: Tier, overrides: Partial<RankCardData> = {}): RankCardData
+{
+	const level = levelInfo(totalXpForLevel(tier.minLevel) + 10);
+	return rankData({ tierSet: set, tier, nextTier: nextTier(level.level, set), level, ...overrides });
+}
+
+/** 10 dòng bảng Activity với nhiều bậc khác nhau của bộ `set`. */
+function setRows(set: TierSet): LeaderboardCardRow[]
+{
+	const levels = [45, 38, 33, 27, 21, 16, 12, 8, 4, 1];
+	return levels.map((level, index) => row(index + 1, { detail: `Lv ${level}`, tier: tierForLevel(level, set), highlight: index === 5 }));
+}
+
+/**
+ * Bậc mang dữ liệu hỏng (bộ, khoá hoặc vị trí lạ) như khi dữ liệu bị sửa tay. Object.assign giữ kiểu Tier cho kết quả
+ * nên không cần ép kiểu, dù giá trị lúc chạy không thuộc TierSetKey/TierKey.
+ */
+function corruptTier(base: Tier, patch: { setKey?: string; key?: string; index?: number }): Tier
+{
+	return Object.assign({}, base, patch);
+}
+
+const LONG_TIER_NAME = "Đại Thụ Ngàn Năm Vĩnh Hằng Bất Tử";
 
 function board(rows: LeaderboardCardRow[], overrides: Partial<LeaderboardCardData> = {}): LeaderboardCardData
 {
@@ -233,16 +261,155 @@ describe("helper vẽ", () =>
 	});
 });
 
+describe("bộ danh hiệu trên ảnh thẻ", () =>
+{
+	test("chữ trên thẻ lấy theo texts của bộ; thiếu hoặc rỗng thì dùng chữ trung tính", () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			const set = TIER_SETS[key];
+			assert.deepEqual(cardTexts(set), { tierLabel: set.texts.tierLabel, maxTier: set.texts.maxTier, idleToday: set.texts.idleToday });
+		}
+		assert.equal(cardTexts(TIER_SETS["rank-game"]).maxTier, "Đã đạt hạng cao nhất");
+		assert.equal(cardTexts(TIER_SETS["cay-xanh"]).idleToday, "Hôm nay chưa tưới cây");
+		assert.deepEqual(cardTexts(undefined), NEUTRAL_TEXTS);
+		const broken: TierSet = { ...DEFAULT_TIER_SET, texts: { ...DEFAULT_TIER_SET.texts, maxTier: "  ", idleToday: "🔥", tierLabel: "Cảnh\u0000giới" } };
+		assert.deepEqual(cardTexts(broken), { tierLabel: "Cảnhgiới", maxTier: NEUTRAL_TEXTS.maxTier, idleToday: NEUTRAL_TEXTS.idleToday });
+		const neutral = [NEUTRAL_TEXTS.tierLabel, NEUTRAL_TEXTS.maxTier, NEUTRAL_TEXTS.idleToday];
+		assert.ok(neutral.every(text => !/cảnh giới|tu luyện/iu.test(text)), "chữ trung tính không mang giọng tu tiên");
+	});
+
+	test("dòng nhắc chuỗi ngày dùng idleToday của bộ khi hôm nay chưa có tin được XP", () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			const texts = cardTexts(TIER_SETS[key]);
+			assert.equal(streakHint(5, 9, false, texts)?.text, texts.idleToday);
+		}
+		const texts = cardTexts(DEFAULT_TIER_SET);
+		assert.equal(streakHint(10, 10, true, texts)?.text, "Đang lập kỷ lục!");
+		assert.equal(streakHint(0, 4, false, texts)?.text, "Nhắn tin để nhóm lửa");
+		assert.equal(streakHint(3, 9, true, texts), null);
+	});
+
+	test("vị trí bậc lấy từ tier.index, sai thì suy từ key, không suy được thì null; bậc cao nhất là vị trí 7 của mọi bộ", () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			const tiers = TIER_SETS[key].tiers;
+			tiers.forEach((tier, index) => assert.equal(tierPosition(tier), index));
+			assert.ok(isTopTier(tiers[7]));
+			assert.ok(!isTopTier(tiers[6]));
+			assert.equal(tierSetKeyOf(tiers[0]), key);
+		}
+		assert.equal(tierPosition(corruptTier(TIERS[3], { index: 99 })), 3);
+		assert.equal(tierPosition(corruptTier(TIERS[3], { index: Number.NaN, key: "bac-6" })), 5);
+		assert.equal(tierPosition(corruptTier(TIERS[3], { index: -1, key: "canh-gioi-la" })), null);
+		assert.equal(tierSetKeyOf(corruptTier(TIERS[0], { setKey: "khong-co" })), null);
+		assert.equal(tierSetKeyOf(null), null);
+	});
+
+	test("mỗi bộ có đủ 8 biểu tượng bậc; bộ hoặc vị trí lạ thì dùng biểu tượng dự phòng", () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			for (let index = 0; index < 8; index++) assert.ok(hasTierEmblem(key, index), `${key} #${index}`);
+			assert.ok(!hasTierEmblem(key, 8));
+			assert.ok(!hasTierEmblem(key, -1));
+			assert.ok(!hasTierEmblem(key, 1.5));
+			assert.ok(!hasTierEmblem(key, null));
+		}
+		assert.ok(!hasTierEmblem("khong-co", 0));
+		assert.ok(!hasTierEmblem(null, 0));
+	});
+
+	test("phong cách ảnh theo bộ; bộ lạ dùng phong cách trung tính; bảng xếp hạng lấy bộ từ bậc của các dòng", () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			assert.equal(cardStyle(key).key, key);
+			assert.equal(boardStyle(setRows(TIER_SETS[key])).key, key);
+		}
+		assert.equal(cardStyle("khong-co").key, null);
+		assert.equal(cardStyle(null).key, null);
+		assert.equal(boardStyle([]).key, null);
+		assert.equal(boardStyle([row(1, { tier: null }), row(2, { tier: tierForLevel(20, TIER_SETS["vu-tru"]) })]).key, "vu-tru");
+		assert.equal(boardStyle([row(1, { tier: corruptTier(TIERS[0], { setKey: "khong-co" }) })]).key, null);
+	});
+
+	test("viên thuốc bậc thu nhỏ rồi cắt tên dài cho vừa khung", () =>
+	{
+		ensureFonts();
+		const ctx = createCanvas(600, 60).getContext("2d");
+		const longTier: Tier = { ...TIER_SETS["cay-xanh"].tiers[7], name: LONG_TIER_NAME };
+		const natural = measureTierPill(ctx, longTier, 38);
+		assert.ok(natural > 300, `${natural}`);
+		for (const maxWidth of [300, 200, 120, 60])
+		{
+			assert.ok(measureTierPill(ctx, longTier, 38, maxWidth) <= maxWidth + 0.5, `maxWidth ${maxWidth}`);
+			assert.ok(drawTierPill(ctx, longTier, 0, 30, 38, maxWidth) <= maxWidth + 0.5);
+		}
+		const short: Tier = TIER_SETS["rank-game"].tiers[0];
+		assert.equal(measureTierPill(ctx, short, 38, 400), measureTierPill(ctx, short, 38));
+	});
+});
+
 describe("renderRankCard", () =>
 {
-	test("vẽ được mọi cảnh giới", async () =>
+	test("vẽ được mọi bộ × mọi bậc (40 trường hợp), mỗi ảnh dưới 1 giây", async () =>
 	{
-		for (const tier of TIERS)
+		let count = 0;
+		for (const key of TIER_SET_KEYS)
 		{
-			const card = await timed(() => renderRankCard(rankData({ displayName: `Đạo hữu ${tier.name}` }, totalXpForLevel(tier.minLevel) + 10)));
-			await assertCard(card, "rank.png");
-			assert.deepEqual([card.width, card.height], [1000, 460]);
+			const set = TIER_SETS[key];
+			for (const tier of set.tiers)
+			{
+				const card = await timed(() => renderRankCard(tierRankData(set, tier, { displayName: `${set.name} ${tier.name}` })));
+				await assertCard(card, "rank.png");
+				assert.deepEqual([card.width, card.height], [1000, 460]);
+				count++;
+			}
 		}
+		assert.equal(count, 40);
+	});
+
+	test("cùng vị trí bậc nhưng khác bộ thì ảnh khác nhau (trang trí theo bộ)", async () =>
+	{
+		const images = new Set<string>();
+		for (const key of TIER_SET_KEYS)
+		{
+			const set = TIER_SETS[key];
+			const card = await renderRankCard(tierRankData(set, { ...set.tiers[4], color: "#60a5fa", gradient: ["#1e3a8a", "#93c5fd"], name: "Cùng Tên" }, { displayName: "Cùng người" }));
+			images.add(card.png.toString("base64"));
+		}
+		assert.equal(images.size, TIER_SET_KEYS.length);
+	});
+
+	test("tên bậc tuỳ chỉnh dài (32 ký tự) ở bậc hiện tại và bậc kế tiếp, kể cả khi level rất lớn", async () =>
+	{
+		for (const key of TIER_SET_KEYS)
+		{
+			const set = applyTierOverrides(TIER_SETS[key], [
+				{ tierKey: "bac-5", name: LONG_TIER_NAME, emoji: null },
+				{ tierKey: "bac-6", name: "Võ Lâm Minh Chủ Thiên Hạ Vô Song X", emoji: null },
+				{ tierKey: "bac-8", name: LONG_TIER_NAME, emoji: null },
+			]);
+			await assertCard(await timed(() => renderRankCard(tierRankData(set, set.tiers[4], { displayName: "Trưởng Lão Thái Thượng Vô Cực Kiếm Tông" }))), "rank.png");
+			await assertCard(await timed(() => renderRankCard(tierRankData(set, set.tiers[7], {
+				level: { level: 987654, totalXp: 987654321, xpIntoLevel: 1598646, xpForNextLevel: 3527975 },
+				teamNames: ["Hội Đồng Quản Trị Tối Cao", "Backend"],
+			}))), "rank.png");
+		}
+	});
+
+	test("bộ hoặc bậc lạ (dữ liệu hỏng) vẫn vẽ được bằng biểu tượng và phong cách dự phòng", async () =>
+	{
+		const strange = corruptTier(TIERS[2], { setKey: "khong-co", key: "bac-99", index: 42 });
+		const brokenSet: TierSet = { ...DEFAULT_TIER_SET, texts: { ...DEFAULT_TIER_SET.texts, maxTier: "", idleToday: "" } };
+		await assertCard(await timed(() => renderRankCard(rankData({ tier: strange, nextTier: strange, tierSet: brokenSet }))), "rank.png");
+		await assertCard(await timed(() => renderRankCard(rankData({ tier: strange, nextTier: null, tierSet: brokenSet, streak: { current: 3, best: 3, activeToday: false } }))), "rank.png");
+		const otherSet = corruptTier(TIER_SETS["vu-tru"].tiers[7], { index: 7.5 });
+		await assertCard(await timed(() => renderRankCard(rankData({ tier: otherSet, nextTier: null, tierSet: TIER_SETS["kiem-hiep"] }))), "rank.png");
 	});
 
 	test("người mới: chưa có hạng, avatar null, streak 0, không team", async () =>
@@ -318,12 +485,16 @@ describe("renderRankCard", () =>
 		}
 	});
 
-	test("vẽ hai lần cùng dữ liệu cho ra cùng bytes (hoa văn dùng PRNG có seed)", async () =>
+	test("vẽ hai lần cùng dữ liệu cho ra cùng bytes (hoa văn dùng PRNG có seed), ở mọi bộ", async () =>
 	{
-		const data = rankData({}, totalXpForLevel(41));
-		const first = await renderRankCard(data);
-		const second = await renderRankCard(data);
-		assert.ok(first.png.equals(second.png));
+		for (const key of TIER_SET_KEYS)
+		{
+			const set = TIER_SETS[key];
+			const data = tierRankData(set, set.tiers[7]);
+			const first = await renderRankCard(data);
+			const second = await renderRankCard(data);
+			assert.ok(first.png.equals(second.png), key);
+		}
 	});
 });
 
@@ -383,5 +554,30 @@ describe("renderLeaderboardCard", () =>
 		const first = await renderLeaderboardCard(data);
 		const second = await renderLeaderboardCard(data);
 		assert.ok(first.png.equals(second.png));
+	});
+
+	test("bảng 10 dòng cho từng bộ danh hiệu (nhiều bậc khác nhau), ảnh các bộ khác nhau", async () =>
+	{
+		const images = new Set<string>();
+		for (const key of TIER_SET_KEYS)
+		{
+			const card = await timed(() => renderLeaderboardCard(board(setRows(TIER_SETS[key]))));
+			await assertCard(card, "leaderboard.png");
+			assert.equal(card.width, 1000);
+			images.add(card.png.toString("base64"));
+		}
+		assert.equal(images.size, TIER_SET_KEYS.length);
+	});
+
+	test("tên bậc tuỳ chỉnh dài và bậc có bộ lạ trong bảng xếp hạng", async () =>
+	{
+		const set = applyTierOverrides(TIER_SETS["kiem-hiep"], [{ tierKey: "bac-8", name: LONG_TIER_NAME, emoji: null }]);
+		const rows = [
+			row(1, { tier: set.tiers[7], name: "Tên rất dài ".repeat(10) }),
+			row(2, { tier: set.tiers[7], detail: null }),
+			row(3, { tier: corruptTier(set.tiers[3], { setKey: "khong-co", index: 99 }) }),
+			row(4, { tier: set.tiers[0], value: `${Number.MAX_SAFE_INTEGER.toLocaleString("vi-VN")} XP` }),
+		];
+		await assertCard(await timed(() => renderLeaderboardCard(board(rows))), "leaderboard.png");
 	});
 });
