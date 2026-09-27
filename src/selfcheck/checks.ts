@@ -86,9 +86,16 @@ export function checkNodeVersion(version: string): CheckResult
 
 /** Token bot Discord gồm 3 đoạn cách nhau bởi dấu chấm. Chỉ dùng để cảnh báo dán nhầm, không bao giờ in token. */
 const TOKEN_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
+/**
+ * Token (đã trim) ngắn hơn mức này chắc chắn không phải token bot (token thật dài hơn nhiều). Output của selfcheck chỉ thay
+ * nguyên văn token từ độ dài này trở lên, vì thay một chuỗi quá ngắn sẽ làm nát mọi dòng có chuỗi đó (redactSecrets).
+ */
+export const MIN_TOKEN_LENGTH = 20;
 const PLACEHOLDER_TOKEN = "selfcheck";
 const PLACEHOLDER_GUILD = "100000000000000000";
 const LOG_LEVELS: readonly string[] = ["debug", "info", "warn", "error"];
+/** Giống SNOWFLAKE trong src/config.ts. */
+const GUILD_ID = /^\d{17,20}$/;
 
 export interface ConfigPaths
 {
@@ -121,6 +128,14 @@ function checkToken(value: string | undefined): CheckResult
 {
 	const token = value?.trim() ?? "";
 	if (!token) return fail("config", "DISCORD_TOKEN: chưa có. Điền vào file .env (máy dev) hoặc file EnvironmentFile của service (server).");
+	if (/\s/.test(token))
+	{
+		return fail("config", "DISCORD_TOKEN: có khoảng trắng hoặc xuống dòng ở giữa, bot chắc chắn đăng nhập lỗi. Dán lại token trên một dòng, không có dấu cách.");
+	}
+	if (token.length < MIN_TOKEN_LENGTH)
+	{
+		return fail("config", "DISCORD_TOKEN: có, nhưng quá ngắn, không giống token bot: bot sẽ đăng nhập lỗi. Dán lại token lấy ở Discord Developer Portal (mục Bot, Reset Token).");
+	}
 	if (!TOKEN_SHAPE.test(token))
 	{
 		return warn("config", "DISCORD_TOKEN: có, nhưng không giống token bot (3 đoạn cách nhau bởi dấu chấm). Kiểm tra có dán nhầm Client Secret hoặc Application ID không.");
@@ -128,9 +143,30 @@ function checkToken(value: string | undefined): CheckResult
 	return ok("config", "DISCORD_TOKEN: có.");
 }
 
+const LISTED_POSITIONS_MAX = 5;
+
+/**
+ * Lỗi DISCORD_GUILD_IDS chỉ nêu vị trí của mục sai (đếm từ 1 theo dấu phẩy), không nêu giá trị: người vận hành có thể dán
+ * nhầm token hay secret khác vào biến này. Vì vậy không dùng thông báo lỗi của loadConfig (có chứa giá trị).
+ */
+function guildIdsFailure(value: string | undefined): CheckResult
+{
+	const raw = value?.trim() ?? "";
+	if (!raw) return fail("config", "DISCORD_GUILD_IDS: chưa có. Điền danh sách guild ID cách nhau bằng dấu phẩy.");
+	const positions = raw.split(",")
+		.map((item, index) => ({ item: item.trim(), position: index + 1 }))
+		.filter(({ item }) => item.length > 0 && !GUILD_ID.test(item))
+		.map(({ position }) => position);
+	const listed = positions.slice(0, LISTED_POSITIONS_MAX).join(", ");
+	const more = positions.length > LISTED_POSITIONS_MAX ? ` và ${positions.length - LISTED_POSITIONS_MAX} mục khác` : "";
+	const where = positions.length > 0 ? `mục thứ ${listed}${more} không phải guild ID (17–20 chữ số)` : "không có guild ID nào";
+	return fail("config", `DISCORD_GUILD_IDS không hợp lệ: ${where}. Cần danh sách guild ID cách nhau bằng dấu phẩy.`);
+}
+
 /**
  * Đọc cấu hình bằng đúng loadConfig của bot. Token luôn được thay bằng chuỗi giả trước khi gọi loadConfig, nên token thật
  * không thể lọt vào thông báo lỗi. Guild ID và các biến còn lại được kiểm tra riêng để một lần chạy báo đủ các lỗi.
+ * Giá trị sai của biến cấu hình không được in lại (có thể là secret dán nhầm chỗ, hoặc chứa ký tự xuống dòng tạo dòng giả).
  */
 export function checkConfig(env: NodeJS.ProcessEnv): ConfigCheck
 {
@@ -140,22 +176,17 @@ export function checkConfig(env: NodeJS.ProcessEnv): ConfigCheck
 	const guilds = attempt(() => loadConfig({ ...base, BACKUP_KEEP: undefined }).guildIds);
 	results.push(guilds.ok
 		? ok("config", `DISCORD_GUILD_IDS: ${guilds.value.length} guild hợp lệ (${guilds.value.join(", ")}).`)
-		: fail("config", guilds.error));
+		: guildIdsFailure(env.DISCORD_GUILD_IDS));
 
 	const rest = attempt(() => loadConfig({ ...base, DISCORD_GUILD_IDS: PLACEHOLDER_GUILD }));
-	if (rest.ok)
-	{
-		results.push(ok("config", `Database: ${rest.value.databasePath} · Backup: ${rest.value.backupDir} (giữ ${rest.value.backupKeep} bản).`));
-	}
-	else if (guilds.ok || guilds.error !== rest.error)
-	{
-		results.push(fail("config", rest.error));
-	}
+	results.push(rest.ok
+		? ok("config", `Database: ${rest.value.databasePath} · Backup: ${rest.value.backupDir} (giữ ${rest.value.backupKeep} bản).`)
+		: fail("config", rest.error));
 
 	const logLevel = env.LOG_LEVEL;
 	if (logLevel && !LOG_LEVELS.includes(logLevel))
 	{
-		results.push(warn("config", `LOG_LEVEL="${logLevel}" không hợp lệ (debug | info | warn | error): bot sẽ dùng info.`));
+		results.push(warn("config", `LOG_LEVEL không hợp lệ, bot sẽ dùng info. Dùng một trong: ${LOG_LEVELS.join(", ")}.`));
 	}
 
 	return {

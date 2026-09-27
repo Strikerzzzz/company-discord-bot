@@ -1,14 +1,14 @@
 import { statSync } from "fs";
 import { dirname, join } from "path";
 import { redact } from "../shared/logger";
-import { checkConfig, checkEnvFileMode, checkNodeVersion, CheckResult, CheckStatus, checkWritableDirectory, errorText, warn } from "./checks";
+import { checkConfig, checkEnvFileMode, checkNodeVersion, CheckResult, CheckStatus, checkWritableDirectory, errorText, MIN_TOKEN_LENGTH, warn } from "./checks";
 import { checkDatabaseFile, checkMigrations, checkSqlite, loadSqliteToolkit, SqliteToolkit } from "./database";
 import { CanvasToolkit, checkCanvas, checkRendering, loadCanvasToolkit } from "./render";
 
 /*
  * Chạy lần lượt các bước selfcheck (DEC-034) và in mỗi kết quả thành một dòng ngay khi có, để nếu process bị dừng giữa
  * chừng (ví dụ vượt MemoryMax) thì dòng cuối cùng cho biết đã tới bước nào. Không kết nối Discord, không gọi mạng,
- * không ghi vào database thật. Mọi dòng in ra đều đi qua redactSecrets.
+ * không ghi vào database thật. Mọi dòng in ra đều đi qua redactSecrets rồi oneLine.
  */
 
 export interface SelfCheckOptions
@@ -20,6 +20,8 @@ export interface SelfCheckOptions
 	arch: string;
 	/** Thư mục làm việc: nơi tìm file .env để kiểm tra quyền (chỉ trên Linux). */
 	cwd: string;
+	/** UID của process (process.getuid); undefined trên Windows. */
+	uid?: number;
 	/** Nhận từng dòng kết quả (đã che token). */
 	write: (line: string) => void;
 	loadSqlite?: () => Promise<SqliteToolkit>;
@@ -38,14 +40,30 @@ export interface SelfCheckReport
 const ICONS: Readonly<Record<CheckStatus, string>> = { ok: "✅", warn: "⚠️", fail: "❌" };
 const HIDDEN = "[đã ẩn]";
 
-/** Che mọi lần xuất hiện của DISCORD_TOKEN (nguyên văn và đã trim), rồi che thêm chuỗi có dạng token như logger của bot. */
+/**
+ * Che mọi lần xuất hiện của DISCORD_TOKEN (nguyên văn và đã trim), rồi che thêm chuỗi có dạng token như logger của bot.
+ * Token (đã trim) ngắn hơn MIN_TOKEN_LENGTH không được thay nguyên văn: thay một chuỗi như "a" làm nát mọi dòng, còn dòng
+ * DISCORD_TOKEN đã báo token đó không phải token bot.
+ */
 export function redactSecrets(text: string, env: NodeJS.ProcessEnv): string
 {
 	const raw = env.DISCORD_TOKEN ?? "";
 	const secrets = [raw, raw.trim()]
-		.filter(secret => secret.trim().length > 0)
+		.filter(secret => secret.trim().length >= MIN_TOKEN_LENGTH)
 		.sort((a, b) => b.length - a.length);
 	return redact(secrets.reduce((result, secret) => result.split(secret).join(HIDDEN), text));
+}
+
+/** Ký tự điều khiển (xuống dòng, ESC của mã màu ANSI...) thành dấu cách, để một kết quả luôn là đúng một dòng in ra. */
+export function oneLine(text: string): string
+{
+	return text.replace(/\p{Cc}/gu, " ");
+}
+
+function rootResult(options: SelfCheckOptions): CheckResult | null
+{
+	if (options.platform !== "linux" || options.uid !== 0) return null;
+	return warn("directories", "Kết quả kiểm quyền ghi không có ý nghĩa khi chạy bằng root; chạy dưới user của service (docs/DEPLOY.md mục 3.1).");
 }
 
 function envFileResult(options: SelfCheckOptions): CheckResult | null
@@ -73,7 +91,7 @@ function verdict(failed: number, warned: number): string
 export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheckReport>
 {
 	const results: CheckResult[] = [];
-	const print = (line: string): void => options.write(redactSecrets(line, options.env));
+	const print = (line: string): void => options.write(oneLine(redactSecrets(line, options.env)));
 	const report = (...items: CheckResult[]): void =>
 	{
 		for (const item of items)
@@ -89,6 +107,8 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
 	const config = checkConfig(options.env);
 	report(...config.results);
 	const paths = config.paths;
+	const root = rootResult(options);
+	if (root) report(root);
 	if (paths)
 	{
 		report(checkWritableDirectory("Thư mục database", dirname(paths.databasePath)));
@@ -103,7 +123,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
 	report(sqlite.result);
 	if (sqlite.toolkit)
 	{
-		if (paths) report(...checkDatabaseFile(paths.databasePath, sqlite.toolkit));
+		if (paths) report(...await checkDatabaseFile(paths.databasePath, sqlite.toolkit));
 		report(checkMigrations(sqlite.toolkit));
 	}
 	else

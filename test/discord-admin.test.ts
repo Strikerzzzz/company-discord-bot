@@ -741,6 +741,26 @@ describe("views quản trị", () =>
 		assert.ok(buildAuditEmbed([]).toJSON().description?.includes("Chưa có thao tác quản trị nào"));
 	});
 
+	test("audit channel.set: null của XP/tin và cooldown hiển thị \"dùng giá trị chung\" (PROP-030), hành động khác vẫn là \"không có\"", () =>
+	{
+		const embed = buildAuditEmbed([
+			{ id: 1, guildId: GUILD, actorId: ADMIN, action: "channel.set", targetId: CHANNEL_GENERAL, details: { xpPerMessage: null, xpCooldownSeconds: 30 }, createdAt: NOW },
+		]).toJSON();
+		const description = embed.description ?? "";
+		assert.ok(description.includes(`Đối tượng: <#${CHANNEL_GENERAL}>`), description);
+		assert.ok(description.includes("XP mỗi tin nhắn: dùng giá trị chung · Cooldown: 30"), description);
+		assert.ok(!description.includes("không có"), description);
+
+		assert.equal(
+			formatAuditDetails({ xpEnabled: false, xpPerMessage: null, xpCooldownSeconds: null }, "channel.set"),
+			"Bật XP: Tắt · XP mỗi tin nhắn: dùng giá trị chung · Cooldown: dùng giá trị chung",
+		);
+		assert.equal(formatAuditDetails({ xpPerMessage: 20 }, "channel.set"), "XP mỗi tin nhắn: 20");
+		assert.equal(formatAuditDetails({ reason: null }, "channel.set"), "Lý do: không có");
+		assert.equal(formatAuditDetails({ xpPerMessage: null }, "config.update"), "XP mỗi tin nhắn: không có");
+		assert.equal(formatAuditDetails({ xpPerMessage: null }), "XP mỗi tin nhắn: không có", "nơi gọi cũ không truyền action vẫn chạy như trước");
+	});
+
 	test("audit bậc danh hiệu: khoá mới bac-N và khoá cảnh giới cũ trước migration 4 đều hiển thị \"Bậc N\"", () =>
 	{
 		const legacy = ["luyen-khi", "truc-co", "kim-dan", "nguyen-anh", "hoa-than", "luyen-hu", "hop-the", "do-kiep"];

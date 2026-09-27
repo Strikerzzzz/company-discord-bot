@@ -2,7 +2,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { createCanvas } from "@napi-rs/canvas";
@@ -10,9 +10,9 @@ import { openDatabase } from "../src/db/connection";
 import { MIGRATIONS, runMigrations } from "../src/db/migrations";
 import { findFontDir } from "../src/discord/cards/fonts";
 import { checkConfig, checkEnvFileMode, checkNodeVersion, CheckResult, CheckStep, checkWritableDirectory } from "../src/selfcheck/checks";
-import { checkDatabaseFile, checkMigrations, loadSqliteToolkit, SqliteToolkit } from "../src/selfcheck/database";
+import { checkDatabaseFile, checkMigrations, DatabaseReadOptions, loadSqliteToolkit, SqliteToolkit } from "../src/selfcheck/database";
 import { CanvasToolkit, checkCanvas, checkRendering, loadCanvasToolkit, pngSize } from "../src/selfcheck/render";
-import { redactSecrets, runSelfCheck, SelfCheckOptions, SelfCheckReport } from "../src/selfcheck/run";
+import { oneLine, redactSecrets, runSelfCheck, SelfCheckOptions, SelfCheckReport } from "../src/selfcheck/run";
 
 /** Token giả có dạng token bot, mang chuỗi đặc trưng để dò xem có bị in ra không. */
 const TOKEN = "MTAwMDAwMDAwMDAwMDAwMDAx.SeLfCk.bi-mat-SELFCHECK-khong-duoc-in-ra";
@@ -81,6 +81,75 @@ function sha256(file: string): string
 	return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+/** Ghi đè từ trang thứ 2 trở đi (tối đa 8 trang) bằng byte rác: giả lập file hỏng, hoặc bản sao chép đúng lúc bot đang ghi. */
+function corruptPages(file: string): void
+{
+	const size = statSync(file).size;
+	const fd = openSync(file, "r+");
+	try
+	{
+		const header = Buffer.alloc(2);
+		readSync(fd, header, 0, 2, 16);
+		const pageSize = header.readUInt16BE(0) === 1 ? 65536 : header.readUInt16BE(0);
+		const garbage = Buffer.alloc(Math.min(size - pageSize, pageSize * 8), 0xa5);
+		writeSync(fd, garbage, 0, garbage.length, pageSize);
+	}
+	finally
+	{
+		closeSync(fd);
+	}
+}
+
+interface DbCheck
+{
+	results: CheckResult[];
+	/** Các lần nghỉ giữa hai lần chép lại (ms). */
+	sleeps: number[];
+	/** Đích của từng lần chép. */
+	copies: string[];
+}
+
+/**
+ * checkDatabaseFile với thư mục tạm riêng và không nghỉ thật giữa các lần chép lại. Sau khi kiểm tra, thư mục tạm phải
+ * trống: bản sao và file -journal/-wal/-shm của nó đều đã bị xoá.
+ */
+async function checkDb(file: string, toolkit: SqliteToolkit = sqlite, options: Partial<DatabaseReadOptions> = {}): Promise<DbCheck>
+{
+	const tempRoot = freshDir();
+	const sleeps: number[] = [];
+	const copies: string[] = [];
+	const copy = options.copyFile ?? copyFileSync;
+	const results = await checkDatabaseFile(file, toolkit, {
+		tempRoot,
+		sleep: ms =>
+		{
+			sleeps.push(ms);
+			return Promise.resolve();
+		},
+		...options,
+		copyFile: (source, destination) =>
+		{
+			copies.push(destination);
+			copy(source, destination);
+		},
+	});
+	assert.deepEqual(readdirSync(tempRoot), [], "thư mục tạm của bản sao phải được xoá");
+	return { results, sleeps, copies };
+}
+
+/** Chép rồi làm hỏng bản sao ở những lần chép được chọn (đếm từ 1); `afterCopy` giả lập bot ghi vào file thật. */
+function tornCopy(tornAttempts: readonly number[], afterCopy: (source: string, attempt: number) => void = () => undefined): (source: string, destination: string) => void
+{
+	let attempt = 0;
+	return (source, destination) =>
+	{
+		attempt += 1;
+		copyFileSync(source, destination);
+		if (tornAttempts.includes(attempt)) corruptPages(destination);
+		afterCopy(source, attempt);
+	};
+}
+
 /** File database thật của bot đã chạy migration tới `upTo`; `userVersion` ghi đè schema version (giả lập DB từ code mới hơn). */
 function createDatabase(file: string, upTo: number, userVersion?: number): void
 {
@@ -112,6 +181,12 @@ interface RunOutput extends SelfCheckReport
 	dir: string;
 }
 
+/**
+ * Máy test đang bận có thể vẽ lâu hơn ngưỡng cảnh báo vẽ chậm của selfcheck. Test chạy toàn bộ dùng đồng hồ đứng yên vì
+ * không đo hiệu năng; ngưỡng đó được kiểm riêng bằng đồng hồ giả trong test "vẽ chậm".
+ */
+const FROZEN_CLOCK = (): number => 0;
+
 /** Chạy selfcheck với môi trường giả hợp lệ (Node 24, Linux, SQLite thật, canvas giả nhanh), ghi đè từng phần theo test. */
 async function run(overrides: Partial<SelfCheckOptions> = {}, envOverrides: NodeJS.ProcessEnv = {}, dir = freshDir()): Promise<RunOutput>
 {
@@ -124,9 +199,14 @@ async function run(overrides: Partial<SelfCheckOptions> = {}, envOverrides: Node
 		cwd: dir,
 		write: line => lines.push(line),
 		loadCanvas: () => Promise.resolve(fakeCanvas()),
+		now: FROZEN_CLOCK,
 		...overrides,
 	});
 	assertNoSecret(lines);
+	for (const line of lines)
+	{
+		assert.ok(!/\p{Cc}/u.test(line), `dòng in ra có ký tự điều khiển: ${JSON.stringify(line)}`);
+	}
 	return { ...report, lines, dir };
 }
 
@@ -185,12 +265,23 @@ describe("selfcheck: cấu hình", () =>
 		assert.ok(!results[0].message.includes(String(secret.length)));
 	});
 
-	test("guild ID sai: lỗi nêu ID sai, đường dẫn vẫn dùng được cho các bước sau", () =>
+	test("guild ID sai: lỗi chỉ nêu vị trí mục sai, không in giá trị; đường dẫn vẫn dùng được cho các bước sau", () =>
 	{
 		const { results, paths } = checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: "abc,100000000000000001" }));
 		assert.deepEqual(statuses(results, "config"), ["ok", "fail", "ok"]);
-		assert.match(results[1].message, /DISCORD_GUILD_IDS không hợp lệ: abc/);
+		assert.match(results[1].message, /^DISCORD_GUILD_IDS không hợp lệ: mục thứ 1 không phải guild ID/);
+		assert.ok(!results[1].message.includes("abc"));
 		assert.ok(paths);
+
+		const secret = "client-secret-SELFCHECK-guild";
+		const several = checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: `100000000000000001,${secret}, ,x\ny,12` })).results[1];
+		assert.equal(several.status, "fail");
+		assert.match(several.message, /mục thứ 2, 4, 5 không phải guild ID/);
+		assert.ok(!several.message.includes(secret) && !several.message.includes("x") && !several.message.includes("\n"), several.message);
+
+		const many = checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: "a,b,c,d,e,f,g" })).results[1];
+		assert.match(many.message, /mục thứ 1, 2, 3, 4, 5 và 2 mục khác/);
+		assert.match(checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: " , ," })).results[1].message, /không có guild ID nào/);
 	});
 
 	test("BACKUP_KEEP sai và guild sai: báo cả hai lỗi; không có đường dẫn", () =>
@@ -202,12 +293,39 @@ describe("selfcheck: cấu hình", () =>
 		assert.equal(paths, null);
 	});
 
-	test("LOG_LEVEL lạ: cảnh báo bot sẽ dùng info", () =>
+	test("LOG_LEVEL lạ: cảnh báo bot sẽ dùng info, không in lại giá trị (kể cả giá trị có xuống dòng hay mã ANSI)", () =>
 	{
-		const { results } = checkConfig(envFor(freshDir(), { LOG_LEVEL: "verbose" }));
-		const last = results[results.length - 1];
-		assert.equal(last.status, "warn");
-		assert.match(last.message, /LOG_LEVEL="verbose"/);
+		for (const value of ["verbose", "debug\n✅ Môi trường sẵn sàng.", "\u001b[31mSECRET-LOG"])
+		{
+			const { results } = checkConfig(envFor(freshDir(), { LOG_LEVEL: value }));
+			const last = results[results.length - 1];
+			assert.equal(last.status, "warn");
+			assert.equal(last.message, "LOG_LEVEL không hợp lệ, bot sẽ dùng info. Dùng một trong: debug, info, warn, error.");
+		}
+		assert.equal(checkConfig(envFor(freshDir(), { LOG_LEVEL: "warn" })).results.length, 3);
+	});
+
+	test("token quá ngắn: lỗi \"không giống token bot\", không in token hay độ dài", () =>
+	{
+		for (const token of ["Zq9", "q".repeat(19)])
+		{
+			const [result] = checkConfig(envFor(freshDir(), { DISCORD_TOKEN: `  ${token}  ` })).results;
+			assert.equal(result.status, "fail", token);
+			assert.match(result.message, /không giống token bot/);
+			assert.ok(!result.message.includes(token) && !/\d/.test(result.message), result.message);
+		}
+		assert.equal(checkConfig(envFor(freshDir(), { DISCORD_TOKEN: "q".repeat(20) })).results[0].status, "warn");
+	});
+
+	test("token còn khoảng trắng hoặc xuống dòng ở giữa sau khi trim: lỗi, bot chắc chắn đăng nhập lỗi", () =>
+	{
+		for (const token of [`${TOKEN.slice(0, 30)} ${TOKEN.slice(30)}`, `${TOKEN.slice(0, 30)}\n${TOKEN.slice(30)}`, `${TOKEN}\t.x`])
+		{
+			const [result] = checkConfig(envFor(freshDir(), { DISCORD_TOKEN: ` ${token}\n` })).results;
+			assert.equal(result.status, "fail");
+			assert.match(result.message, /khoảng trắng hoặc xuống dòng ở giữa/);
+			assertNoSecret([result.message]);
+		}
 	});
 });
 
@@ -262,35 +380,50 @@ describe("selfcheck: thư mục ghi được", () =>
 
 describe("selfcheck: database", () =>
 {
-	test("chưa có database: cảnh báo sẽ được tạo, không tạo file", () =>
+	test("chưa có database: cảnh báo sẽ được tạo, không tạo file", async () =>
 	{
 		const file = path.join(freshDir(), "bot.db");
-		const results = checkDatabaseFile(file, sqlite);
+		const { results } = await checkDb(file);
 		assert.deepEqual(results.map(result => result.status), ["warn"]);
 		assert.match(results[0].message, /sẽ được tạo khi bot chạy/);
 		assert.equal(existsSync(file), false);
 	});
 
-	test("database khớp code: ổn; file thật không đổi và không sinh -wal/-shm", () =>
+	test("database khớp code: ổn; file thật không đổi, không sinh -wal/-shm, bản sao chỉ nằm trong thư mục tạm và được xoá", async () =>
 	{
 		const dir = freshDir();
 		const file = path.join(dir, "bot.db");
 		createDatabase(file, LATEST);
 		const original = sha256(file);
-		const results = checkDatabaseFile(file, sqlite);
+		const opened: string[] = [];
+		const spy: SqliteToolkit = {
+			...sqlite,
+			openCopy: copy =>
+			{
+				opened.push(copy);
+				return sqlite.openCopy(copy);
+			},
+		};
+		const { results, copies, sleeps } = await checkDb(file, spy);
 		assert.deepEqual(results.map(result => result.status), ["ok", "ok"]);
 		assert.match(results[0].message, new RegExp(`schema version ${LATEST}, khớp code`));
+		assert.match(results[1].message, /quick_check trên bản sao trong thư mục tạm/);
 		assert.equal(sha256(file), original);
 		assert.deepEqual(readdirSync(dir), ["bot.db"]);
+		assert.equal(copies.length, 1);
+		assert.deepEqual(opened, copies);
+		assert.ok(!copies[0].startsWith(dir), copies[0]);
+		assert.equal(existsSync(path.dirname(copies[0])), false, "thư mục tạm riêng của lần kiểm tra đã bị xoá");
+		assert.deepEqual(sleeps, []);
 	});
 
-	test("database cũ hơn code: cảnh báo, chạy thử migration trên bản sao, file thật giữ version cũ", () =>
+	test("database cũ hơn code: cảnh báo, chạy thử migration trên bản sao, file thật giữ version cũ", async () =>
 	{
 		const dir = freshDir();
 		const file = path.join(dir, "bot.db");
 		createDatabase(file, 2);
 		const original = sha256(file);
-		const results = checkDatabaseFile(file, sqlite);
+		const { results } = await checkDb(file);
 		assert.deepEqual(results.map(result => result.status), ["warn", "ok", "ok"]);
 		assert.match(results[0].message, new RegExp(`schema version 2, cũ hơn code \\(${LATEST}\\)`));
 		assert.match(results[2].message, new RegExp(`Chạy thử ${LATEST - 2} migration \\(version 2 → ${LATEST}\\)`));
@@ -301,38 +434,39 @@ describe("selfcheck: database", () =>
 		db.close();
 	});
 
-	test("chạy thử migration lỗi trên bản sao: báo lỗi", () =>
+	test("chạy thử migration lỗi trên bản sao (lỗi lặp lại, file không đổi): báo lỗi", async () =>
 	{
 		const file = path.join(freshDir(), "bot.db");
 		createDatabase(file, 1);
 		const broken: SqliteToolkit = { ...sqlite, runMigrations: () => { throw new Error("migration hỏng"); } };
-		const results = checkDatabaseFile(file, broken);
-		assert.equal(results[results.length - 1].status, "fail");
-		assert.match(results[results.length - 1].message, /migration hỏng/);
+		const { results, sleeps } = await checkDb(file, broken);
+		assert.deepEqual(results.map(result => result.status), ["warn", "ok", "fail"]);
+		assert.match(results[2].message, /migration hỏng/);
+		assert.equal(sleeps.length, 2);
 	});
 
-	test("database mới hơn code: lỗi, code cũ hơn database", () =>
+	test("database mới hơn code: lỗi, code cũ hơn database", async () =>
 	{
 		const file = path.join(freshDir(), "bot.db");
 		createDatabase(file, LATEST, LATEST + 1);
-		const results = checkDatabaseFile(file, sqlite);
+		const { results } = await checkDb(file);
 		assert.deepEqual(results.map(result => result.status), ["fail"]);
 		assert.match(results[0].message, /mới hơn code/);
 	});
 
-	test("file không phải SQLite hoặc rỗng", () =>
+	test("file không phải SQLite hoặc rỗng", async () =>
 	{
 		const dir = freshDir();
 		const text = path.join(dir, "text.db");
 		writeFileSync(text, "đây không phải database ".repeat(20));
-		assert.deepEqual(checkDatabaseFile(text, sqlite).map(result => result.status), ["fail"]);
+		assert.deepEqual((await checkDb(text)).results.map(result => result.status), ["fail"]);
 		const empty = path.join(dir, "empty.db");
 		writeFileSync(empty, "");
-		assert.deepEqual(checkDatabaseFile(empty, sqlite).map(result => result.status), ["warn"]);
-		assert.deepEqual(checkDatabaseFile(dir, sqlite).map(result => result.status), ["fail"]);
+		assert.deepEqual((await checkDb(empty)).results.map(result => result.status), ["warn"]);
+		assert.deepEqual((await checkDb(dir)).results.map(result => result.status), ["fail"]);
 	});
 
-	test("bot đang chạy (file -wal còn dữ liệu): cảnh báo và vẫn kiểm tra được", () =>
+	test("bot đang chạy (file -wal còn dữ liệu): cảnh báo và vẫn kiểm tra được", async () =>
 	{
 		const file = path.join(freshDir(), "bot.db");
 		mkdirSync(path.dirname(file), { recursive: true });
@@ -340,7 +474,7 @@ describe("selfcheck: database", () =>
 		try
 		{
 			runMigrations(running);
-			const results = checkDatabaseFile(file, sqlite);
+			const { results } = await checkDb(file);
 			assert.equal(results[0].status, "warn");
 			assert.match(results[0].message, /-wal chưa gộp/);
 			assert.ok(results.every(result => result.status !== "fail"));
@@ -351,21 +485,116 @@ describe("selfcheck: database", () =>
 		}
 	});
 
-	test("file database không ghi được: lỗi", { skip: IS_ROOT }, () =>
+	test("file database không ghi được: lỗi; bản sao vẫn chạy thử migration được", { skip: IS_ROOT }, async () =>
 	{
 		const file = path.join(freshDir(), "bot.db");
-		createDatabase(file, LATEST);
+		createDatabase(file, LATEST - 1);
 		chmodSync(file, 0o400);
 		try
 		{
-			const results = checkDatabaseFile(file, sqlite);
+			const { results } = await checkDb(file);
 			assert.equal(results[0].status, "fail");
 			assert.match(results[0].message, /không ghi được/);
+			assert.deepEqual(results.slice(1).map(result => result.status), ["warn", "ok", "ok"]);
 		}
 		finally
 		{
 			chmodSync(file, 0o600);
 		}
+	});
+
+	test("bản sao bị rách một lần (chép đúng lúc bot checkpoint): chép lại, kiểm lại, kết quả ổn", async () =>
+	{
+		const file = path.join(freshDir(), "bot.db");
+		createDatabase(file, LATEST);
+		const original = sha256(file);
+		const { results, sleeps, copies } = await checkDb(file, sqlite, { copyFile: tornCopy([1]) });
+		assert.deepEqual(results.map(result => result.status), ["ok", "ok"]);
+		assert.equal(copies.length, 2);
+		assert.equal(sleeps.length, 1);
+		assert.ok(sleeps[0] > 0);
+		assert.equal(sha256(file), original);
+	});
+
+	test("bản sao lỗi cả 3 lần, file thật đổi thời điểm sửa giữa các lần chép (bot đang ghi): chỉ cảnh báo, không khuyên khôi phục", async () =>
+	{
+		const dir = freshDir();
+		const file = path.join(dir, "bot.db");
+		createDatabase(file, LATEST);
+		const original = sha256(file);
+		const base = statSync(file).mtime.getTime();
+		const touch = (source: string, attempt: number): void => utimesSync(source, new Date(base), new Date(base + attempt * 5000));
+		const { results, sleeps, copies } = await checkDb(file, sqlite, { copyFile: tornCopy([1, 2, 3], touch) });
+		assert.deepEqual(results.map(result => result.status), ["ok", "warn"]);
+		assert.match(results[1].message, /kết quả kiểm tra database không tin cậy khi bot đang ghi/);
+		assert.match(results[1].message, /Dừng bot rồi chạy lại selfcheck để kiểm chắc chắn/);
+		assert.ok(!/khôi phục từ/i.test(results[1].message), results[1].message);
+		assert.equal(copies.length, 3);
+		assert.equal(sleeps.length, 2);
+		assert.equal(sha256(file), original);
+		assert.deepEqual(readdirSync(dir), ["bot.db"]);
+	});
+
+	test("bản sao lỗi cả 3 lần và file -wal có dữ liệu: chỉ cảnh báo, không khuyên khôi phục", async () =>
+	{
+		const file = path.join(freshDir(), "bot.db");
+		createDatabase(file, LATEST);
+		writeFileSync(`${file}-wal`, Buffer.alloc(4096, 1));
+		const { results } = await checkDb(file, sqlite, { copyFile: tornCopy([1, 2, 3]) });
+		assert.deepEqual(results.map(result => result.status), ["warn", "ok", "warn"]);
+		assert.match(results[0].message, /-wal chưa gộp/);
+		assert.match(results[2].message, /không tin cậy khi bot đang ghi/);
+		assert.ok(!/khôi phục từ/i.test(results[2].message), results[2].message);
+	});
+
+	test("database hỏng thật (lỗi lặp lại, file không đổi, không có -wal): lỗi kèm lời khuyên khôi phục backup", async () =>
+	{
+		const dir = freshDir();
+		const file = path.join(dir, "bot.db");
+		createDatabase(file, LATEST);
+		corruptPages(file);
+		const corrupted = sha256(file);
+		const { results, sleeps, copies } = await checkDb(file);
+		assert.deepEqual(results.map(result => result.status), ["ok", "fail"]);
+		assert.match(results[1].message, /có dấu hiệu hỏng/);
+		assert.match(results[1].message, /lặp lại ở cả 3 lần chép/);
+		assert.match(results[1].message, /Khôi phục từ bản sao lưu/);
+		assert.ok(!/\p{Cc}/u.test(results[1].message), results[1].message);
+		assert.equal(copies.length, 3);
+		assert.equal(sleeps.length, 2);
+		assert.equal(sha256(file), corrupted);
+		assert.deepEqual(readdirSync(dir), ["bot.db"]);
+	});
+
+	test("ổ tạm không đủ chỗ: cảnh báo, chỉ kiểm tra header, không chép", async () =>
+	{
+		const file = path.join(freshDir(), "bot.db");
+		createDatabase(file, LATEST);
+		const { results, copies } = await checkDb(file, sqlite, { freeBytes: () => 1024 * 1024 });
+		assert.deepEqual(results.map(result => result.status), ["ok", "warn"]);
+		assert.match(results[1].message, /không đủ chỗ cho bản sao database/);
+		assert.deepEqual(copies, []);
+
+		const unknown = await checkDb(file, sqlite, { freeBytes: () => null });
+		assert.deepEqual(unknown.results.map(result => result.status), ["ok", "ok"]);
+	});
+
+	test("không chép được sang thư mục tạm, hoặc không tạo được thư mục tạm: cảnh báo kèm gợi ý", async () =>
+	{
+		const file = path.join(freshDir(), "bot.db");
+		createDatabase(file, LATEST);
+		const full = (): void =>
+		{
+			throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+		};
+		const { results } = await checkDb(file, sqlite, { copyFile: full });
+		assert.deepEqual(results.map(result => result.status), ["ok", "warn"]);
+		assert.match(results[1].message, /Không chép được database sang thư mục tạm/);
+		assert.match(results[1].message, /Ổ đĩa đã đầy/);
+
+		const missingRoot = await checkDatabaseFile(file, sqlite, { tempRoot: path.join(freshDir(), "khong-co") });
+		assert.deepEqual(missingRoot.map(result => result.status), ["ok", "warn"]);
+		assert.match(missingRoot[1].message, /Không tạo được thư mục tạm/);
 	});
 
 	test("migration chạy được trên database trống trong bộ nhớ", () =>
@@ -385,9 +614,12 @@ describe("selfcheck: canvas, font và vẽ ảnh", () =>
 		assert.deepEqual(canvas.results.map(result => result.status), ["ok", "ok"]);
 		assert.ok(canvas.toolkit);
 		const rendered = await checkRendering(canvas.toolkit, () => performance.now());
-		assert.deepEqual(rendered.map(result => result.status), ["ok", "ok"]);
-		assert.match(rendered[0].message, /^Vẽ thẻ rank: PNG 1000×\d+, \d+ KB, vẽ mất \d+ ms\.$/);
-		assert.match(rendered[1].message, /^Vẽ bảng xếp hạng: PNG 1000×\d+/);
+		for (const result of rendered)
+		{
+			assert.ok(result.status === "ok" || (result.status === "warn" && result.message.includes(" chậm: ")), result.message);
+		}
+		assert.match(rendered[0].message, /^Vẽ thẻ rank( chậm)?: PNG 1000×\d+, \d+ KB, vẽ mất \d+ ms/);
+		assert.match(rendered[1].message, /^Vẽ bảng xếp hạng( chậm)?: PNG 1000×\d+/);
 	});
 
 	test("canvas không nạp được: lỗi kèm gợi ý npm ci, bỏ qua font", async () =>
@@ -477,7 +709,43 @@ describe("selfcheck: chạy toàn bộ", () =>
 	{
 		const { lines, exitCode } = await run({}, { DISCORD_GUILD_IDS: TOKEN });
 		assert.equal(exitCode, 1);
-		assert.ok(lines.some(line => line.includes("DISCORD_GUILD_IDS không hợp lệ: [đã ẩn]")));
+		assert.ok(lines.some(line => line.startsWith("❌ DISCORD_GUILD_IDS không hợp lệ: mục thứ 1 không phải guild ID")));
+		assert.ok(!lines.some(line => line.includes("[đã ẩn]")));
+	});
+
+	test("token rất ngắn: dòng token báo lỗi, output không bị thay chuỗi thành [đã ẩn]", async () =>
+	{
+		const { lines, exitCode } = await run({}, { DISCORD_TOKEN: "e" });
+		assert.equal(exitCode, 1);
+		assert.equal(lines[0], "Tự kiểm tra môi trường (selfcheck): không kết nối Discord, không gọi mạng, không sửa database.");
+		assert.ok(lines.some(line => line.startsWith("❌ DISCORD_TOKEN: có, nhưng quá ngắn, không giống token bot")));
+		assert.ok(!lines.some(line => line.includes("[đã ẩn]")), lines.join("\n"));
+		assert.equal(redactSecrets(`x ${"q".repeat(20)} y`, { DISCORD_TOKEN: "q".repeat(20) }), "x [đã ẩn] y");
+		assert.equal(redactSecrets(`x ${"q".repeat(19)} y`, { DISCORD_TOKEN: ` ${"q".repeat(19)} ` }), `x ${"q".repeat(19)} y`);
+	});
+
+	test("token có xuống dòng ở giữa: lỗi, không in token, không có dòng giả", async () =>
+	{
+		const token = `${TOKEN.slice(0, 30)}\n${TOKEN.slice(30)}`;
+		const { lines, exitCode } = await run({ loadSqlite: () => Promise.reject(new Error(`lỗi lạ ${token}`)) }, { DISCORD_TOKEN: token });
+		assert.equal(exitCode, 1);
+		assert.ok(lines.some(line => line.startsWith("❌ DISCORD_TOKEN: có khoảng trắng hoặc xuống dòng ở giữa")));
+		assert.ok(lines.some(line => line.includes("lỗi lạ [đã ẩn]")));
+	});
+
+	test("chạy bằng root trên Linux: cảnh báo kết quả kiểm quyền ghi không có ý nghĩa", async () =>
+	{
+		const asRoot = await run({ uid: 0 });
+		const rootLines = byStep(asRoot.results, "directories").filter(result => result.message.includes("khi chạy bằng root"));
+		assert.deepEqual(rootLines.map(result => result.status), ["warn"]);
+		assert.match(rootLines[0].message, /không có ý nghĩa khi chạy bằng root; chạy dưới user của service \(docs\/DEPLOY\.md mục 3\.1\)/);
+		assert.equal(asRoot.exitCode, 0);
+
+		for (const options of [{ uid: 1001 }, { uid: 0, platform: "win32" as const }, {}])
+		{
+			const { results } = await run(options);
+			assert.ok(!results.some(result => result.message.includes("khi chạy bằng root")), JSON.stringify(options));
+		}
 	});
 
 	test("lỗi từ thư viện có chứa token cũng bị che", async () =>
@@ -577,6 +845,12 @@ describe("selfcheck: che token", () =>
 		assert.ok(!redactSecrets("x MTAwMDAwMDAwMDAwMDAwMDAy.AbCdEf.abcdefghijklmnopqrstuvwxyz123 y", {}).includes("abcdefghijklmnopqrstuvwxyz123"));
 		assert.equal(redactSecrets("không có gì", { DISCORD_TOKEN: "   " }), "không có gì");
 	});
+
+	test("mỗi kết quả là đúng một dòng: ký tự điều khiển (xuống dòng, ESC của mã ANSI) thành dấu cách", () =>
+	{
+		assert.equal(oneLine("a\nb\r\nc\u001b[31md\te"), "a b  c [31md e");
+		assert.equal(oneLine("Tổng kết: 1 ✅ · 0 ⚠️ · 0 ❌."), "Tổng kết: 1 ✅ · 0 ⚠️ · 0 ❌.");
+	});
 });
 
 describe("selfcheck: entry point build/selfcheck.js", () =>
@@ -599,7 +873,7 @@ describe("selfcheck: entry point build/selfcheck.js", () =>
 		const good = spawnSync(process.execPath, [entry], { cwd: dir, env: childEnv(dir, {}), encoding: "utf8", timeout: 60_000 });
 		assert.equal(good.status, 0, good.stdout + good.stderr);
 		assert.match(good.stdout, /Tổng kết: \d+ ✅ · \d+ ⚠️ · 0 ❌/);
-		assert.match(good.stdout, /✅ Vẽ bảng xếp hạng: PNG/);
+		assert.match(good.stdout, /(✅ Vẽ bảng xếp hạng|⚠️ Vẽ bảng xếp hạng chậm): PNG/);
 		assertNoSecret([good.stdout, good.stderr]);
 
 		const bad = spawnSync(process.execPath, [entry], { cwd: dir, env: childEnv(dir, { DISCORD_TOKEN: "" }), encoding: "utf8", timeout: 60_000 });
