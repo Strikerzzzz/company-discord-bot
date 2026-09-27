@@ -229,5 +229,12 @@ Format mỗi mục:
 
 - **Phát hiện:** 2026-09-27 (Phase 14, agent viết `npm run selfcheck`) · **Mức độ:** Thấp · **Trạng thái:** Đã xử lý
 - **Hiện tượng:** Mở `bot.db` (đang ở chế độ WAL) bằng better-sqlite3 với `readonly: true` vẫn sinh `bot.db-wal` và `bot.db-shm` cạnh database, và các file này còn lại sau khi đóng. Công cụ "chỉ đọc" vì vậy vẫn thay đổi thư mục dữ liệu của bot đang chạy.
-- **Xử lý:** selfcheck đọc `user_version` thẳng từ header file (offset 60). Muốn kiểm tra sâu hơn thì chép file vào RAM (`new Database(buffer)`, đổi byte 18/19 từ WAL sang rollback) rồi chạy `quick_check` và chạy thử migration trên bản sao. File lớn thì chỉ đọc header.
-- **Bài học:** Công cụ chẩn đoán không được mở database thật bằng SQLite, kể cả read-only. Phải có test xác nhận file thật giữ nguyên hash và không sinh file phụ.
+- **Xử lý:**
+  - selfcheck đọc `user_version` thẳng từ header file (offset 60);
+  - muốn kiểm tra sâu hơn thì chép file sang **thư mục tạm** (đổi byte 18/19 từ WAL sang rollback trên bản sao), rồi chạy `quick_check` và chạy thử migration trên bản sao, xong thì xoá.
+- **Hai lỗi review phát hiện ở cách làm đầu tiên** (đọc cả file vào RAM bằng `new Database(buffer)`):
+  - tốn RAM khoảng 3 lần dung lượng DB (DB 217 MB: 709 MB so với 72 MB khi chép ra thư mục tạm);
+  - đọc lúc bot đang checkpoint ra ảnh rách, nên báo "database hỏng, hãy khôi phục backup" giả. Giờ selfcheck kiểm lại tối đa 3 lần; nếu có dấu hiệu bot đang ghi (`-wal` có dữ liệu, kích thước hoặc mtime đổi) thì chỉ cảnh báo, không khuyên khôi phục.
+- **Bài học:**
+  - Công cụ chẩn đoán không được mở database thật bằng SQLite, kể cả read-only. Phải có test xác nhận file thật giữ nguyên hash và không sinh file phụ.
+  - Kết quả đọc file của một tiến trình đang ghi không đáng tin; không được đưa lời khuyên phá dữ liệu (khôi phục backup) dựa trên một lần đọc.

@@ -5,10 +5,11 @@
 
 ## 1. Phase hiện tại
 
-**Phase 13 — Bộ danh hiệu chọn được, bảng điều khiển role: ĐÃ CODE XONG, đã review độc lập và sửa lỗi** (DEC-033).
+**Phase 14 — Hoàn tất trước khi chạy thật: ĐÃ CODE XONG, đã review độc lập và sửa lỗi** (DEC-034).
 
-- Branch `phase-13/tier-sets`, **chưa merge vào `main`**; chờ người phụ trách duyệt.
-- `main` có đủ Phase 0–10 và Phase 12 (DEC-032).
+- Branch `phase-14/hoan-tat`, **chưa merge vào `main`**; chờ người phụ trách duyệt.
+- `main` có đủ Phase 0–13 (Phase 13 merge theo DEC-034).
+- Phase 14 gồm: PROP-030 (đưa riêng XP/cooldown của channel về giá trị chung), ảnh bảng Contribution/team theo bộ danh hiệu, lệnh `npm run selfcheck`, checklist `docs/TEST-PLAN.md`.
 - **Chưa chạy thật trên Discord.** Server Linux cấp ngày thứ 2. Lần chạy thật gộp Phase 1 bước 6, Phase 11 và kiểm Phase 12.
 
 ## 2. Tính năng đã có
@@ -59,7 +60,7 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 
 ## 5. Đang chờ người phụ trách quyết định
 
-- Duyệt merge Phase 13 (`phase-13/tier-sets`) và PROP-032 (`/config admin-role` chỉ người có Manage Server đặt được).
+- Duyệt merge Phase 14 (`phase-14/hoan-tat`).
 - PEND-004: remote git nội bộ. PEND-005: máy chủ cụ thể và process manager (đề xuất systemd). PEND-013: thời gian giữ dữ liệu.
 
 ## 6. Cách làm việc với repo
@@ -80,4 +81,5 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`; trả lời PEND-015…020. Mở Phase 12 (DEC-029…031). |
 | 2026-09-27 | Phase 12: nền móng + 5 agent (2 đợt), 3 agent review độc lập, 2 agent sửa lỗi. 601 test. |
 | 2026-09-27 | DEC-032: duyệt Phase 12, làm PROP-031, giữ nguyên PROP-027. Merge Phase 12 vào `main` (603 test). Chờ chạy thật. |
-| 2026-09-27 | Phase 13 (DEC-033): nền móng + 3 agent (vẽ ảnh; bảng điều khiển và role; giọng văn), 3 agent review độc lập, 2 agent sửa lỗi. 725 test. Chờ duyệt merge. |
+| 2026-09-27 | Phase 13 (DEC-033): nền móng + 3 agent (vẽ ảnh; bảng điều khiển và role; giọng văn), 3 agent review độc lập, 2 agent sửa lỗi. 725 test. |
+| 2026-09-27 | DEC-034: merge Phase 13, không làm PROP-032. Phase 14: 2 agent (PROP-030 + ảnh bảng; selfcheck), checklist chạy thật, 1 review độc lập, 1 agent sửa lỗi. Chờ duyệt merge. |
