@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-26, sau khi hoàn thiện Phase 2–10 và sửa lỗi từ đợt review độc lập (branch `phase-2-10/hoan-thien-tinh-nang`).
+> Cập nhật lần cuối: 2026-09-27, Phase 12 (gamification và ảnh thẻ, branch `phase-12/gamification`). Phase 2–10 đã merge vào `main`.
 > Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
 ## 1. Tổng quan
@@ -12,7 +12,7 @@ Discord ──► Tầng Discord (mỏng) ──► Service nghiệp vụ ──
                                      discord.js)
 ```
 
-- **Topology** (DEC-002, DEC-016): 1 process Node.js (Linux, Node 24 LTS), 1 file SQLite (WAL), kết nối ra Discord. Không mở port, không có hạ tầng nào khác.
+- **Topology** (DEC-002, DEC-016): 1 process Node.js (Linux, Node 24 LTS), 1 file SQLite (WAL), kết nối ra Discord (API và CDN avatar, DEC-030). Không mở port, không có hạ tầng nào khác.
 - **Hai hệ thống điểm độc lập** (DEC-004): Activity XP dùng `xp_events` + `member_xp`; Contribution Score dùng `contribution_events` + `member_contribution`. Hai hệ thống dùng hai instance `Ledger` riêng và không bao giờ cộng gộp.
 - **Hướng phụ thuộc**: `discord` → `modules` → `db` / `shared`. ESLint chặn `src/modules/**`, `src/db/**`, `src/shared/**` import discord.js (DEC-007).
 
@@ -23,7 +23,7 @@ src/
 ├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login
 ├── config.ts                 Đọc và validate biến môi trường (DEC-015)
 ├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
-├── shared/                   clock (inject được), errors (UserError), logger (che token)
+├── shared/                   clock (inject được), errors (UserError), logger (che token), time (ngày/tuần/tháng giờ Việt Nam)
 ├── db/
 │   ├── connection.ts         openDatabase(): 1 connection, WAL, foreign_keys, busy_timeout
 │   ├── migrations.ts         Migration nhúng trong code, version lưu ở PRAGMA user_version (append-only)
@@ -34,14 +34,18 @@ src/
 │   ├── guild-config/         Cấu hình guild/channel, giới hạn hợp lệ, permissions (isAdmin, canCreatePoll)
 │   ├── team/                 Team = role do admin chỉ định; resolveTeams() tạo snapshot
 │   ├── audit/                Nhật ký thao tác quản trị
-│   ├── activity/             levels (5n²+50n+100), antiSpam (chuẩn hoá, chống trùng trong RAM), ActivityService
-│   ├── contribution/         ContributionService + ContributionRepository
-│   ├── poll/                 PollService + PollRepository (vote/bầu cử ẩn danh)
-│   ├── leaderboard/          4 bảng xếp hạng (cá nhân/team × activity/contribution), phân trang
+│   ├── activity/             levels (5n²+50n+100), tiers (8 cảnh giới tu tiên), antiSpam (chống trùng trong RAM), ActivityService
+│   ├── contribution/         ContributionService (bù điểm để tổng không âm, PROP-024) + ContributionRepository
+│   ├── poll/                 PollService (giới hạn XP từ vote mỗi ngày, PROP-028) + PollRepository
+│   ├── leaderboard/          12 bảng: cá nhân/team × activity/contribution × tổng/tuần/tháng; userStanding
+│   ├── gamification/         GamificationService (hồ sơ: cảnh giới, chuỗi ngày, huy hiệu, XP tuần), streaks,
+│   │                         achievements (15 huy hiệu), GamificationRepository, TierRoleService (role theo cảnh giới)
+│   ├── live-board/           LiveBoardService: kênh và message của Bảng vàng
 │   └── statistics/           Thống kê tổng quan 7 ngày cho admin
-├── classes/                  Base class Command / ContextMenu / Event, DiscordClient, ProcessManager
+├── classes/                  Base class Command / ContextMenu / Event, DiscordClient (có `avatars`, `members`), ProcessManager
 ├── handlers/                 loadModules (nạp theo thư mục), EventHandler, InteractionHandler (deploy), ButtonHandler
-├── events/                   clientReady (deploy + lịch đóng vote), interactionCreate (dispatcher), messageCreate (XP)
+├── events/                   clientReady (deploy, lịch đóng vote, lịch Bảng vàng), interactionCreate (dispatcher),
+│                             messageCreate (XP, thông báo lên level/đột phá, đồng bộ role cảnh giới)
 ├── interactions/
 │   ├── commands/             ping, rank, leaderboard, contribution, poll, admin, config
 │   └── contextMenus/         RecognizeContribution ("Ghi nhận đóng góp")
@@ -52,7 +56,15 @@ src/
     ├── format.ts             Số vi-VN, truncate theo UTF-16, fitLines, disableMaskedLinks, DISCORD_LIMITS, mention, màu
     ├── messages.ts           Sửa message đã đăng (contribution, vote); lỗi chỉ ghi log
     ├── pollScheduler.ts      Tự đóng vote quá hạn và sửa message
-    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin
+    ├── cards/                Vẽ ảnh PNG bằng @napi-rs/canvas (DEC-030): rankCard, leaderboardCard, draw, decor, icons,
+    │                         theme, fonts (tìm assets/fonts theo __dirname); types.ts là hợp đồng dữ liệu ảnh
+    ├── cardData.ts           Dựng dữ liệu ảnh từ service (hàm thuần) + loader tên/avatar; rankSummaryText
+    ├── avatars.ts            AvatarFetcher: tải avatar từ CDN Discord (allowlist host, timeout, giới hạn dung lượng, cache)
+    ├── memberDirectory.ts    Tên hiển thị + avatar URL theo user ID: cache discord.js → cache TTL → REST từng người
+    ├── liveBoard.ts          Bảng vàng: đăng/sửa message 2–3 ảnh, khoá theo guild, lịch 10 phút
+    ├── roleSync.ts           Đồng bộ role cảnh giới (từng role một), tierRoleSafetyIssue (chặn role nguy hiểm)
+    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin, progression (lên level/đột phá)
+assets/fonts/                 Be Vietnam Pro (4 weight) + OFL.txt
 test/                         node:test + SQLite :memory: (xem mục 7)
 deploy/                       Unit systemd
 docs/DEPLOY.md                Runbook triển khai và vận hành
@@ -72,7 +84,8 @@ docs/DEPLOY.md                Runbook triển khai và vận hành
 
 Khi `clientReady`:
 - deploy toàn bộ command theo guild, set global command về rỗng;
-- khởi động lịch đóng vote (30 giây một lần).
+- khởi động lịch đóng vote (30 giây một lần);
+- khởi động lịch Bảng vàng (10 phút một lần, lượt đầu sau 15 giây).
 
 ### 3.2 Tin nhắn → Activity XP
 ```
@@ -83,7 +96,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
       3. tin quá ngắn?                   → too_short
       4. transaction: cooldown theo member_xp.last_message_xp_at → cooldown
                       Ledger.record(xp, snapshot team) + cập nhật last_message_xp_at
-  → lên level và bật thông báo → gửi "🎉 Chúc mừng" (chỉ ping đúng người đó)
+  → lên level và bật thông báo → vượt mốc cảnh giới thì gửi thông báo "đột phá", ngược lại gửi "tu vi tăng tiến"
+    (views/progression.ts; chỉ ping đúng người đó)
+  → mọi tin được XP: syncTierRoles (thêm role cảnh giới hiện tại, bỏ role cảnh giới khác; DEC-031)
 ```
 
 ### 3.3 Contribution (DEC-025)
@@ -102,11 +117,21 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 ### 3.4 Vote / bầu cử (DEC-026)
 - `/poll create`: chỉ admin hoặc role tạo vote; XP riêng chỉ admin đặt được. Nút có dạng `poll:<id>:<index>`.
 - Bấm nút: chọn một thì đổi phiếu, chọn nhiều thì bật/tắt. Lần tham gia đầu được XP (Activity) một lần. Phiếu ẩn danh.
+- XP từ vote bị giới hạn theo ngày giờ Việt Nam (`pollXpDailyCap`, mặc định 25, DEC-028); phần bị cắt không cộng bù.
 - Lịch `pollScheduler` gọi `closeDue()`, rồi sửa message sang trạng thái đóng.
+
+### 3.4b Hồ sơ, bảng xếp hạng và Bảng vàng (DEC-029, DEC-030)
+- `/rank`: `deferReply` → hồ sơ Activity + Contribution + Gamification → tải avatar (CDN) → `renderRankCard` → ảnh + `rankSummaryText` (cảnh giới, chuỗi ngày, huy hiệu, huy hiệu sắp đạt). Vẽ lỗi thì dùng embed cũ.
+- `/leaderboard`: `query()` theo loại/phạm vi/kỳ → tên + avatar của ≤ 10 người (MemberDirectory, AvatarFetcher) → `renderLeaderboardCard` + 3 hàng nút.
+  - Namespace nút `lb`: `lb:v:<a|c>:<i|t>:<all|w|m>:<page>:<ownerId>`, `lb:me:<a|c>:<all|w|m>:<ownerId>`. Nút disabled dùng `lb:x:<vị trí>` để customId không trùng.
+  - Chủ bảng bấm thì sửa message (thay ảnh bằng `files` + `attachments: []`); người khác bấm thì nhận bảng riêng (ephemeral).
+- Trả lời riêng khi người gọi không có quyền gửi tin, hoặc bot không có Attach Files ở kênh (`mustReplyPrivately`).
+- Bảng vàng: `/config bang-vang` đặt kênh → `LiveBoardService` → `refreshLiveBoard(force)`. Lịch 10 phút sửa message khi chữ ký dữ liệu đổi. Nội dung: Activity cá nhân tuần, Contribution cá nhân tháng, Activity team tuần (nếu có team).
 
 ### 3.5 Quản trị
 - Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
 - Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
+- `/config canh-gioi gan-role|bo-role|list`: gán role cho cảnh giới, chặn role nguy hiểm (`tierRoleSafetyIssue`). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
 ### 3.6 Quyền xem và đăng
 
@@ -118,7 +143,7 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 
 | Nhóm | Bảng |
 | --- | --- |
-| Cấu hình | `guild_settings`, `channel_settings`, `team_roles` |
+| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`), `channel_settings`, `team_roles`, `tier_roles`, `live_boards` |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
 | Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
@@ -129,6 +154,11 @@ Migration:
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
   - `contributions.source_message_id` + unique index một phần `(guild_id, source_message_id) WHERE source_message_id IS NOT NULL AND status = 'active'`.
+- **3** (Phase 12):
+  - `guild_settings.poll_xp_daily_cap` (mặc định 25);
+  - `tier_roles` (unique theo role trong guild), `live_boards`;
+  - index cho bảng theo kỳ (`idx_*_events_period`), chuỗi ngày và XP vote trong ngày (`idx_xp_events_user_source`), huy hiệu (`idx_contribution_votes_voter`, `idx_poll_participants_user`). Xem LL-015.
+  - Không đổi gì với backup/restore: vẫn một file SQLite. Chuỗi ngày và huy hiệu tính lại từ ledger, không có bảng riêng.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;
@@ -140,8 +170,9 @@ Quy tắc:
 ## 5. Bảo mật
 
 - Intent: `Guilds`, `GuildMessages`, `MessageContent` (privileged, DEC-023). Không dùng `GuildMembers` hay `GuildPresences`.
-- Quyền bot tối thiểu: View Channels, Send Messages, Send Messages in Threads, Embed Links (`docs/DEPLOY.md`).
-- `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level mới ping người được nhắc.
+- Quyền bot tối thiểu: View Channels, Send Messages, Send Messages in Threads, Embed Links, Attach Files (ảnh thẻ, DEC-030), Manage Roles (role cảnh giới, DEC-031) (`docs/DEPLOY.md`).
+- Role cảnh giới: không nhận `@everyone`, role managed, role có quyền quản trị/kiểm duyệt, role không thấp hơn role cao nhất của bot; kiểm tra lại mỗi lần thêm role.
+- `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level/đột phá mới ping người được nhắc.
 - Secret chỉ lấy từ env; logger che token; `build/` không chứa file cấu hình.
 - `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
 
@@ -150,13 +181,16 @@ Quy tắc:
 | Thời điểm | Đích |
 | --- | --- |
 | Runtime | Discord Gateway (WebSocket) và Discord REST, qua discord.js |
-| Cài đặt | npm registry (không có install script; binary better-sqlite3 nằm sẵn trong package) |
+| Runtime | CDN avatar của Discord (`cdn.discordapp.com`, `media.discordapp.net`), HTTPS, không theo redirect, qua `AvatarFetcher` (DEC-030) |
+| Cài đặt | npm registry (không có install script; binary better-sqlite3 và `@napi-rs/canvas` nằm sẵn trong package theo nền tảng) |
 
 ## 7. Test
 
 - `npm test` compile vào `build-test/` rồi chạy `node --test`.
 - Service được test với SQLite `:memory:` và migration thật, không mock DB.
 - Tầng Discord được test bằng fake interaction/service.
-- `test/integration.test.ts` chạy kịch bản end-to-end qua toàn bộ service thật.
+- `test/integration.test.ts` chạy kịch bản end-to-end qua toàn bộ service thật; `test/integration-gamification.test.ts` làm tương tự cho Phase 12, gồm cả vẽ ảnh thật.
+- Hiệu năng: `test/ledger-perf.test.ts` (bảng team tổng), `test/ledger-period-perf.test.ts` (bảng theo kỳ, 200k event).
+- Ảnh: `test/cards.test.ts` vẽ thật và kiểm PNG; lệnh `/rank`, `/leaderboard` cho phép thay hàm vẽ (`renderCard`) trong test. `/config bang-vang` cho phép thay hàm Bảng vàng (`liveBoardActions`).
 - `test/audit-view.test.ts` kiểm hiển thị audit với dữ liệu thật (LL-011).
 - `test/commands.test.ts` kiểm mọi command build được JSON, không trùng tên, và command admin có đủ hai lớp quyền.
