@@ -245,6 +245,9 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - PEND-018 (PROP-026, phương án a): điểm của lượt ghi nhận tính cho team của tác giả **lúc gửi** contribution.
   - PEND-019: đã xác nhận ảnh kèm chữ giải thích (từ 5 ký tự trở lên sau chuẩn hoá, không trùng) được XP. Riêng ảnh kèm chữ quá ngắn vẫn giữ như cũ (không được XP); PROP-027 còn mở.
   - PEND-020 (PROP-028): admin đặt giới hạn **XP tối đa một người nhận từ vote trong một ngày** (giờ Việt Nam), cấu hình `pollXpDailyCap`, **mặc định 25**, 0 = không giới hạn. Vượt mức thì vẫn bỏ phiếu được, chỉ không được cộng thêm XP; phần XP bị cắt không được cộng bù về sau.
+- **Hệ quả đã biết** (review 2026-09-27):
+  - Hạn mức vote trong ngày tính theo XP vote còn hiệu lực, nên admin reset XP của một người thì hạn mức hôm đó của người đó cũng được trả lại.
+  - Rút ghi nhận rồi ghi nhận lại có thể xoá một phần hình phạt của admin; chờ quyết định ở PROP-031 (PEND-021).
 
 ### DEC-029 — Gamification: cảnh giới tu tiên, chuỗi ngày, huy hiệu, bảng xếp hạng theo kỳ
 
@@ -255,6 +258,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - **Chuỗi ngày hoạt động:** số ngày liên tiếp có ít nhất một tin nhắn được Activity XP. Hôm nay chưa nhắn thì chuỗi chưa mất; bỏ trọn một ngày thì về 0. Tính lại từ ledger (event `message` chưa huỷ), nên reset XP cũng xoá chuỗi. Chỉ hiển thị, không cộng XP.
   - **Huy hiệu:** 15 huy hiệu (`src/modules/gamification/achievements.ts`), tính lại từ dữ liệu còn hiệu lực mỗi lần xem. Chỉ hiển thị, không cộng điểm.
   - **Bảng xếp hạng theo kỳ** (PROP-020): tổng, tuần này, tháng này, cho cả Activity/Contribution × cá nhân/team. Điểm kỳ là tổng các event chưa huỷ phát sinh trong kỳ; không làm mất điểm tổng.
+  - Làm rõ sau review 2026-09-27: người phụ trách chọn bảng kỳ "tính theo XP/điểm **kiếm được** trong kỳ". Vì vậy event bù tự động của PROP-024 (`source = 'admin'`, `actor_id` null) **không** tính vào bảng kỳ. Nếu tính, người vừa bị gỡ contribution (tổng bằng 0) sẽ lên top tuần/tháng và Bảng vàng.
 
 ### DEC-030 — Giao diện bằng ảnh thẻ, Bảng vàng, nút chuyển trang
 
@@ -276,6 +280,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Bot cần thêm quyền **Manage Roles** (nới least privilege đã được duyệt). Role của bot phải nằm trên các role cảnh giới.
   - Không cho gán role nguy hiểm: `@everyone`, role do integration quản lý, role có quyền quản trị/kiểm duyệt (Administrator, Manage Server, Manage Roles, Manage Channels, Kick/Ban, Manage Messages, Mention Everyone, Manage Webhooks, Moderate Members...), và role không thấp hơn role cao nhất của bot.
   - Đồng bộ role khi thành viên có tin nhắn được XP. Bot không đọc danh sách thành viên, vì không dùng intent `GuildMembers`.
+- **Bổ sung sau review độc lập** (2026-09-27, sửa lỗi bảo mật; không nới quyền):
+  - Role cảnh giới không được trùng role admin bot, role tạo vote hay role team, và ngược lại. Kiểm tra cả hai chiều.
+  - Người gán role cảnh giới phải có Manage Roles, và role phải thấp hơn role cao nhất của họ (trừ chủ server). Đây đúng là phép kiểm tra Discord áp cho người thường khi gán role, nên bot không thành đường vòng để tự cấp role.
+  - Không nhận role có quyền nguy hiểm ở cấp server **hoặc** qua permission overwrite của bất kỳ kênh nào. Danh sách quyền nguy hiểm thêm Pin Messages, Bypass Slowmode, View Server Insights.
+  - Tên lệnh theo DEC-020: `/config tier set-role|clear-role|list`, `/config board`.
 
 ---
 
@@ -286,6 +295,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
 | PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
 | PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
+| PEND-021 | Rút ghi nhận rồi ghi nhận lại có xoá được hình phạt của admin không? **Đang làm:** có (hệ quả của cách bù điểm ở DEC-028) | Contribution | PROP-031 |
 | PEND-019 | Ảnh kèm chữ **quá ngắn** (ví dụ "ok") có được XP như ảnh không kèm chữ không? **Đang làm:** không. Ảnh kèm chữ từ 5 ký tự trở lên đã được XP (DEC-028) | Activity XP | PROP-027 |
 
 **Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028.

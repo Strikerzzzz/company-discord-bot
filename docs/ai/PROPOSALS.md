@@ -40,6 +40,7 @@
 | PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | APPROVED |
 | PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | APPROVED |
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
+| PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | PROPOSED |
 
 ---
 
@@ -1232,6 +1233,54 @@ LOW
 ### Rủi ro
 
 Thấp.
+
+### Trạng thái
+
+PROPOSED
+
+---
+
+## PROP-031 — Rút rồi ghi nhận lại không được xoá hình phạt của admin
+
+### Vấn đề
+
+Cách bù điểm đã chốt ở DEC-028 (PROP-024, phương án a) có lỗ hổng. Ví dụ:
+1. B, C, D ghi nhận A, A có 3 điểm.
+2. Admin phạt −3, A còn 0.
+3. B, C, D lần lượt rút ghi nhận. Mỗi lần rút, tổng thành −1 và bot bù +1, nên A vẫn 0.
+4. Cả ba ghi nhận lại. A có **3 điểm**, hình phạt mất hết.
+
+Không cần thông đồng: bấm nhầm rồi bấm lại cũng làm mất vĩnh viễn một phần hình phạt. Cả reviewer dữ liệu lẫn reviewer bảo mật (2026-09-27) đều phát hiện lỗi này.
+
+### Đề xuất
+
+Chọn một trong các phương án:
+- (a) Nếu một lượt rút ghi nhận đã phát sinh điểm bù, người đó không được ghi nhận lại contribution đó (giống lượt đã bị reset, PEND-015).
+- (b) Mô hình "nợ": ghi nhận lại sau khi đã bù thì khấu trừ phần bù trước, chỉ phần còn dư mới cộng điểm.
+- (c) Chấp nhận như hiện tại và ghi rõ là hạn chế trong DEC-028.
+
+Khuyến nghị (a): đơn giản, nhất quán với cách xử lý lượt đã bị reset, dễ giải thích cho người dùng.
+
+### Lý do
+
+Hình phạt của admin phải có hiệu lực; người dùng không được tự huỷ nó bằng thao tác thông thường.
+
+### Tác động
+
+- **Code:** `ContributionService.toggleVote`. Với (a), cần biết lượt rút nào đã phát sinh bù, ví dụ lưu `event_id` của event bù vào dòng vote thay vì xoá dòng vote.
+- **Database:** (a) hoặc (b) có thể cần thêm cột hoặc migration mới.
+- **Security:** Giảm lạm dụng.
+- **Performance:** Không.
+- **UX:** (a) người đã rút sau khi bị phạt sẽ không bấm ghi nhận lại được, và nhận thông báo lý do.
+- **Infrastructure:** Không.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Đây là quy tắc nghiệp vụ (PEND-021), cần người phụ trách chốt.
 
 ### Trạng thái
 
