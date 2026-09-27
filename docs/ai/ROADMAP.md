@@ -22,6 +22,7 @@
 | 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
 | 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
 | 12 | Gamification và giao diện ảnh | **Đã merge vào `main`** (DEC-032) | DEC-028…032 |
+| 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **ĐANG LÀM** trên `phase-13/tier-sets` | DEC-033 |
 
 ## Chi tiết
 
@@ -101,6 +102,16 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 - **Cách làm:** nền móng chung, rồi đợt 1 (3 agent: dữ liệu theo kỳ và gamification; quy tắc nghiệp vụ; vẽ ảnh), rồi đợt 2 (2 agent: lệnh xem và Bảng vàng; cấu hình, sự kiện và role), sau đó review độc lập.
 - **Điều kiện hoàn thành:** `npm run check` pass; ảnh render đúng trên máy dev Windows và trên Linux khi chạy thật; review độc lập không còn lỗi đã xác nhận.
 
+### Phase 13 — Bộ danh hiệu chọn được, bảng điều khiển role · ĐANG LÀM
+
+- **Mục tiêu:** hệ thống danh hiệu/role "có lựa chọn chứ không cứng" (DEC-033).
+- **Phạm vi:**
+  - 5 bộ danh hiệu (Tu tiên, Rank game, Kiếm hiệp, Cây xanh, Vũ trụ), 8 bậc cùng mốc; admin chọn bộ, đổi tên/emoji từng bậc.
+  - Bot tự tạo/đổi tên role theo bộ.
+  - Bảng điều khiển `/config tier panel` bằng Components V2 (menu chọn bộ, 8 ô chọn role, form đổi tên).
+  - Ảnh thẻ và thông báo theo giọng văn từng bộ.
+- **Cách làm:** nền móng (dữ liệu bộ, TierSetService, migration 4) → 3 agent song song (vẽ ảnh; bảng điều khiển và role; giọng văn và tài liệu) → review độc lập.
+
 ### Phase 11 — Security review và Deployment
 
 - Rà soát permission và OAuth scope thực tế trên Developer Portal (hiện CHƯA XÁC ĐỊNH).
@@ -119,3 +130,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-26 | DEC-021: Phase 2–10 làm liên tục trên một branch, thêm tính năng vote/bầu cử (DEC-026). Đã code, test (323) và qua review độc lập. Phase 11 chờ server Linux |
 | 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`. Thêm Phase 12 (gamification và ảnh thẻ, DEC-029…031) |
 | 2026-09-27 | DEC-032: duyệt và merge Phase 12 vào `main` |
+| 2026-09-27 | DEC-033: thêm Phase 13 (5 bộ danh hiệu, bot tự tạo role, bảng điều khiển trực quan) |

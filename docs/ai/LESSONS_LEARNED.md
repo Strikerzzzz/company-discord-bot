@@ -211,3 +211,9 @@ Format mỗi mục:
   - Tính năng để bot thay người dùng làm một việc cần quyền (gán role, đăng bài) phải kiểm tra **cả quyền của người gọi**, không chỉ quyền của bot. Đồng thời phải chặn xung đột với những vai trò khác của cùng đối tượng.
   - Test hiệu năng phải gồm trường hợp xấu nhất về phân bố dữ liệu (nhiều người bằng điểm), không chỉ tổng số dòng.
   - Spec giao việc phải đối chiếu với DECISIONS (quy tắc đặt tên, ngôn ngữ) trước khi giao.
+
+## LL-018 — Lệnh `check | grep` rồi `&& git commit` vẫn commit khi test fail
+
+- **Phát hiện:** 2026-09-27 (Phase 13) · **Mức độ:** Thấp · **Trạng thái:** Đã sửa bằng một commit riêng (không amend)
+- **Hiện tượng:** Chạy `npm run check 2>&1 | grep ... && git add && git commit`. `grep` luôn tìm thấy dòng tổng kết nên trả mã 0, và commit vẫn chạy dù có 1 test fail (615/616).
+- **Bài học:** Muốn commit sau khi kiểm tra thì lấy **exit code của chính lệnh check**: ghi output ra file, xem `$?`, rồi mới commit. Không nối `grep` vào giữa điều kiện commit.
