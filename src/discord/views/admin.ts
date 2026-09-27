@@ -122,20 +122,28 @@ export function describeSettingsPatch(patch: Partial<GuildSettings>): string[]
 	return lines;
 }
 
-/** Mô tả ngắn cấu hình riêng của một channel, ví dụ "bật XP, 20 XP/tin, cooldown 30 giây". */
-export function describeChannelSettings(channel: ChannelSettings): string
+/** Giá trị chung của server mà channel dùng khi không có giá trị riêng. */
+type ChannelFallbackSettings = Pick<GuildSettings, "xpPerMessage" | "xpCooldownSeconds">;
+
+/**
+ * Mô tả ngắn cấu hình riêng của một channel, ví dụ "bật XP, 20 XP/tin, cooldown dùng giá trị chung (60 giây)".
+ * Giá trị null (dùng giá trị chung, PROP-030) hiển thị kèm giá trị chung hiện tại của server.
+ */
+export function describeChannelSettings(channel: ChannelSettings, guild: ChannelFallbackSettings): string
 {
 	if (!channel.xpEnabled) return "tắt XP";
-	const parts = ["bật XP"];
-	if (channel.xpPerMessage !== null) parts.push(`${formatNumber(channel.xpPerMessage)} XP/tin`);
-	if (channel.xpCooldownSeconds !== null) parts.push(`cooldown ${seconds(channel.xpCooldownSeconds)}`);
-	if (parts.length === 1) parts.push("dùng giá trị chung");
-	return parts.join(", ");
+	const xp = channel.xpPerMessage === null
+		? `XP/tin dùng giá trị chung (${formatNumber(guild.xpPerMessage)} XP)`
+		: `${formatNumber(channel.xpPerMessage)} XP/tin`;
+	const cooldown = channel.xpCooldownSeconds === null
+		? `cooldown dùng giá trị chung (${seconds(guild.xpCooldownSeconds)})`
+		: `cooldown ${seconds(channel.xpCooldownSeconds)}`;
+	return `bật XP, ${xp}, ${cooldown}`;
 }
 
-function channelLines(channels: readonly ChannelSettings[]): string[]
+function channelLines(channels: readonly ChannelSettings[], guild: ChannelFallbackSettings): string[]
 {
-	return channels.map(channel => `${channelMention(channel.channelId)}: ${describeChannelSettings(channel)}`);
+	return channels.map(channel => `${channelMention(channel.channelId)}: ${describeChannelSettings(channel, guild)}`);
 }
 
 function teamLines(teams: readonly string[]): string[]
@@ -189,7 +197,7 @@ export function buildConfigEmbed(
 		? fitLines(teamLines(teams), EMBED_FIELD_MAX, hidden => `… và ${hidden} team khác`)
 		: "Chưa có team nào. Dùng `/config team add` để thêm.";
 	const channelText = channels.length > 0
-		? fitLines(channelLines(channels), EMBED_FIELD_MAX, hidden => `… và ${hidden} channel khác (xem \`/config channel list\`)`)
+		? fitLines(channelLines(channels, settings), EMBED_FIELD_MAX, hidden => `… và ${hidden} channel khác (xem \`/config channel list\`)`)
 		: "Không có. Mọi channel dùng cấu hình chung.";
 	const boardText = gamification.boardChannelId === null
 		? "Đang tắt. Dùng `/config board` để bật."
@@ -215,7 +223,7 @@ export function buildConfigEmbed(
 export function buildChannelListEmbed(channels: readonly ChannelSettings[], settings: GuildSettings): EmbedBuilder
 {
 	const description = channels.length > 0
-		? fitLines(channelLines(channels), EMBED_DESCRIPTION_MAX, hidden => `… và ${hidden} channel khác`)
+		? fitLines(channelLines(channels, settings), EMBED_DESCRIPTION_MAX, hidden => `… và ${hidden} channel khác`)
 		: "Không có channel nào có cấu hình riêng. Mọi channel dùng cấu hình chung.";
 
 	return new EmbedBuilder()

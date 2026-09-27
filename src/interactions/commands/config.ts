@@ -131,6 +131,12 @@ const TIER_SET_CHOICES = TIER_SET_KEYS.map(key =>
 /** Độ dài tối đa của option tên bậc (emoji + tên); kiểm tra chi tiết do TierSetService làm. */
 const TIER_NAME_OPTION_MAX = 60;
 
+const CHANNEL_USE_GUILD_XP = "dung-chung-xp";
+const CHANNEL_USE_GUILD_COOLDOWN = "dung-chung-cooldown";
+export const CHANNEL_XP_CONFLICT = "Chỉ chọn một: `xp-moi-tin` để đặt XP riêng cho channel, hoặc `dung-chung-xp` = True để dùng XP chung của server.";
+export const CHANNEL_COOLDOWN_CONFLICT = "Chỉ chọn một: `cooldown-giay` để đặt cooldown riêng cho channel, "
+	+ "hoặc `dung-chung-cooldown` = True để dùng cooldown chung của server.";
+
 const GUILD_UNAVAILABLE = "Không đọc được thông tin server. Vui lòng thử lại sau.";
 const INVALID_TIER = "Bậc danh hiệu không hợp lệ.";
 const INVALID_TIER_SET = "Bộ danh hiệu không hợp lệ.";
@@ -216,7 +222,21 @@ function channelSetSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandS
 	addChannel(sub.setName("set").setDescription("Đặt cấu hình XP riêng cho một channel"), "Channel cần cấu hình");
 	sub.addBooleanOption(option => option.setName("bat-xp").setDescription("Bật hoặc tắt XP trong channel này"));
 	addSettingOption(sub, { name: "xp-moi-tin", key: "xpPerMessage", description: "XP mỗi tin nhắn trong channel này" });
-	return addSettingOption(sub, { name: "cooldown-giay", key: "xpCooldownSeconds", description: "Cooldown riêng trong channel này (giây)" });
+	sub.addBooleanOption(option => option
+		.setName(CHANNEL_USE_GUILD_XP)
+		.setDescription("True: channel này dùng XP mỗi tin chung của server (bỏ XP riêng)"));
+	addSettingOption(sub, { name: "cooldown-giay", key: "xpCooldownSeconds", description: "Cooldown riêng trong channel này (giây)" });
+	return sub.addBooleanOption(option => option
+		.setName(CHANNEL_USE_GUILD_COOLDOWN)
+		.setDescription("True: channel này dùng cooldown chung của server (bỏ cooldown riêng)"));
+}
+
+/** Giá trị riêng của channel theo option: số nếu có nhập, null nếu chọn dùng giá trị chung, undefined nếu không đổi (PROP-030). */
+function channelOverride(value: number | null, useGuild: boolean, conflict: string): number | null | undefined
+{
+	if (value !== null && useGuild) throw new UserError(conflict);
+	if (value !== null) return value;
+	return useGuild ? null : undefined;
 }
 
 function pollSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
@@ -600,14 +620,24 @@ export default class ConfigCmd extends Command
 		const patch: Partial<Omit<ChannelSettings, "channelId">> = {};
 		const enabled = options.getBoolean("bat-xp");
 		if (enabled !== null) patch.xpEnabled = enabled;
-		const xpPerMessage = options.getInteger("xp-moi-tin");
-		if (xpPerMessage !== null) patch.xpPerMessage = xpPerMessage;
-		const cooldown = options.getInteger("cooldown-giay");
-		if (cooldown !== null) patch.xpCooldownSeconds = cooldown;
+		const xpPerMessage = channelOverride(
+			options.getInteger("xp-moi-tin"),
+			options.getBoolean(CHANNEL_USE_GUILD_XP) ?? false,
+			CHANNEL_XP_CONFLICT,
+		);
+		if (xpPerMessage !== undefined) patch.xpPerMessage = xpPerMessage;
+		const cooldown = channelOverride(
+			options.getInteger("cooldown-giay"),
+			options.getBoolean(CHANNEL_USE_GUILD_COOLDOWN) ?? false,
+			CHANNEL_COOLDOWN_CONFLICT,
+		);
+		if (cooldown !== undefined) patch.xpCooldownSeconds = cooldown;
 		requireChange(patch);
 
-		const next = this.services.guildConfig.setChannel(guildId, channel.id, patch, actorId);
-		await interaction.reply(ephemeral(`Đã cập nhật cấu hình XP của ${channelMention(channel.id)}: ${describeChannelSettings(next)}.`));
+		const { guildConfig } = this.services;
+		const next = guildConfig.setChannel(guildId, channel.id, patch, actorId);
+		const summary = describeChannelSettings(next, guildConfig.getSettings(guildId));
+		await interaction.reply(ephemeral(`Đã cập nhật cấu hình XP của ${channelMention(channel.id)}: ${summary}.`));
 	}
 
 	private async resetChannel({ interaction, guildId, actorId }: ConfigContext): Promise<void>
