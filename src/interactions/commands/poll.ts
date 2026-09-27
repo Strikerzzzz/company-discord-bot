@@ -11,6 +11,7 @@ import {
 	pollListEmbed,
 	pollMessage,
 	pollSelectionText,
+	pollXpCapNotice,
 } from "../../discord/views/poll";
 import { SETTING_LIMITS } from "../../modules/guild-config/types";
 import { Poll, POLL_LIMITS } from "../../modules/poll/types";
@@ -126,24 +127,38 @@ export default class PollCmd extends Command
 		// Vote được đăng công khai thay người tạo: phải có quyền gửi tin ở kênh này.
 		assertCanSendMessages(interaction);
 
+		const settings = services.guildConfig.getSettings(guildId);
 		const poll = services.polls.create({
 			guildId,
 			creatorId: interaction.user.id,
 			question: interaction.options.getString("cau-hoi", true),
 			options: parsePollOptions(interaction.options.getString("lua-chon", true)),
 			multiSelect: interaction.options.getBoolean("nhieu-lua-chon") ?? false,
-			xpReward: xp ?? services.guildConfig.getSettings(guildId).defaultPollXp,
+			xpReward: xp ?? settings.defaultPollXp,
 			durationMinutes: interaction.options.getInteger("thoi-han-phut"),
 		});
 
 		const response = await interaction.reply({ ...pollMessage(poll), withResponse: true });
 		const message = response.resource?.message;
-		if (!message)
+		if (message) services.polls.attachMessage(guildId, poll.id, message.channelId, message.id);
+		else logger.warn(`Không lấy được message của vote #${poll.id}; message sẽ không được cập nhật khi vote đóng.`);
+
+		await this.sendCapNotice(interaction, poll, settings.pollXpDailyCap);
+	}
+
+	/** Ghi chú riêng cho người tạo nếu XP của vote vượt giới hạn XP từ vote mỗi ngày; gửi lỗi chỉ ghi cảnh báo (vote đã tạo xong). */
+	private async sendCapNotice(interaction: ChatInputCommandInteraction, poll: Poll, dailyCap: number): Promise<void>
+	{
+		const notice = pollXpCapNotice(poll.xpReward, dailyCap);
+		if (notice === null) return;
+		try
 		{
-			logger.warn(`Không lấy được message của vote #${poll.id}; message sẽ không được cập nhật khi vote đóng.`);
-			return;
+			await interaction.followUp({ content: notice, flags: MessageFlags.Ephemeral });
 		}
-		services.polls.attachMessage(guildId, poll.id, message.channelId, message.id);
+		catch (error)
+		{
+			logger.warn(`Không gửi được ghi chú giới hạn XP cho người tạo vote #${poll.id}:`, error);
+		}
 	}
 
 	private async close(interaction: ChatInputCommandInteraction): Promise<void>

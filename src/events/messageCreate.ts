@@ -1,12 +1,17 @@
 import { Events, Message, PermissionFlagsBits } from "discord.js";
 import Event from "../classes/Event";
 import { roleIdsOf } from "../discord/members";
-import { levelUpMessage } from "../discord/views/activity";
+import { syncTierRoles } from "../discord/roleSync";
+import { breakthroughText, levelUpText } from "../discord/views/progression";
+import { tierUp } from "../modules/activity/tiers";
 import { MessageInput } from "../modules/activity/types";
 import { logger } from "../shared/logger";
 
-// Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023) và thông báo khi lên level.
-// Không ghi log nội dung tin nhắn; lỗi để EventHandler bắt và ghi log.
+/** Lý do ghi vào audit log của Discord khi bot đổi role cảnh giới. */
+const TIER_ROLE_REASON = "Cảnh giới tu luyện";
+
+// Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023), thông báo lên level hoặc đột phá cảnh giới (DEC-029),
+// rồi đồng bộ role cảnh giới (DEC-031). Không ghi log nội dung tin nhắn; lỗi của service để EventHandler bắt và ghi log.
 export default class MessageCreate extends Event
 {
 	name = Events.MessageCreate;
@@ -17,7 +22,7 @@ export default class MessageCreate extends Event
 		// Chỉ phục vụ các server đã cấu hình: bot bị mời vào server lạ thì không đọc, không ghi XP, không gửi gì.
 		if (!this.client.guildIds.includes(message.guildId)) return;
 
-		const { activity, guildConfig } = this.client.services;
+		const { activity, tierRoles } = this.client.services;
 		const input: MessageInput = {
 			guildId: message.guildId,
 			userId: message.author.id,
@@ -28,18 +33,26 @@ export default class MessageCreate extends Event
 		};
 
 		const result = activity.handleMessage(input);
-		if (!result.awarded || result.levelAfter <= result.levelBefore) return;
-		if (!guildConfig.getSettings(message.guildId).levelUpAnnouncements) return;
+		if (!result.awarded) return;
+
+		if (result.levelAfter > result.levelBefore) await this.announceLevelUp(message, result.levelBefore, result.levelAfter);
+		// Đồng bộ ở mọi tin được XP (không chỉ khi lên level) để tự sửa lệch sau khi admin đổi cấu hình role hoặc reset XP.
+		// syncTierRoles không ném lỗi, nên lỗi role và lỗi thông báo độc lập nhau.
+		if (message.member) await syncTierRoles(message.member, result.levelAfter, tierRoles, TIER_ROLE_REASON);
+	}
+
+	/** Thông báo lên level, hoặc đột phá nếu vượt mốc cảnh giới. Không ném lỗi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo. */
+	private async announceLevelUp(message: Message<true>, levelBefore: number, levelAfter: number): Promise<void>
+	{
+		if (!this.client.services.guildConfig.getSettings(message.guildId).levelUpAnnouncements) return;
 		if (!this.canAnnounceIn(message)) return;
 
-		// XP đã được cộng; gửi thông báo thất bại (ví dụ thread bị khoá) chỉ ghi cảnh báo.
+		const tier = tierUp(levelBefore, levelAfter);
+		const content = tier ? breakthroughText(message.author.id, tier, levelAfter) : levelUpText(message.author.id, levelAfter);
 		try
 		{
 			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level.
-			await message.channel.send({
-				content: levelUpMessage(message.author.id, result.levelAfter),
-				allowedMentions: { users: [message.author.id] },
-			});
+			await message.channel.send({ content, allowedMentions: { users: [message.author.id] } });
 		}
 		catch (error)
 		{

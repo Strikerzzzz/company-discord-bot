@@ -28,7 +28,15 @@ import {
 	messageContributionTitle,
 	parseContributionButtonId,
 } from "../src/discord/views/contribution";
-import { parsePollButtonId, parsePollOptions, pollEmbed, pollListEmbed, pollMessage, pollSelectionText } from "../src/discord/views/poll";
+import {
+	parsePollButtonId,
+	parsePollOptions,
+	pollEmbed,
+	pollListEmbed,
+	pollMessage,
+	pollSelectionText,
+	pollXpCapNotice,
+} from "../src/discord/views/poll";
 import ContributionCmd from "../src/interactions/commands/contribution";
 import PollCmd from "../src/interactions/commands/poll";
 import RecognizeContribution from "../src/interactions/contextMenus/RecognizeContribution";
@@ -338,6 +346,7 @@ function chatInput(subcommand: string, values: OptionValues = {}, member: Member
 	const replies: Payload[] = [];
 	const deferred: Payload[] = [];
 	const edits: Payload[] = [];
+	const followUps: Payload[] = [];
 	const interaction = {
 		guildId: GUILD,
 		user: { id: member.userId ?? USER_B },
@@ -367,8 +376,13 @@ function chatInput(subcommand: string, values: OptionValues = {}, member: Member
 			edits.push(payload);
 			return Promise.resolve({ id: REPLY_MESSAGE_ID, channelId: CHANNEL_GENERAL });
 		},
+		followUp: (payload: Payload) =>
+		{
+			followUps.push(payload);
+			return Promise.resolve();
+		},
 	};
-	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies, deferred, edits };
+	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies, deferred, edits, followUps };
 }
 
 function buttonPress(customId: string, member: MemberSpec = {}, messageId = MESSAGE_ID)
@@ -711,6 +725,34 @@ describe("view vote", () =>
 		assert.equal(pollSelectionText({ poll, selected: [], xpAwarded: 0, xpCapped: false, dailyCap: 25 }), "Bạn chưa chọn lựa chọn nào.");
 	});
 
+	test("phản hồi riêng khi XP bị cắt vì giới hạn XP từ vote trong ngày (DEC-028)", () =>
+	{
+		const poll = makePoll([1, 1, 1], { xpReward: 20 });
+		assert.equal(
+			pollSelectionText({ poll, selected: [0], xpAwarded: 5, xpCapped: true, dailyCap: 25 }),
+			"Bạn đang chọn: Lựa chọn 1 · +5 XP (đã chạm giới hạn 25 XP từ vote hôm nay)",
+		);
+		assert.equal(
+			pollSelectionText({ poll, selected: [1], xpAwarded: 0, xpCapped: true, dailyCap: 1000 }),
+			"Bạn đang chọn: Lựa chọn 2 · Bạn đã nhận đủ 1.000 XP từ vote hôm nay nên lần này không được cộng XP.",
+		);
+		assert.equal(
+			pollSelectionText({ poll, selected: [2], xpAwarded: 20, xpCapped: false, dailyCap: 0 }),
+			"Bạn đang chọn: Lựa chọn 3 · +20 XP",
+		);
+	});
+
+	test("ghi chú giới hạn XP cho người tạo: chỉ khi có giới hạn và XP của vote vượt giới hạn", () =>
+	{
+		assert.equal(pollXpCapNotice(20, 25), null);
+		assert.equal(pollXpCapNotice(25, 25), null);
+		assert.equal(pollXpCapNotice(500, 0), null, "0 = không giới hạn");
+		const notice = pollXpCapNotice(1500, 25) ?? "";
+		assert.ok(notice.includes("thưởng 1.500 XP"));
+		assert.ok(notice.includes("tối đa 25 XP từ vote mỗi ngày"));
+		assert.ok(notice.includes("`/config poll gioi-han-xp-ngay`"));
+	});
+
 	test("danh sách vote: tối đa 15 dòng, phần còn lại gộp thành một dòng", () =>
 	{
 		const polls = Array.from({ length: 20 }, (_, index) => makePoll([0, 0], { id: index + 1 }));
@@ -832,6 +874,45 @@ describe("/poll", () =>
 		const second = chatInput("create", { ...createValues, xp: 0 }, { roleIds: [ROLE_FRONTEND] });
 		await new PollCmd(byRole.client).execute(second.interaction);
 		assert.equal(byRole.polls.created[0].xpReward, 0);
+	});
+
+	test("create: XP của vote vượt giới hạn XP từ vote mỗi ngày thì người tạo nhận thêm ghi chú riêng", async () =>
+	{
+		const capped = setup({ pollXpDailyCap: 25 });
+		const over = chatInput("create", { ...createValues, xp: 50 }, { manageGuild: true });
+		await new PollCmd(capped.client).execute(over.interaction);
+		assert.equal(over.replies.length, 1);
+		assert.equal(over.replies[0].flags, undefined, "message vote vẫn công khai");
+		assert.deepEqual(over.followUps, [{ content: pollXpCapNotice(50, 25), flags: MessageFlags.Ephemeral }]);
+		assert.equal(capped.polls.attached.length, 1);
+
+		const defaultXp = chatInput("create", createValues, { manageGuild: true });
+		await new PollCmd(capped.client).execute(defaultXp.interaction);
+		assert.deepEqual(defaultXp.followUps, [], "XP mặc định 5 không vượt giới hạn 25");
+
+		const unlimited = setup({ pollXpDailyCap: 0 });
+		const noCap = chatInput("create", { ...createValues, xp: 500 }, { manageGuild: true });
+		await new PollCmd(unlimited.client).execute(noCap.interaction);
+		assert.deepEqual(noCap.followUps, [], "0 = không giới hạn");
+
+		const defaultOverCap = setup({ defaultPollXp: 30, pollXpDailyCap: 25, pollCreatorRoleId: ROLE_BACKEND });
+		const byCreator = chatInput("create", createValues, { roleIds: [ROLE_BACKEND] });
+		await new PollCmd(defaultOverCap.client).execute(byCreator.interaction);
+		assert.equal(byCreator.followUps.length, 1, "XP mặc định của server cũng có thể vượt giới hạn");
+	});
+
+	test("create: gửi ghi chú giới hạn XP thất bại chỉ ghi cảnh báo, vote vẫn được tạo", async (t) =>
+	{
+		const warned = t.mock.method(console, "error", () => undefined);
+		const { client, polls } = setup({ pollXpDailyCap: 10 });
+		const fake = chatInput("create", { ...createValues, xp: 50 }, { manageGuild: true });
+		Object.assign(fake.interaction, { followUp: () => Promise.reject(new Error("Unknown Webhook")) });
+
+		await new PollCmd(client).execute(fake.interaction);
+		assert.equal(polls.created.length, 1);
+		assert.equal(polls.attached.length, 1);
+		assert.equal(warned.mock.callCount(), 1);
+		assert.match(String(warned.mock.calls[0].arguments[0]), /\[WARN\].*vote #5/);
 	});
 
 	test("nút vote: gọi service kèm role, cập nhật embed, phản hồi riêng kèm XP", async () =>

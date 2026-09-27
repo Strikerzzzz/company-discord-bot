@@ -8,11 +8,16 @@
 | --- | --- |
 | Hệ điều hành | Linux có systemd ≥ 247 (ví dụ Ubuntu Server 24.04 LTS) |
 | Node.js | **24 LTS** (tối thiểu 22.14, vì better-sqlite3 cần N-API 10) |
-| Mạng ra ngoài | HTTPS/WSS cổng 443 tới `discord.com`, `gateway.discord.gg`; tới `registry.npmjs.org` khi cài đặt |
+| Mạng ra ngoài | HTTPS/WSS cổng 443 tới `discord.com`, `gateway.discord.gg`; tới `cdn.discordapp.com`, `media.discordapp.net` để tải avatar vẽ lên ảnh thẻ (DEC-030); tới `registry.npmjs.org` khi cài đặt |
 | Mạng vào | Không cần (trừ SSH để quản trị) |
 | Tài nguyên | 1 vCPU, 1–2 GB RAM, ~20 GB ổ đĩa (tính cả bản sao lưu) |
 
 Không cần C++ build tools: better-sqlite3 13 đã kèm sẵn binary, và `.npmrc` tắt install script (LL-008).
+
+Ảnh thẻ `/rank`, `/leaderboard` và Bảng vàng do bot tự vẽ bằng `@napi-rs/canvas` (DEC-030):
+- `npm ci` tự cài binary dựng sẵn đúng nền tảng (ví dụ `@napi-rs/canvas-linux-x64-gnu` trên Ubuntu x64), không cần cài Cairo hay thư viện đồ hoạ nào;
+- font **Be Vietnam Pro** đã nằm trong repo (`assets/fonts/`, giấy phép SIL OFL 1.1 trong `OFL.txt`), không cần cài font lên server;
+- nếu không tải được avatar (mạng chặn CDN, quá hạn), ảnh vẫn được vẽ với chữ cái đầu thay cho avatar.
 
 ## 2. Chuẩn bị Discord Application
 
@@ -24,8 +29,23 @@ Không cần C++ build tools: better-sqlite3 13 đã kèm sẵn binary, và `.np
    - **Privileged Gateway Intents**: bật **Message Content Intent** (bắt buộc cho chống spam, DEC-023). Để **tắt** Server Members Intent và Presence Intent.
 4. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`.
-   - Bot Permissions: **View Channels, Send Messages, Send Messages in Threads, Embed Links**. Không cấp Administrator hay quyền quản lý nào.
+   - Bot Permissions (đủ, không thừa):
+
+     | Quyền | Giá trị | Dùng để |
+     | --- | --- | --- |
+     | View Channels | 1024 | Đọc tin nhắn để tính Activity XP |
+     | Send Messages | 2048 | Thông báo lên level, đăng vote/contribution, Bảng vàng |
+     | Send Messages in Threads | 274877906944 | Thông báo lên level trong thread |
+     | Embed Links | 16384 | Embed của vote, contribution, lệnh quản trị |
+     | Attach Files | 32768 | Ảnh thẻ `/rank`, `/leaderboard` và Bảng vàng (DEC-030) |
+     | Manage Roles | 268435456 | Tự gán role theo cảnh giới (DEC-031) |
+
+   - Tổng permissions: 1024 + 2048 + 274877906944 + 16384 + 32768 + 268435456 = **275146394624**. Link mời có dạng:
+     `https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=275146394624`
+   - Không dùng role cảnh giới thì bỏ Manage Roles: 275146394624 − 268435456 = **274877959168**.
+   - Không cấp Administrator hay quyền quản lý nào khác. Manage Roles chỉ cho bot gán các role **nằm dưới** role của bot, và bot tự từ chối role có quyền quản trị/kiểm duyệt (mục 7.1).
    - Mở URL vừa tạo để mời bot vào server.
+   - Bot đã được mời từ trước (bản chưa có Attach Files, Manage Roles): mở lại link mời mới để cập nhật quyền, hoặc thêm hai quyền này cho role của bot trong **Server Settings → Roles**.
 5. Lấy Server ID: trong Discord, bật Developer Mode, chuột phải vào server và chọn Copy Server ID.
 
 ## 3. Cài đặt lần đầu
@@ -126,10 +146,33 @@ Người có quyền **Manage Server** chạy các lệnh sau (mọi thay đổi
    - cho phép role đó dùng lệnh `/admin` và `/config`.
 
    Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
-5. `/config poll` để đặt XP mặc định khi vote và role được tạo vote.
-6. Kiểm tra lại bằng `/config view`.
+5. `/config poll` để đặt XP mặc định khi vote, role được tạo vote và `gioi-han-xp-ngay`: XP tối đa một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028).
+6. Role cảnh giới (tuỳ chọn, cần quyền Manage Roles, DEC-031), xem mục 7.1.
+7. Bảng vàng (tuỳ chọn, DEC-030), xem mục 7.2.
+8. Kiểm tra lại bằng `/config view`.
 
 Nên tắt quyền **Use Application Commands** của thành viên ở các kênh chỉ đọc (ví dụ #thong-bao). Bot cũng đã tự chặn việc đăng contribution hay vote vào kênh mà người đó không có quyền gửi tin.
+
+### 7.1. Role cảnh giới
+
+Bot tự gán cho mỗi thành viên đúng một role theo cảnh giới tu luyện (mốc level: Luyện Khí 0, Trúc Cơ 3, Kim Đan 6, Nguyên Anh 10, Hóa Thần 15, Luyện Hư 20, Hợp Thể 30, Độ Kiếp 40).
+
+1. Trong **Server Settings → Roles**, tạo các role cảnh giới muốn dùng (không cần đủ 8). Các role này **không được có** quyền quản trị/kiểm duyệt: Administrator, Manage Server, Manage Roles, Manage Channels, Manage Webhooks, Manage Expressions, Manage Events, Manage Threads, Manage Messages, Manage Nicknames, Kick/Ban/Timeout Members, Mention Everyone, View Audit Log, Move/Mute/Deafen Members. Bot từ chối gán những role như vậy.
+2. **Kéo role của bot lên trên** tất cả role cảnh giới. Discord chỉ cho bot gán role nằm dưới role cao nhất của bot.
+3. Gán role cho từng cảnh giới: `/config canh-gioi gan-role canh-gioi:<cảnh giới> role:<role>`. Bot kiểm tra lại các điều kiện trên và báo nếu còn thiếu quyền Manage Roles.
+4. Kiểm tra bằng `/config canh-gioi list`. Bỏ gán bằng `/config canh-gioi bo-role`.
+
+Lưu ý:
+- Bot không đọc danh sách thành viên (không dùng Server Members Intent), nên role chỉ được cập nhật khi thành viên **nhắn tin được XP**, hoặc khi admin dùng `/admin xp give/remove/reset` cho người đó. Sau `/admin xp reset-all`, role của từng người tự cập nhật khi họ nhắn tin.
+- Bỏ gán hoặc đổi role của một cảnh giới thì bot không tự gỡ role cũ khỏi những người đang có; gỡ thủ công hoặc xoá role cũ nếu cần.
+
+### 7.2. Bảng vàng
+
+Bảng vàng là một message bảng xếp hạng dạng ảnh bot giữ trong một kênh và tự cập nhật định kỳ.
+
+1. Tạo kênh riêng (ví dụ `#bang-vang`), nên để thành viên chỉ đọc: chặn Send Messages của @everyone, cho phép bot **View Channel, Send Messages, Attach Files** ở kênh đó.
+2. Bật: `/config bang-vang kenh:#bang-vang`. Bot kiểm tra quyền, đăng bảng ngay và xoá message bảng cũ nếu trước đó đặt ở kênh khác.
+3. Tắt: `/config bang-vang tat:True` (bot xoá message bảng). Message bảng lỡ bị xoá tay: chạy lại lệnh bật với cùng kênh để bot đăng lại.
 
 ## 8. Xử lý sự cố
 
@@ -143,4 +186,11 @@ Nên tắt quyền **Use Application Commands** của thành viên ở các kên
 | Không cộng XP | Channel đang tắt XP (`/config channel list`), tin quá ngắn/trùng, đang cooldown, hoặc bot không xem được channel |
 | Không gửi được thông báo lên level | Bot thiếu quyền Send Messages ở channel đó (bot bỏ qua và không báo lỗi) |
 | Message vote hoặc contribution cũ không cập nhật | Message nằm trong thread đã archive hoặc đã bị xoá; Discord không cho sửa. Dữ liệu vẫn đúng (xem bằng `/poll results`, `/contribution view`) |
+| Ảnh `/rank`, `/leaderboard` hoặc Bảng vàng không hiện | Bot thiếu quyền **Attach Files** ở kênh đó (mục 2.4); kiểm tra cả quyền riêng của kênh |
+| `/config bang-vang` báo thiếu quyền | Cấp cho bot View Channel, Send Messages, Attach Files ở kênh Bảng vàng (mục 7.2) |
+| Bảng vàng không còn message hoặc không cập nhật | Message bị xoá tay hoặc bot mất quyền ở kênh; cấp lại quyền rồi chạy lại `/config bang-vang kenh:<kênh>` |
+| Ảnh có chữ cái thay cho avatar | Server không tải được avatar từ `cdn.discordapp.com` / `media.discordapp.net` (firewall, mạng chậm); ảnh vẫn dùng được |
+| Role cảnh giới không đổi | Bot thiếu **Manage Roles**, hoặc role của bot nằm dưới role cảnh giới (kéo role của bot lên trên), hoặc role cảnh giới đã bị cấp quyền quản trị/kiểm duyệt (bot từ chối gán). Role chỉ cập nhật khi thành viên nhắn tin được XP. Log của bot có cảnh báo `role cảnh giới` |
+| `/config canh-gioi gan-role` từ chối role | Đọc lý do trong phản hồi: @everyone, role do integration quản lý, role có quyền nguy hiểm, hoặc role không thấp hơn role của bot (mục 7.1) |
+| Người vote báo không được cộng XP | Đã chạm giới hạn XP từ vote trong ngày (`/config poll gioi-han-xp-ngay`); bot có ghi rõ trong phản hồi riêng |
 | Bot không khởi động sau khi quay về bản cũ | Database mới hơn code; dùng lại bản code mới |

@@ -1,8 +1,9 @@
 // Hàm thuần dựng nội dung hiển thị cho lệnh quản trị (/admin, /config). Không truy cập service hay database.
 import { EmbedBuilder, escapeMarkdown, InteractionReplyOptions, MessageFlags } from "discord.js";
-import { isTierKey, tierByKey } from "../../modules/activity/tiers";
+import { isTierKey, tierByKey, TIERS, tierForLevel } from "../../modules/activity/tiers";
 import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activity/types";
 import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
+import { TierRoleMapping } from "../../modules/gamification/types";
 import { ChannelSettings, GuildSettings } from "../../modules/guild-config/types";
 import { GuildStatistics } from "../../modules/statistics/types";
 import { MAX_TEAMS } from "../../modules/team/TeamService";
@@ -20,6 +21,7 @@ import {
 	truncate,
 	userMention,
 } from "../format";
+import type { TierRoleSyncResult } from "../roleSync";
 
 const EMBED_DESCRIPTION_MAX = DISCORD_LIMITS.embedDescription;
 const EMBED_FIELD_MAX = DISCORD_LIMITS.embedFieldValue;
@@ -146,7 +148,28 @@ function settingLines(settings: GuildSettings, keys: readonly (keyof GuildSettin
 	return keys.map(key => settingLine(key, settings[key])).join("\n");
 }
 
-export function buildConfigEmbed(settings: GuildSettings, teams: readonly string[], channels: readonly ChannelSettings[]): EmbedBuilder
+/** Phần cấu hình gamification hiển thị trong `/config view` (DEC-030, DEC-031). */
+export interface GamificationConfigView
+{
+	/** Kênh Bảng vàng; null = đang tắt. */
+	boardChannelId: string | null;
+	/** Các cảnh giới đã gán role, theo thứ tự TIERS. */
+	tierRoles: readonly TierRoleMapping[];
+}
+
+/** Một dòng "emoji Tên (Lv n+)" của cảnh giới có khoá `tierKey`. */
+function tierLabel(tierKey: TierRoleMapping["tierKey"]): string
+{
+	const tier = tierByKey(tierKey);
+	return `${tier.emoji} ${tier.name} (Lv ${formatNumber(tier.minLevel)}+)`;
+}
+
+export function buildConfigEmbed(
+	settings: GuildSettings,
+	teams: readonly string[],
+	channels: readonly ChannelSettings[],
+	gamification: GamificationConfigView,
+): EmbedBuilder
 {
 	const teamText = teams.length > 0
 		? fitLines(teamLines(teams), EMBED_FIELD_MAX, hidden => `… và ${hidden} team khác`)
@@ -154,17 +177,25 @@ export function buildConfigEmbed(settings: GuildSettings, teams: readonly string
 	const channelText = channels.length > 0
 		? fitLines(channelLines(channels), EMBED_FIELD_MAX, hidden => `… và ${hidden} channel khác (xem \`/config channel list\`)`)
 		: "Không có. Mọi channel dùng cấu hình chung.";
+	const boardText = gamification.boardChannelId === null
+		? "Đang tắt. Dùng `/config bang-vang` để bật."
+		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
+	const tierRoleText = gamification.tierRoles.length > 0
+		? gamification.tierRoles.map(mapping => `${tierLabel(mapping.tierKey)}: ${roleMention(mapping.roleId)}`).join("\n")
+		: "Chưa gán role nào. Dùng `/config canh-gioi gan-role` để gán.";
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
 		.setTitle("⚙️ Cấu hình bot")
 		.addFields(
 			{ name: "⭐ Activity XP", value: settingLines(settings, ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"]) },
-			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollCreatorRoleId"]) },
+			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleId"]) },
 			{ name: "🤝 Contribution", value: settingLines(settings, ["contributionVotePoints"]) },
 			{ name: "🔐 Quyền admin", value: `${settingLines(settings, ["adminRoleId"])}\nNgười có quyền Manage Server luôn là admin.` },
 			{ name: `👥 Team (${teams.length}/${MAX_TEAMS})`, value: teamText },
 			{ name: `📺 Channel có cấu hình riêng (${channels.length})`, value: channelText },
+			{ name: "🏆 Bảng vàng", value: boardText },
+			{ name: `☯️ Role cảnh giới (${gamification.tierRoles.length}/${TIERS.length})`, value: tierRoleText },
 		);
 }
 
@@ -194,6 +225,39 @@ export function buildTeamListEmbed(teams: readonly string[]): EmbedBuilder
 		.setFooter({ text: "Điểm team tính theo role team của thành viên tại thời điểm kiếm điểm." });
 }
 
+// ---------- Cảnh giới ----------
+
+/** Chú thích chung về thời điểm bot đổi role cảnh giới (DEC-031: bot không đọc danh sách thành viên). */
+export const TIER_ROLE_SYNC_NOTE = "Role được cập nhật khi thành viên nhắn tin được XP; mỗi người chỉ giữ role của cảnh giới hiện tại.";
+
+/** Danh sách 8 cảnh giới: emoji, tên, mốc level và role đã gán (hoặc "chưa gán"). */
+export function buildTierRoleListEmbed(mappings: readonly TierRoleMapping[]): EmbedBuilder
+{
+	const roleByTier = new Map(mappings.map(mapping => [mapping.tierKey, mapping.roleId]));
+	const lines = TIERS.map(tier =>
+	{
+		const roleId = roleByTier.get(tier.key);
+		return `${tier.emoji} **${tier.name}** · từ Level ${formatNumber(tier.minLevel)} · ${roleId === undefined ? "chưa gán" : roleMention(roleId)}`;
+	});
+
+	return new EmbedBuilder()
+		.setColor(COLORS.primary)
+		.setTitle(`☯️ Role cảnh giới (${mappings.length}/${TIERS.length})`)
+		.setDescription(lines.join("\n"))
+		.setFooter({ text: TIER_ROLE_SYNC_NOTE });
+}
+
+/** Một dòng mô tả kết quả đồng bộ role cảnh giới; null nếu không có gì thay đổi hay bị bỏ qua. */
+export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
+{
+	const mentions = (roleIds: readonly string[]): string => roleIds.map(roleId => roleMention(roleId)).join(", ");
+	const parts: string[] = [];
+	if (result.added.length > 0) parts.push(`đã thêm ${mentions(result.added)}`);
+	if (result.removed.length > 0) parts.push(`đã bỏ ${mentions(result.removed)}`);
+	if (result.skipped.length > 0) parts.push(`không đổi được ${mentions(result.skipped)} (kiểm tra quyền Manage Roles và thứ bậc role của bot)`);
+	return parts.length > 0 ? `☯️ Role cảnh giới: ${parts.join(" · ")}.` : null;
+}
+
 // ---------- Activity XP ----------
 
 const XP_SOURCE_LABELS: Record<XpEventSource, string> = {
@@ -220,6 +284,7 @@ function rankText(rank: number | null, totalRanked: number): string
 export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly XpEventView[]): EmbedBuilder
 {
 	const { level } = profile;
+	const tier = tierForLevel(level.level);
 	const header = `${userMention(profile.userId)}\n\n**Biến động gần nhất**\n`;
 	const history = events.length > 0
 		? fitLines(events.map(formatXpEvent), EMBED_DESCRIPTION_MAX - header.length, hidden => `… và ${hidden} biến động khác`)
@@ -233,6 +298,7 @@ export function buildXpDetailEmbed(profile: ActivityProfile, events: readonly Xp
 			{ name: "Level", value: formatNumber(level.level), inline: true },
 			{ name: "Tổng XP", value: formatNumber(level.totalXp), inline: true },
 			{ name: "Hạng", value: rankText(profile.rank, profile.totalRanked), inline: true },
+			{ name: "Cảnh giới", value: `${tier.emoji} ${tier.name}`, inline: true },
 			{
 				name: `Tiến độ lên level ${formatNumber(level.level + 1)}`,
 				value: `${progressBar(level.xpIntoLevel, level.xpForNextLevel)} ${formatNumber(level.xpIntoLevel)} / ${formatNumber(level.xpForNextLevel)} XP`,

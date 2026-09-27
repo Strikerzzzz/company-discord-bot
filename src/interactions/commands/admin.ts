@@ -1,11 +1,28 @@
 import { basename } from "path";
-import { ChatInputCommandInteraction, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, SlashCommandSubcommandBuilder } from "discord.js";
+import {
+	ChatInputCommandInteraction,
+	GuildMember,
+	MessageFlags,
+	PermissionFlagsBits,
+	SlashCommandBuilder,
+	SlashCommandSubcommandBuilder,
+} from "discord.js";
 import Command from "../../classes/Command";
 import { formatNumber, relativeTime, userMention } from "../../discord/format";
 import { requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import { refreshContributionMessage } from "../../discord/messages";
-import { buildAuditEmbed, buildStatsEmbed, buildXpDetailEmbed, ephemeral, ephemeralEmbed, inlineText } from "../../discord/views/admin";
+import { syncTierRoles } from "../../discord/roleSync";
+import {
+	buildAuditEmbed,
+	buildStatsEmbed,
+	buildXpDetailEmbed,
+	ephemeral,
+	ephemeralEmbed,
+	inlineText,
+	tierRoleSyncLine,
+} from "../../discord/views/admin";
+import { levelInfo } from "../../modules/activity/levels";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
 
@@ -19,6 +36,9 @@ const AUDIT_MAX = 25;
 const TITLE_DISPLAY_MAX = 100;
 /** Khoảng tối thiểu giữa hai lần sao lưu thủ công, chống spam lệnh làm đầy ổ đĩa. */
 const MANUAL_BACKUP_COOLDOWN_MS = 10 * 60 * 1000;
+/** Lý do ghi vào audit log của Discord khi bot đổi role cảnh giới sau thao tác của admin (DEC-031). */
+const TIER_ROLE_REASON = "Cảnh giới tu luyện (admin điều chỉnh XP)";
+const RESET_ALL_TIER_ROLE_NOTE = "Role cảnh giới sẽ tự cập nhật khi từng thành viên nhắn tin được XP.";
 
 interface AdminContext
 {
@@ -245,14 +265,18 @@ export default class AdminCmd extends Command
 		const action = sign > 0
 			? `Đã cộng ${formatNumber(amount)} XP cho ${userMention(target.userId)}`
 			: `Đã trừ ${formatNumber(amount)} XP của ${userMention(target.userId)}`;
-		await interaction.reply(ephemeral(`${action}. Tổng: ${formatNumber(totalXp)} XP.`));
+		const text = `${action}. Tổng: ${formatNumber(totalXp)} XP.`;
+		await interaction.reply(ephemeral(text));
+		await this.syncTargetTierRoles(interaction, totalXp, text);
 	}
 
 	private async resetUserXp({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
 		const { userId } = targetOf(interaction);
 		const { voidedEvents } = this.services.activity.resetUser(guildId, userId, actorId);
-		await interaction.reply(ephemeral(`Đã reset XP của ${userMention(userId)} (huỷ ${formatNumber(voidedEvents)} biến động). Tổng: 0 XP.`));
+		const text = `Đã reset XP của ${userMention(userId)} (huỷ ${formatNumber(voidedEvents)} biến động). Tổng: 0 XP.`;
+		await interaction.reply(ephemeral(text));
+		await this.syncTargetTierRoles(interaction, 0, text);
 	}
 
 	private async resetAllXp({ interaction, guildId, actorId }: AdminContext): Promise<void>
@@ -260,8 +284,23 @@ export default class AdminCmd extends Command
 		assertConfirmed(interaction);
 		const { voidedEvents, members } = this.services.activity.resetAll(guildId, actorId);
 		await interaction.reply(ephemeral(
-			`Đã reset XP toàn server: huỷ ${formatNumber(voidedEvents)} biến động của ${formatNumber(members)} thành viên.`,
+			`Đã reset XP toàn server: huỷ ${formatNumber(voidedEvents)} biến động của ${formatNumber(members)} thành viên.\n${RESET_ALL_TIER_ROLE_NOTE}`,
 		));
+	}
+
+	/**
+	 * Đưa role cảnh giới của thành viên được thao tác về đúng tổng XP mới (DEC-031), rồi sửa phản hồi `text` thêm một dòng
+	 * nếu có role thay đổi hoặc bị bỏ qua. Trả lời trước rồi mới gọi API role, để không quá hạn 3 giây của interaction.
+	 * Thành viên đã rời server (không có GuildMember) thì bỏ qua.
+	 */
+	private async syncTargetTierRoles(interaction: ChatInputCommandInteraction, totalXp: number, text: string): Promise<void>
+	{
+		const member = interaction.options.getMember("thanh-vien");
+		if (!(member instanceof GuildMember)) return;
+
+		const result = await syncTierRoles(member, levelInfo(totalXp).level, this.services.tierRoles, TIER_ROLE_REASON);
+		const line = tierRoleSyncLine(result);
+		if (line !== null) await interaction.editReply(`${text}\n${line}`);
 	}
 
 	private async adjustContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
