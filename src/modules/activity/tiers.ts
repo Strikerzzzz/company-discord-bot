@@ -34,7 +34,10 @@ export interface Tier
 	color: string;
 	/** Hai màu gradient "#rrggbb" cho ảnh thẻ, từ trái sang phải. */
 	gradient: readonly [string, string];
-	/** Vế câu trong thông báo lên bậc: "@A đã {breakthrough}". Không đổi khi admin đổi tên bậc. */
+	/**
+	 * Vế câu trong thông báo lên bậc: "@A đã {breakthrough}". Chứa tên mặc định của bậc, nên khi admin đổi tên bậc
+	 * thì tầng hiển thị dùng vế trung tính "vượt mốc Level N" thay thế (DEC-033).
+	 */
 	breakthrough: string;
 }
 
