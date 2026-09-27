@@ -403,6 +403,7 @@ describe("thẻ rank và phần chữ đi kèm", () =>
 			displayName: "Anh A",
 			avatar: AVATAR_BYTES,
 			level: profile.level,
+			tierSet: DEFAULT_TIER_SET,
 			tier: tierByKey("bac-3"),
 			nextTier: tierByKey("bac-4"),
 			activity: { rank: 3, totalRanked: 37, weeklyXp: 1240, weeklyRank: 2 },
