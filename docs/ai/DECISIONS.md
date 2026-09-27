@@ -327,6 +327,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - Lệnh tự kiểm tra môi trường `npm run selfcheck` để chạy trên server trước khi bật bot, không kết nối Discord.
     - Checklist chạy thật trên Discord (`docs/TEST-PLAN.md`).
 
+### DEC-035 — Duyệt Phase 14
+
+- **Ngày:** 2026-09-27 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("duyệt vào main nhé")
+- **Nội dung:** merge `phase-14/hoan-tat` vào `main` (fast-forward tới `3495946`). Toàn bộ code đã sẵn sàng cho lần chạy thật; việc tiếp theo là cài trên server Linux theo `docs/DEPLOY.md` và kiểm theo `docs/TEST-PLAN.md`.
+
 ---
 
 ## Đang chờ quyết định
