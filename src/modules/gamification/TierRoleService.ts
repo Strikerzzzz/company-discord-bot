@@ -81,7 +81,7 @@ export class TierRoleService implements TierRoleServiceApi
 		})();
 	}
 
-	clear(guildId: string, tierKey: TierKey, actorId: string): boolean
+	clear(guildId: string, tierKey: TierKey, actorId: string, options: { deletedRoleId?: string } = {}): boolean
 	{
 		if (!isTierKey(tierKey)) throw new UserError(INVALID_TIER);
 
@@ -91,7 +91,8 @@ export class TierRoleService implements TierRoleServiceApi
 			if (current === undefined) return false;
 
 			this.deleteByTier.run(guildId, tierKey);
-			this.audit.record(guildId, actorId, "tier_role.clear", current.role_id, { tierKey });
+			const details = options.deletedRoleId === undefined ? { tierKey } : { tierKey, deletedRoleId: options.deletedRoleId };
+			this.audit.record(guildId, actorId, "tier_role.clear", current.role_id, details);
 			return true;
 		})();
 	}

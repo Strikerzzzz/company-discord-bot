@@ -30,6 +30,9 @@ const DANGEROUS_PERMISSIONS: readonly (readonly [bigint, string])[] = [
 	[PermissionFlagsBits.PinMessages, "Pin Messages"],
 	[PermissionFlagsBits.BypassSlowmode, "Bypass Slowmode"],
 	[PermissionFlagsBits.ViewGuildInsights, "View Server Insights"],
+	[PermissionFlagsBits.CreateGuildExpressions, "Create Expressions"],
+	[PermissionFlagsBits.CreateEvents, "Create Events"],
+	[PermissionFlagsBits.ViewCreatorMonetizationAnalytics, "View Creator Monetization Analytics"],
 ];
 
 /** Số kênh tối đa nêu tên trong thông báo về phân quyền riêng nguy hiểm của role. */
@@ -153,7 +156,9 @@ function describeOverwrites(overwrites: readonly DangerousOverwrite[]): string
 /**
  * Lý do (tiếng Việt, hiển thị cho admin) khiến `role` không được dùng làm role danh hiệu; null nếu dùng được.
  * Chặn: @everyone, role do bot/integration quản lý, role có quyền nguy hiểm ở cấp server hoặc trong phân quyền riêng của
- * bất kỳ kênh nào, role không thấp hơn role cao nhất của bot.
+ * bất kỳ kênh nào, role cho phép mọi người @mention (role bậc thấp gần như ai cũng có, nên ai cũng ping được cả server),
+ * role không thấp hơn role cao nhất của bot. Hàm được gọi lại mỗi lần định gán, nên role bị đổi thành không an toàn sau này
+ * sẽ ngừng được gán (vẫn gỡ được).
  */
 export function tierRoleSafetyIssue(role: Role, botMember: GuildMember): string | null
 {
@@ -172,6 +177,13 @@ export function tierRoleSafetyIssue(role: Role, botMember: GuildMember): string 
 	{
 		return `Không thể dùng ${roleMention(role.id)} làm role danh hiệu vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
 			+ `${describeOverwrites(overwrites)}. Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho bậc danh hiệu.`;
+	}
+
+	if (role.mentionable)
+	{
+		return `Không thể dùng ${roleMention(role.id)} làm role danh hiệu vì ai cũng @mention được role này: role danh hiệu bậc thấp gần như `
+			+ "mọi thành viên đều có, nên bất kỳ ai cũng ping được cả server. Vào **Server Settings → Roles → chọn role**, tắt "
+			+ "**Allow anyone to @mention this role** rồi thử lại.";
 	}
 
 	const highest = botMember.roles.highest;
@@ -248,7 +260,8 @@ async function applyPlan(member: GuildMember, level: number, tierRoles: TierRole
 			guild.id,
 			"hierarchy",
 			`Không đồng bộ được role cảnh giới ${unmanageable.join(", ")} ở server "${guild.id}": role không còn, do integration quản lý, `
-				+ "có quyền quản trị/kiểm duyệt (ở server hoặc trong phân quyền riêng của kênh), hoặc không thấp hơn role cao nhất của bot.",
+				+ "có quyền quản trị/kiểm duyệt (ở server hoặc trong phân quyền riêng của kênh), cho phép mọi người @mention, "
+				+ "hoặc không thấp hơn role cao nhất của bot.",
 		);
 	}
 }
