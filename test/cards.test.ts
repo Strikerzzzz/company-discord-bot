@@ -4,7 +4,7 @@ import path from "path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
 import { renderRankCard } from "../src/discord/cards/rankCard";
-import { cleanDisplayName, colorForName, decodeAvatar, fitList, fitText, graphemes, hashString, initialOf, mulberry32, sniffImageSize } from "../src/discord/cards/draw";
+import { cleanDisplayName, colorForName, decodeAvatar, fitList, fitText, graphemes, hashString, initialOf, MAX_AVATAR_SIDE, mulberry32, sniffImageSize } from "../src/discord/cards/draw";
 import { ensureFonts, findFontDir, font } from "../src/discord/cards/fonts";
 import { LeaderboardCardData, LeaderboardCardRow, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { LevelInfo, levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
@@ -193,22 +193,25 @@ describe("helper vẽ", () =>
 		assert.ok(a.every(value => value >= 0 && value < 1));
 	});
 
-	test("sniffImageSize nhận PNG/JPEG/WebP/GIF, từ chối SVG và dữ liệu rác", async () =>
+	test("sniffImageSize nhận PNG/JPEG/WebP; từ chối GIF (bom giải nén nhiều khung), SVG và dữ liệu rác", async () =>
 	{
 		const canvas = createCanvas(120, 90);
 		canvas.getContext("2d").fillRect(0, 0, 120, 90);
-		for (const bytes of [await canvas.encode("png"), await canvas.encode("jpeg"), await canvas.encode("webp"), await canvas.encode("gif"), canvas.toBuffer("image/webp", 100)])
+		for (const bytes of [await canvas.encode("png"), await canvas.encode("jpeg"), await canvas.encode("webp"), canvas.toBuffer("image/webp", 100)])
 		{
 			assert.deepEqual(sniffImageSize(bytes), { width: 120, height: 90 });
 		}
+		assert.equal(sniffImageSize(await canvas.encode("gif")), null);
+		assert.equal(sniffImageSize(Buffer.from("GIF89a\x10\x00\x10\x00\x00\x00\x00", "latin1")), null);
 		assert.equal(sniffImageSize(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>")), null);
 		assert.equal(sniffImageSize(Buffer.from("rác")), null);
 		assert.equal(sniffImageSize(Buffer.alloc(0)), null);
 		assert.equal(sniffImageSize(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01])), null);
 	});
 
-	test("decodeAvatar trả về null với bytes hỏng, SVG, ảnh khai báo quá lớn; decode được ảnh thật", async () =>
+	test("decodeAvatar trả về null với bytes hỏng, SVG, GIF, ảnh khai báo quá 1024 px; decode được ảnh thật", async () =>
 	{
+		assert.equal(MAX_AVATAR_SIDE, 1024);
 		assert.equal(await decodeAvatar(null), null);
 		assert.equal(await decodeAvatar(Buffer.alloc(0)), null);
 		assert.equal(await decodeAvatar(Buffer.from("không phải ảnh")), null);
@@ -218,6 +221,11 @@ describe("helper vẽ", () =>
 		huge.writeUInt32BE(100_000, 16);
 		huge.writeUInt32BE(100_000, 20);
 		assert.equal(await decodeAvatar(huge), null);
+		const gif = createCanvas(32, 32);
+		gif.getContext("2d").fillRect(0, 0, 32, 32);
+		assert.equal(await decodeAvatar(await gif.encode("gif")), null, "GIF bị từ chối dù nhỏ");
+		assert.equal(await decodeAvatar(fakeAvatar("png", MAX_AVATAR_SIDE + 1)), null, "quá 1024 px");
+		assert.equal((await decodeAvatar(fakeAvatar("png", MAX_AVATAR_SIDE)))?.width, MAX_AVATAR_SIDE);
 		assert.equal(await decodeAvatar(Buffer.from("<svg xmlns='http://www.w3.org/2000/svg' width='9' height='9'/>")), null);
 		assert.equal((await decodeAvatar(png))?.width, 128);
 		assert.equal((await decodeAvatar(fakeAvatar("jpeg", 64)))?.width, 64);

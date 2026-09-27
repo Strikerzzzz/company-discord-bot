@@ -297,8 +297,9 @@ interface ImageSize
 }
 
 /**
- * Đọc kích thước ảnh từ header, chỉ nhận PNG, JPEG, GIF, WebP (định dạng avatar của Discord).
- * Định dạng khác (kể cả SVG) hoặc header hỏng trả về null.
+ * Đọc kích thước ảnh từ header, chỉ nhận PNG, JPEG, WebP (định dạng avatar tĩnh bot yêu cầu từ CDN của Discord).
+ * Định dạng khác (kể cả GIF và SVG) hoặc header hỏng trả về null. GIF bị từ chối vì kích thước ở header không nói gì về
+ * số khung hình: một file GIF nhỏ có thể giải nén thành hàng nghìn khung (bom giải nén).
  */
 export function sniffImageSize(bytes: Buffer): ImageSize | null
 {
@@ -307,11 +308,6 @@ export function sniffImageSize(bytes: Buffer): ImageSize | null
 		if (bytes.length >= 24 && bytes.readUInt32BE(0) === 0x89504e47 && bytes.readUInt32BE(4) === 0x0d0a1a0a && bytes.toString("latin1", 12, 16) === "IHDR")
 		{
 			return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
-		}
-		const head = bytes.toString("latin1", 0, 6);
-		if (bytes.length >= 10 && (head === "GIF87a" || head === "GIF89a"))
-		{
-			return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
 		}
 		if (bytes.length >= 30 && bytes.toString("latin1", 0, 4) === "RIFF" && bytes.toString("latin1", 8, 12) === "WEBP") return webpSize(bytes);
 		if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) return jpegSize(bytes);
@@ -370,8 +366,9 @@ function jpegSize(bytes: Buffer): ImageSize | null
 	return null;
 }
 
-// Avatar của Discord tối đa 4096 px; ảnh khai báo lớn hơn có thể là "bom giải nén" làm tràn bộ nhớ khi decode.
-const MAX_AVATAR_SIDE = 4096;
+// Bot chỉ xin avatar 128 hoặc 256 px từ CDN; ảnh khai báo lớn hơn 1024 px không phải thứ bot yêu cầu và có thể là
+// "bom giải nén" làm tràn bộ nhớ khi decode (1024 × 1024 RGBA đã là 4 MB).
+export const MAX_AVATAR_SIDE = 1024;
 const DECODE_TIMEOUT_MS = 3000;
 
 /**

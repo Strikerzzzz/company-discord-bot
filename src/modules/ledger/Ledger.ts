@@ -4,6 +4,19 @@ import { Clock } from "../../shared/clock";
 
 export type LedgerKind = "xp" | "contribution";
 
+/**
+ * Điều kiện "điểm kiếm được" cho bảng xếp hạng theo kỳ: loại event điều chỉnh tự động của hệ thống, tức event
+ * nguồn 'admin' không có actor. Hiện chỉ có event bù của PROP-024 (ContributionService.compensateNegative) mang dạng
+ * này; event admin thật luôn ghi actor_id. Event bù mang thời điểm lúc bù chứ không phải lúc kiếm điểm, nên nếu tính
+ * vào kỳ thì người vừa bị gỡ contribution (tổng 0) lại lên top tuần/tháng. Người phụ trách đã chốt bảng kỳ tính theo
+ * điểm kiếm được trong kỳ. Không áp dụng cho sumSince (giới hạn XP vote theo nguồn), total hay bảng "all".
+ * Tham số `alias` là hằng số trong code (không phải input).
+ */
+function earnedOnly(alias = ""): string
+{
+	return `(${alias}source <> 'admin' OR ${alias}actor_id IS NOT NULL)`;
+}
+
 // Tên bảng là hằng số trong code (không phải input), nên được phép ghép vào câu SQL.
 const TABLES = {
 	xp: { events: "xp_events", teams: "xp_event_teams", members: "member_xp", teamTotals: "xp_team_totals" },
@@ -113,6 +126,7 @@ export class Ledger
 	private readonly resetGuildMembers: Statement<[string]>;
 	private readonly resetGuildTeams: Statement<[string]>;
 	private readonly countHigher: Statement<[string, number], { n: number }>;
+	private readonly selectPosition: Statement<[string, string], { position: number }>;
 	private readonly countRankedStmt: Statement<[string], { n: number }>;
 	private readonly selectTop: Statement<[string, number, number], RankedEntry>;
 	private readonly selectTopTeams: Statement<[string, number, number], RankedEntry>;
@@ -122,6 +136,7 @@ export class Ledger
 	private readonly selectTopSince: Statement<[string, number, number, number], RankedEntry>;
 	private readonly countRankedSinceStmt: Statement<[string, number], { n: number }>;
 	private readonly selectRankSince: Statement<[string, number, string], { total: number; totalRanked: number; higher: number }>;
+	private readonly selectPositionSince: Statement<[string, number, string], { position: number }>;
 	private readonly selectTopTeamsSince: Statement<[string, number, number, number], RankedEntry>;
 	private readonly countTeamsSinceStmt: Statement<[string, number], { n: number }>;
 	private readonly selectActiveDays: Statement<[string, string, string], { day: number }>;
@@ -159,6 +174,14 @@ export class Ledger
 		this.resetGuildTeams = db.prepare(`UPDATE ${t.teamTotals} SET total = 0 WHERE guild_id = ? AND total <> 0`);
 
 		this.countHigher = db.prepare(`SELECT COUNT(*) AS n FROM ${t.members} WHERE guild_id = ? AND total > ?`);
+		// Vị trí trong đúng thứ tự của selectTop (total DESC, user_id ASC): số người điểm cao hơn cộng số người cùng điểm
+		// có user_id nhỏ hơn. Không có dòng nếu người đó không có tổng dương.
+		this.selectPosition = db.prepare(`
+			SELECT
+				(SELECT COUNT(*) FROM ${t.members} o WHERE o.guild_id = m.guild_id AND o.total > m.total)
+				+ (SELECT COUNT(*) FROM ${t.members} o WHERE o.guild_id = m.guild_id AND o.total = m.total AND o.user_id < m.user_id) AS position
+			FROM ${t.members} m
+			WHERE m.guild_id = ? AND m.user_id = ? AND m.total > 0`);
 		this.countRankedStmt = db.prepare(`SELECT COUNT(*) AS n FROM ${t.members} WHERE guild_id = ? AND total > 0`);
 		// Window function chạy trên toàn bộ dòng thoả WHERE rồi mới tới LIMIT/OFFSET, nên hạng đúng ở mọi trang.
 		this.selectTop = db.prepare(`
@@ -185,15 +208,18 @@ export class Ledger
 			FROM ${t.events}
 			WHERE guild_id = ? AND user_id = ? AND source = ? AND created_at >= ? AND voided_at IS NULL`);
 
-		// Bảng xếp hạng theo kỳ (DEC-029) tính thẳng từ ledger. Điều kiện "voided_at IS NULL" phải có trong mọi câu
-		// để dùng được các partial index của migration 3 (idx_*_events_period, idx_xp_events_user_source).
+		// Bảng xếp hạng theo kỳ (DEC-029) tính thẳng từ ledger, chỉ từ điểm kiếm được trong kỳ (earnedOnly, bỏ event bù
+		// tự động). Điều kiện "voided_at IS NULL" phải có trong mọi câu để dùng được các partial index của migration 3
+		// (idx_*_events_period, idx_xp_events_user_source).
 		// Lưu ý: SQLite không coi partial index "WHERE voided_at IS NULL" là covering (cột voided_at không nằm trong
-		// index), nên mỗi event trong kỳ vẫn phải đọc dòng của bảng; planner có thể chọn idx_*_created thay cho
-		// idx_*_events_period vì hai index cho cùng một khoảng (guild_id, created_at).
+		// index), nên mỗi event trong kỳ vẫn phải đọc dòng của bảng; điều kiện trên source và actor_id đọc từ chính dòng
+		// đó, query plan không đổi (đo với 200k event: bảng cá nhân tháng 26 → 28 ms, bảng team tháng 57 → 61 ms).
+		// Planner có thể chọn idx_*_created thay cho idx_*_events_period vì hai index cho cùng một khoảng
+		// (guild_id, created_at).
 		const periodTotals = `
 			SELECT user_id, SUM(amount) AS total
 			FROM ${t.events}
-			WHERE guild_id = ? AND created_at >= ? AND voided_at IS NULL
+			WHERE guild_id = ? AND created_at >= ? AND voided_at IS NULL AND ${earnedOnly()}
 			GROUP BY user_id`;
 		this.selectTopSince = db.prepare(`
 			SELECT user_id AS id, total, RANK() OVER (ORDER BY total DESC) AS rank
@@ -211,6 +237,14 @@ export class Ledger
 				(SELECT COUNT(*) FROM totals WHERE total > 0) AS totalRanked,
 				(SELECT COUNT(*) FROM totals WHERE total > mine.total) AS higher
 			FROM mine`);
+		// Vị trí trong đúng thứ tự của selectTopSince, cũng chỉ quét ledger một lần (tổng theo người được materialize).
+		this.selectPositionSince = db.prepare(`
+			WITH totals AS MATERIALIZED (${periodTotals})
+			SELECT
+				(SELECT COUNT(*) FROM totals o WHERE o.total > mine.total)
+				+ (SELECT COUNT(*) FROM totals o WHERE o.total = mine.total AND o.user_id < mine.user_id) AS position
+			FROM totals mine
+			WHERE mine.user_id = ? AND mine.total > 0`);
 
 		// CROSS JOIN cố định thứ tự vòng lặp: event trong kỳ → snapshot team của event → kiểm tra team đang cấu hình.
 		// Nếu để planner tự chọn, nó đặt team_roles trước snapshot và tra (event, role) cho mọi team với từng event,
@@ -220,7 +254,7 @@ export class Ledger
 			FROM ${t.events} e
 			CROSS JOIN ${t.teams} et ON et.event_id = e.id
 			CROSS JOIN team_roles r ON r.guild_id = e.guild_id AND r.role_id = et.role_id
-			WHERE e.guild_id = ? AND e.created_at >= ? AND e.voided_at IS NULL
+			WHERE e.guild_id = ? AND e.created_at >= ? AND e.voided_at IS NULL AND ${earnedOnly("e.")}
 			GROUP BY et.role_id`;
 		this.selectTopTeamsSince = db.prepare(`
 			SELECT role_id AS id, total, RANK() OVER (ORDER BY total DESC) AS rank
@@ -335,6 +369,15 @@ export class Ledger
 		return { rank: higher + 1, totalRanked };
 	}
 
+	/**
+	 * Vị trí 0-based của một người trong thứ tự hiển thị của top (tổng giảm dần, hoà điểm theo user_id tăng dần);
+	 * null nếu người đó không có tổng dương. Khác với hạng: người hoà điểm cùng hạng nhưng khác vị trí.
+	 */
+	position(guildId: string, userId: string): number | null
+	{
+		return this.selectPosition.get(guildId, userId)?.position ?? null;
+	}
+
 	/** Xếp hạng cá nhân (chỉ người có tổng > 0): tổng giảm dần, hoà thì cùng hạng và hiển thị theo user_id. */
 	top(guildId: string, limit: number, offset = 0): RankedEntry[]
 	{
@@ -373,8 +416,10 @@ export class Ledger
 	}
 
 	/**
-	 * Xếp hạng cá nhân theo kỳ (DEC-029): tổng các event chưa huỷ có created_at >= since (ms, tính cả mốc), chỉ người
-	 * có tổng > 0. Hạng và thứ tự theo cùng quy tắc với top (hoà điểm cùng hạng, hiển thị theo user_id).
+	 * Xếp hạng cá nhân theo kỳ (DEC-029): tổng điểm kiếm được trong kỳ, tức các event chưa huỷ có created_at >= since
+	 * (ms, tính cả mốc), trừ event bù tự động (nguồn 'admin' không có actor, PROP-024); chỉ người có tổng > 0. Hạng và
+	 * thứ tự theo cùng quy tắc với top (hoà điểm cùng hạng, hiển thị theo user_id). countRankedSince, rankSince,
+	 * positionSince, topTeamsSince và countTeamsSince dùng cùng cách tính điểm của kỳ; sumSince thì không.
 	 */
 	topSince(guildId: string, since: number, limit: number, offset = 0): RankedEntry[]
 	{
@@ -399,9 +444,15 @@ export class Ledger
 		return { rank: total > 0 ? (row?.higher ?? 0) + 1 : null, total, totalRanked };
 	}
 
+	/** Như position nhưng theo kỳ bắt đầu từ since, khớp thứ tự của topSince; chỉ quét ledger của kỳ một lần. */
+	positionSince(guildId: string, userId: string, since: number): number | null
+	{
+		return this.selectPositionSince.get(guildId, since, userId)?.position ?? null;
+	}
+
 	/**
-	 * Xếp hạng team theo kỳ: tổng các event chưa huỷ trong kỳ theo snapshot team (DEC-024), chỉ team đang được
-	 * cấu hình và có tổng > 0. Cùng quy tắc hạng và thứ tự với topTeams.
+	 * Xếp hạng team theo kỳ: tổng điểm kiếm được trong kỳ (như topSince) theo snapshot team (DEC-024), chỉ team đang
+	 * được cấu hình và có tổng > 0. Cùng quy tắc hạng và thứ tự với topTeams.
 	 */
 	topTeamsSince(guildId: string, since: number, limit: number, offset = 0): RankedEntry[]
 	{

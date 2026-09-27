@@ -241,13 +241,37 @@ describe("LeaderboardService theo kỳ", () =>
 		assert.deepEqual(board.userStanding(OTHER_GUILD, "activity", "month", USER_B), { rank: null, value: 0, totalRanked: 0 });
 	});
 
+	test("userPosition: vị trí 0-based khớp thứ tự trong bảng của từng kỳ; trang = floor(vị trí / 10) + 1", () =>
+	{
+		const context = seed();
+		const tied = seedUsers(23);
+		for (const userId of tied) xpAt(context, NOW, userId, 3);
+		const board = new LeaderboardService(context.deps);
+
+		for (const period of ["all", "week", "month"] as const)
+		{
+			const full = board.query(periodQuery({ period, pageSize: 100 }));
+			full.entries.forEach((entry, index) =>
+			{
+				const position = board.userPosition(GUILD, "activity", period, entry.id);
+				assert.equal(position, index, `${period}: ${entry.id}`);
+				const page = board.query(periodQuery({ period, page: Math.floor(index / 10) + 1 }));
+				assert.ok(page.entries.some(row => row.id === entry.id), `${period}: ${entry.id} nằm ở trang tính từ vị trí`);
+			});
+		}
+		assert.equal(board.userPosition(GUILD, "activity", "week", USER_A), null, "không có điểm trong tuần");
+		assert.equal(board.userPosition(GUILD, "activity", "all", "399999999999999999"), null);
+		assert.equal(board.userPosition(GUILD, "contribution", "all", USER_A), null, "tách hai loại điểm");
+		assert.equal(board.userPosition(OTHER_GUILD, "activity", "month", USER_B), null, "tách guild");
+	});
+
 	test("Contribution theo kỳ tách biệt với Activity; điểm âm trong kỳ không có hạng", () =>
 	{
 		const context = seed();
 		const { deps, clock } = context;
 		clock.current = WEEK_START + 1;
 		deps.contributionLedger.record({ guildId: GUILD, userId: USER_A, amount: 3, source: "vote" });
-		deps.contributionLedger.record({ guildId: GUILD, userId: USER_B, amount: -2, source: "admin" });
+		deps.contributionLedger.record({ guildId: GUILD, userId: USER_B, amount: -2, source: "admin", actorId: ADMIN });
 		clock.current = NOW;
 		const board = new LeaderboardService(deps);
 

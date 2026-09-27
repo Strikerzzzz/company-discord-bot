@@ -2,9 +2,12 @@ import { Guild, GuildMember, ImageURLOptions, RESTJSONErrorCodes, User } from "d
 import { logger } from "../shared/logger";
 
 /*
- * Tên hiển thị và avatar của thành viên để vẽ bảng xếp hạng (DEC-030). Bot không dùng intent GuildMembers nên không có
- * danh sách thành viên đầy đủ: tra cache của discord.js trước, rồi cache riêng có hạn dùng, cuối cùng mới gọi REST từng người.
- * Không dùng guild.members.fetch({ user: [...] }) vì đó là yêu cầu qua gateway (opcode 8), bị giới hạn tần suất chặt.
+ * Tên hiển thị và avatar của thành viên để vẽ bảng xếp hạng (DEC-030). Thứ tự tra: cache riêng có hạn dùng, rồi REST
+ * từng người, cuối cùng (chỉ khi REST lỗi tạm thời) mới dùng cache thành viên của discord.js làm dữ liệu dự phòng.
+ * Bot không dùng intent GuildMembers nên không nhận cập nhật thành viên: cache của discord.js có thể giữ tên/avatar cũ
+ * mãi, vì vậy không đọc nó trước, và REST gọi với cache: false để không nhét thêm vào cache đó (không giới hạn, không
+ * có sweeper). Không dùng guild.members.fetch({ user: [...] }) vì đó là yêu cầu qua gateway (opcode 8), bị giới hạn
+ * tần suất chặt.
  */
 
 export interface MemberDisplay
@@ -86,7 +89,7 @@ export class MemberDirectory
 		this.now = options.now ?? Date.now;
 	}
 
-	/** Số mục đang nằm trong cache riêng (không tính cache của discord.js). */
+	/** Số mục đang nằm trong cache riêng. */
 	get size(): number
 	{
 		return this.cache.size;
@@ -101,7 +104,7 @@ export class MemberDirectory
 			const missing: string[] = [];
 			for (const userId of new Set(userIds))
 			{
-				const found = this.fromCaches(guild, userId);
+				const found = this.fromCache(guild.id, userId);
 				if (found) result.set(userId, found);
 				else missing.push(userId);
 			}
@@ -130,12 +133,9 @@ export class MemberDirectory
 		return result;
 	}
 
-	private fromCaches(guild: Guild, userId: string): MemberDisplay | null
+	private fromCache(guildId: string, userId: string): MemberDisplay | null
 	{
-		const member = guild.members.cache.get(userId);
-		if (member) return fromMember(member);
-
-		const key = `${guild.id}:${userId}`;
+		const key = `${guildId}:${userId}`;
 		const cached = this.cache.get(key);
 		if (!cached) return null;
 		this.cache.delete(key);
@@ -148,26 +148,44 @@ export class MemberDirectory
 	{
 		try
 		{
-			return { value: fromMember(await guild.members.fetch(userId)), reliable: true };
+			return { value: fromMember(await guild.members.fetch({ user: userId, cache: false, force: true })), reliable: true };
 		}
 		catch (error)
 		{
 			if (discordErrorCode(error) !== RESTJSONErrorCodes.UnknownMember)
 			{
 				logger.debug(`Không tra được thành viên ${userId}:`, error);
-				return { value: unknownMember(), reliable: false };
+				return this.fallback(guild, userId);
 			}
 		}
 
 		try
 		{
-			return { value: fromUser(await guild.client.users.fetch(userId)), reliable: true };
+			return { value: fromUser(await guild.client.users.fetch(userId, { cache: false, force: true })), reliable: true };
 		}
 		catch (error)
 		{
 			logger.debug(`Không tra được user ${userId}:`, error);
 			return { value: unknownMember(), reliable: discordErrorCode(error) === RESTJSONErrorCodes.UnknownUser };
 		}
+	}
+
+	/**
+	 * REST lỗi tạm thời (mạng, 5xx, rate limit): dùng thành viên trong cache của discord.js nếu có (có thể đã cũ nhưng
+	 * vẫn hơn "không rõ"), ngược lại "không rõ". Cả hai đều chỉ giữ ngắn hạn để sớm thử lại REST.
+	 */
+	private fallback(guild: Guild, userId: string): Lookup
+	{
+		try
+		{
+			const member = guild.members.cache.get(userId);
+			if (member) return { value: fromMember(member), reliable: false };
+		}
+		catch (error)
+		{
+			logger.debug(`Không đọc được thành viên ${userId} trong cache của discord.js:`, error);
+		}
+		return { value: unknownMember(), reliable: false };
 	}
 
 	private remember(guildId: string, userId: string, lookup: Lookup): void

@@ -2,7 +2,8 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { AttachmentBuilder, PermissionFlagsBits, PermissionsBitField } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
-import { deleteLiveBoardMessage, liveBoardContent, refreshLiveBoard, runLiveBoardSweep, startLiveBoardScheduler } from "../src/discord/liveBoard";
+import { deleteLiveBoardMessage, LIVE_BOARD_RECHECK_MS, liveBoardContent, refreshLiveBoard, runLiveBoardSweep, startLiveBoardScheduler } from "../src/discord/liveBoard";
+import { RenderGate } from "../src/discord/renderGate";
 import { AppServices, createServices } from "../src/services";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, OTHER_GUILD, ROLE_BACKEND, TestContext, USER_A, USER_B } from "./helpers";
 
@@ -99,6 +100,7 @@ interface Setup extends TestContext
 {
 	services: AppServices;
 	client: DiscordClient;
+	gate: RenderGate;
 	channelFetches: string[];
 }
 
@@ -108,7 +110,9 @@ function setup(channels: Record<string, FakeChannel>, guildIds: string[] = [GUIL
 	context.clock.current = NOW;
 	const services = createServices(context.db, { clock: context.clock, backupDir: "khong-dung", backupKeep: 1 });
 	const channelFetches: string[] = [];
+	const gate = new RenderGate();
 	const client = {
+		renderGate: gate,
 		services,
 		guildIds,
 		user: { id: BOT_ID },
@@ -124,7 +128,7 @@ function setup(channels: Record<string, FakeChannel>, guildIds: string[] = [GUIL
 		avatars: { get: () => Promise.resolve(null) },
 		members: { resolve: () => Promise.resolve(new Map()) },
 	} as unknown as DiscordClient;
-	return { ...context, services, client, channelFetches };
+	return { ...context, services, client, gate, channelFetches };
 }
 
 function seedXp(context: TestContext, userId: string, amount: number): void
@@ -198,6 +202,48 @@ describe("Bảng vàng: đăng và sửa message", () =>
 		assert.equal(await refreshLiveBoard(s.client, GUILD), false);
 		assert.equal(await refreshLiveBoard(s.client, GUILD, { force: true }), true);
 		assert.equal(general.edits.length, 2);
+	});
+
+	test("dữ liệu không đổi nhưng lần sửa gần nhất đã quá 1 giờ: vẫn sửa; message bị xoá tay (10008) thì đăng lại", async () =>
+	{
+		const options: FakeChannelOptions = {};
+		const general = fakeChannel(options);
+		const s = setup({ [CHANNEL_GENERAL]: general });
+		s.services.liveBoards.setChannel(GUILD, CHANNEL_GENERAL, ADMIN);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true);
+		const first = s.services.liveBoards.get(GUILD)?.messageId;
+		assert.ok(first);
+
+		s.clock.advance(LIVE_BOARD_RECHECK_MS - 1);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), false, "chưa đủ 1 giờ thì bỏ qua");
+		assert.equal(general.edits.length, 0);
+		s.clock.advance(1);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true, "đủ 1 giờ thì sửa để biết message còn không");
+		assert.equal(general.edits.length, 1);
+		assert.equal(general.edits[0].messageId, first);
+		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW + LIVE_BOARD_RECHECK_MS));
+		assert.equal(await refreshLiveBoard(s.client, GUILD), false, "vừa sửa thì lại chờ đủ 1 giờ");
+
+		options.editError = discordError(10008);
+		s.clock.advance(LIVE_BOARD_RECHECK_MS);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true);
+		assert.equal(general.sent.length, 2, "message bị xoá tay được đăng lại dù dữ liệu không đổi");
+		const second = s.services.liveBoards.get(GUILD)?.messageId;
+		assert.ok(second && second !== first);
+	});
+
+	test("ảnh Bảng vàng được vẽ qua semaphore chung với /rank và /leaderboard", async (t) =>
+	{
+		const general = fakeChannel();
+		const s = setup({ [CHANNEL_GENERAL]: general });
+		s.services.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		s.services.liveBoards.setChannel(GUILD, CHANNEL_GENERAL, ADMIN);
+		const run = t.mock.method(s.gate, "run");
+
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true);
+		assert.equal(run.mock.callCount(), 3, "mỗi ảnh một lần qua semaphore");
+		assert.equal(s.gate.activeRenders, 0);
+		assert.equal(general.sent[0].files.length, 3);
 	});
 
 	test("message cũ đã bị xoá (10008): đăng lại một lần và lưu message mới", async () =>

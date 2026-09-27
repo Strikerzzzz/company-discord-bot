@@ -48,6 +48,8 @@ export default class RankCmd extends Command
 		// Người được chọn có thể đã rời server: không có member thì coi như không thuộc team nào.
 		const member = chosen ? interaction.options.getMember(TARGET_OPTION) : interaction.member;
 
+		// Cooldown kiểm tra trước khi defer: bị chặn thì dispatcher trả lời riêng ngay (UserError).
+		this.client.renderGate.assertCooldown(interaction.user.id);
 		// Tải avatar và vẽ ảnh có thể mất vài giây, nên defer trước.
 		await interaction.deferReply(mustReplyPrivately(interaction) ? { flags: MessageFlags.Ephemeral } : undefined);
 
@@ -85,13 +87,17 @@ export default class RankCmd extends Command
 		});
 	}
 
-	/** Ảnh thẻ, hoặc null nếu vẽ lỗi (đã ghi log; người dùng nhận embed thay thế). */
+	/**
+	 * Ảnh thẻ, hoặc null nếu vẽ lỗi (đã ghi log; người dùng nhận embed thay thế). Tải avatar ở ngoài semaphore để
+	 * lần chờ mạng không giữ chỗ vẽ; chỉ phần vẽ đi qua semaphore toàn process.
+	 */
 	private async tryRender(input: Omit<RankCardInput, "avatar">, avatarUrl: string): Promise<RenderedCard | null>
 	{
 		try
 		{
 			const avatar = await this.client.avatars.get(avatarUrl);
-			return await this.renderCard(buildRankCardData({ ...input, avatar }));
+			const data = buildRankCardData({ ...input, avatar });
+			return await this.client.renderGate.run(() => this.renderCard(data));
 		}
 		catch (error)
 		{
