@@ -75,6 +75,80 @@ sudo install -m 600 .env.example .env
 sudo nano .env                 # điền DISCORD_TOKEN, DISCORD_GUILD_IDS
 ```
 
+### 3.1. Tự kiểm tra môi trường (`selfcheck`)
+
+Chạy **sau khi build và điền `.env`, trước khi bật service**, và sau mỗi lần cập nhật (mục 5). Lệnh này không kết nối Discord, không gọi mạng, không sửa database và không in token. Các bước kiểm tra:
+
+1. Phiên bản Node: tối thiểu 22.14, khuyến nghị 24 LTS.
+2. Cấu hình đọc bằng đúng code của bot: có `DISCORD_TOKEN` (chỉ báo "có", không in giá trị hay độ dài), `DISCORD_GUILD_IDS` hợp lệ, đường dẫn database và backup, `LOG_LEVEL`.
+3. Thư mục database và thư mục backup tồn tại hoặc tạo được, và ghi được: tạo rồi xoá một file tạm. Thư mục phải tạo để thử thì được xoá lại ngay.
+4. better-sqlite3 nạp được, tức binary native đúng nền tảng.
+5. Database:
+   - chưa có: cảnh báo là bot sẽ tạo khi chạy;
+   - đã có: đọc schema version và so với migration mới nhất của code. Cũ hơn là ⚠️ (bot sẽ tự migrate), bằng là ✅, mới hơn là ❌ (code cũ hơn database, bot sẽ từ chối khởi động);
+   - kiểm tra hỏng (`quick_check`) và chạy thử các migration còn thiếu trên một **bản sao trong bộ nhớ**. File thật không bị mở bằng SQLite, vì kể cả khi mở read-only, SQLite vẫn tạo file `-wal`/`-shm` cạnh database;
+   - chạy toàn bộ migration trên một database trống trong bộ nhớ.
+6. `@napi-rs/canvas` nạp được; font trong `assets/fonts` tìm thấy và đăng ký được.
+7. Vẽ thử một thẻ rank và một bảng xếp hạng bằng dữ liệu giả, kiểm tra PNG hợp lệ, in thời gian vẽ.
+8. Quyền file `.env` trong thư mục làm việc (chỉ trên Linux): cảnh báo nếu group hoặc user khác truy cập được.
+
+Mỗi bước in một dòng: ✅ là ổn, ⚠️ là bot chạy được nhưng nên xem lại, ❌ là phải sửa. Dòng nào cũng kèm gợi ý sửa. Cuối cùng là dòng tổng kết. Có ❌ thì exit code là 1.
+
+**Trên server, chạy dưới đúng user và sandbox của service** bằng `systemd-run`. Các thuộc tính `-p` dưới đây chép từ `deploy/company-discord-bot.service`, và đường dẫn node giống `ExecStart` (kiểm tra bằng `which node`). Nếu sửa unit (ví dụ `ReadWritePaths`), sửa lệnh này cho khớp:
+
+```bash
+cd /opt/company-discord-bot
+sudo systemd-run --wait --pipe --collect \
+  --unit=company-discord-bot-selfcheck \
+  --uid=discordbot --gid=discordbot \
+  -p WorkingDirectory=/opt/company-discord-bot \
+  -p EnvironmentFile=/opt/company-discord-bot/.env \
+  -p UMask=0077 \
+  -p MemoryMax=1G \
+  -p NoNewPrivileges=yes \
+  -p ProtectSystem=strict \
+  -p ProtectHome=yes \
+  -p PrivateTmp=yes \
+  -p PrivateDevices=yes \
+  -p ReadWritePaths=/opt/company-discord-bot/data \
+  -p CapabilityBoundingSet= \
+  -p AmbientCapabilities= \
+  -p "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" \
+  -p SystemCallFilter=@system-service \
+  -p SystemCallErrorNumber=EPERM \
+  -p SystemCallArchitectures=native \
+  -p ProtectKernelTunables=yes \
+  -p ProtectKernelModules=yes \
+  -p ProtectKernelLogs=yes \
+  -p ProtectControlGroups=yes \
+  -p ProtectClock=yes \
+  -p ProtectHostname=yes \
+  -p ProtectProc=invisible \
+  -p RestrictNamespaces=yes \
+  -p RestrictRealtime=yes \
+  -p RestrictSUIDSGID=yes \
+  -p LockPersonality=yes \
+  /usr/bin/node build/selfcheck.js
+echo "exit code: $?"
+```
+
+- `--uid`/`--gid`: chạy bằng user `discordbot` như service, nên phát hiện được lỗi quyền ghi thư mục `data/` và file database.
+- `-p EnvironmentFile=...`: systemd đọc `.env` bằng quyền root rồi truyền biến môi trường vào process, giống service.
+- Không dùng `sudo -u discordbot npm run selfcheck` hay `sudo -u discordbot node --env-file=.env ...`: `.env` thuộc root với quyền 600 nên user `discordbot` không đọc được.
+- **Không bao giờ** đưa token lên dòng lệnh (kiểu `DISCORD_TOKEN=... node ...`): user khác trên server thấy được qua `ps`, và token nằm lại trong shell history.
+- `ProtectSystem=strict` + `ReadWritePaths`, `SystemCallFilter`, `MemoryMax`: selfcheck gặp đúng các giới hạn của bot. Vì vậy lỗi canvas do system call bị chặn, lỗi ghi ngoài `data/` hay lỗi thiếu bộ nhớ lộ ra ở đây, trước khi bật service.
+- `--wait --pipe`: chờ chạy xong và in kết quả ra terminal. Exit code của `systemd-run` là exit code của selfcheck. `--collect`: dọn unit tạm kể cả khi thất bại, nên chạy lại được ngay.
+- Cuối output, `systemd-run` in `Finished with result: ...` và `Main processes terminated with: ...`. Nếu thấy:
+  - `code=exited/status=1`: đọc các dòng ❌ phía trên;
+  - `code=killed/status=SYS`: system call bị chặn và process bị giết (chỉ xảy ra khi bỏ `SystemCallErrorNumber=EPERM`);
+  - `code=killed/status=KILL` kèm cảnh báo OOM: vượt `MemoryMax`.
+
+  Với hai trường hợp `killed`, dòng kết quả in ra cuối cùng cho biết bước đã chạy xong ngay trước khi process bị dừng. Gửi toàn bộ output cho người phụ trách.
+- Lệnh báo `status=226/NAMESPACE`: thư mục trong `ReadWritePaths` chưa tồn tại. Tạo thư mục `data/` như ở trên rồi chạy lại.
+- `sudo npm run selfcheck` (bằng root, ngoài sandbox) vẫn chạy được, nhưng không phát hiện lỗi quyền ghi hay system call bị chặn, vì root không bị các giới hạn đó.
+
+**Trên máy dev:** `npm run build && npm run selfcheck`. Lệnh này tự nạp `.env` trong thư mục dự án nếu có.
+
 ## 4. Chạy như service (systemd)
 
 ```bash
@@ -106,9 +180,11 @@ cd /opt/company-discord-bot
 sudo git pull
 sudo npm ci
 sudo npm run build          # luôn build lại từ đầu, không copy chồng build/ cũ (LL-010)
+# Chạy selfcheck bằng lệnh systemd-run ở mục 3.1; chỉ restart khi không có dòng ❌
 sudo systemctl restart company-discord-bot
 ```
 
+- Lúc chạy selfcheck, bot bản cũ vẫn đang chạy, nên cảnh báo "Có file ...-wal chưa gộp vào database" là bình thường.
 - Migration database chạy tự động khi bot khởi động.
 - Nếu database mới hơn code (ví dụ lỡ quay về bản cũ), bot từ chối khởi động để tránh hỏng dữ liệu.
 

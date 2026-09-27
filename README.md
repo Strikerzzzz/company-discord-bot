@@ -63,6 +63,7 @@ npm run build           # dọn build/ rồi compile TypeScript
 npm run lint            # ESLint (có dùng thông tin type)
 npm test                # compile và chạy toàn bộ test (node:test, SQLite trong bộ nhớ)
 npm run check           # build + lint + test
+npm run selfcheck       # sau khi build: tự kiểm tra môi trường (Node, cấu hình, thư mục, DB, font, vẽ ảnh), không kết nối Discord; trên server xem docs/DEPLOY.md mục 3.1
 ```
 
 Chạy một phần test (sau khi `npm test` hoặc `npx tsc -p test` đã compile):
