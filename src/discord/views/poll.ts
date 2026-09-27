@@ -117,7 +117,10 @@ export function pollMessage(poll: Poll): PollMessagePayload
 	return { embeds: [pollEmbed(poll)], components: pollComponents(poll) };
 }
 
-/** Phản hồi riêng cho người vừa bấm: các lựa chọn hiện tại và XP vừa nhận (nếu có). */
+/**
+ * Phản hồi riêng cho người vừa bấm: các lựa chọn hiện tại và XP vừa nhận (nếu có).
+ * XP bị cắt vì giới hạn XP từ vote trong ngày (DEC-028) thì nói rõ để người vote không tưởng là lỗi.
+ */
 export function pollSelectionText(result: PollVoteResult): string
 {
 	const labels = result.selected
@@ -125,7 +128,26 @@ export function pollSelectionText(result: PollVoteResult): string
 		.filter((label): label is string => label !== undefined)
 		.map(userText);
 	const text = labels.length > 0 ? `Bạn đang chọn: ${labels.join(", ")}` : "Bạn chưa chọn lựa chọn nào.";
-	return result.xpAwarded > 0 ? `${text} · +${formatNumber(result.xpAwarded)} XP` : text;
+	const xp = `+${formatNumber(result.xpAwarded)} XP`;
+	if (result.xpCapped)
+	{
+		const cap = `${formatNumber(result.dailyCap)} XP`;
+		return result.xpAwarded > 0
+			? `${text} · ${xp} (đã chạm giới hạn ${cap} từ vote hôm nay)`
+			: `${text} · Bạn đã nhận đủ ${cap} từ vote hôm nay nên lần này không được cộng XP.`;
+	}
+	return result.xpAwarded > 0 ? `${text} · ${xp}` : text;
+}
+
+/**
+ * Ghi chú riêng cho người tạo vote khi XP của vote lớn hơn giới hạn XP từ vote mỗi ngày (DEC-028); null nếu không cần.
+ * `dailyCap` = 0 nghĩa là không giới hạn.
+ */
+export function pollXpCapNotice(xpReward: number, dailyCap: number): string | null
+{
+	if (dailyCap <= 0 || xpReward <= dailyCap) return null;
+	return `ℹ️ Vote này thưởng ${formatNumber(xpReward)} XP, nhưng mỗi người chỉ nhận tối đa ${formatNumber(dailyCap)} XP từ vote mỗi ngày `
+		+ "(cấu hình `/config poll gioi-han-xp-ngay`), nên người tham gia có thể được cộng ít hơn.";
 }
 
 function pollListLine(poll: Poll): string

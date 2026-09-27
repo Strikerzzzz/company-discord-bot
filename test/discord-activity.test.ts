@@ -17,6 +17,10 @@ import { NO_BADGE_TEXT } from "../src/discord/cardData";
 import { LeaderboardCardData, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { leaderboardEmbed, levelUpMessage, rankEmbed, RankView } from "../src/discord/views/activity";
 import MessageCreate from "../src/events/messageCreate";
+import { GuildMember } from "discord.js";
+import { breakthroughText, levelUpText } from "../src/discord/views/progression";
+import { tierByKey } from "../src/modules/activity/tiers";
+import { TierRoleServiceApi, TierRoleSyncPlan } from "../src/modules/gamification/types";
 import LeaderboardCmd from "../src/interactions/commands/leaderboard";
 import RankCmd from "../src/interactions/commands/rank";
 import { levelInfo } from "../src/modules/activity/levels";
@@ -186,7 +190,7 @@ function fakeMessage(options: FakeMessageOptions = {}): { message: Message; sent
 		},
 		content: options.content ?? "Chào buổi sáng cả nhà",
 		attachments: { size: options.attachments ?? 0 },
-		member: inGuild ? { roles: options.roleIds ?? [] } : null,
+		member: inGuild ? { roles: options.roleIds ?? [], guild: { id: options.guildId ?? GUILD } } : null,
 	};
 	return { message: message as unknown as Message, sent, permissionChecks };
 }
@@ -455,6 +459,57 @@ describe("views Activity", () =>
 
 describe("event messageCreate", () =>
 {
+	interface PlanCall
+	{
+		guildId: string;
+		level: number;
+		roleIds: readonly string[];
+	}
+
+	/** Fake service của các test khác, thêm tierRoles giả trả về `plan` cố định và ghi lại lời gọi. */
+	function messageServices(options: FakeServiceOptions = {}, plan: TierRoleSyncPlan = { add: [], remove: [] }): FakeServices & { planCalls: PlanCall[] }
+	{
+		const fake = createFakeServices(options);
+		const planCalls: PlanCall[] = [];
+		const tierRoles: Pick<TierRoleServiceApi, "plan"> = {
+			plan: (guildId, level, roleIds) =>
+			{
+				planCalls.push({ guildId, level, roleIds });
+				return plan;
+			},
+		};
+		return { ...fake, services: { ...fake.services, tierRoles } as unknown as AppServices, planCalls };
+	}
+
+	/** GuildMember giả (qua được `instanceof GuildMember`); bot có Manage Roles, role cảnh giới nằm dưới role của bot. */
+	function tierMember(roleIds: string[], addFails = false): { member: GuildMember; added: string[] }
+	{
+		const added: string[] = [];
+		const role = (id: string, position: number): object => ({ id, position, managed: false, guild: { id: GUILD }, permissions: new PermissionsBitField() });
+		const guild = {
+			id: GUILD,
+			members: { me: { permissions: new PermissionsBitField([PermissionFlagsBits.ManageRoles]), roles: { highest: role(BOT_ROLE, 10) } } },
+			roles: { cache: new Map([[TIER_ROLE, role(TIER_ROLE, 1)]]) },
+		};
+		const roles = {
+			cache: new Map(roleIds.map(id => [id, { id }])),
+			add: (roleId: string) =>
+			{
+				if (addFails) return Promise.reject(new Error("Missing Permissions"));
+				added.push(roleId);
+				return Promise.resolve();
+			},
+			remove: () => Promise.resolve(),
+		};
+		return { member: Object.setPrototypeOf({ guild, roles }, GuildMember.prototype) as GuildMember, added };
+	}
+
+	const BOT_ROLE = "510000000000000099";
+	const TIER_ROLE = "510000000000000002";
+	/** Lên level nhưng vẫn trong cảnh giới Trúc Cơ (3 → 4). LEVEL_UP (2 → 3) vượt mốc Trúc Cơ. */
+	const PLAIN_LEVEL_UP: MessageXpResult = { awarded: true, amount: 10, totalXp: 800, levelBefore: 3, levelAfter: 4 };
+	const NO_LEVEL_UP: MessageXpResult = { awarded: true, amount: 10, totalXp: 50, levelBefore: 0, levelAfter: 0 };
+
 	const skipped: [string, FakeMessageOptions][] = [
 		["bot", { bot: true }],
 		["webhook", { webhookId: "600000000000000001" }],
@@ -466,17 +521,18 @@ describe("event messageCreate", () =>
 	{
 		test(`bỏ qua ${label}`, async () =>
 		{
-			const fake = createFakeServices({ xpResult: LEVEL_UP });
+			const fake = messageServices({ xpResult: LEVEL_UP });
 			const { message, sent } = fakeMessage(options);
 			await new MessageCreate(fakeClient(fake.services)).execute(message);
 			assert.equal(fake.messages.length, 0);
 			assert.equal(sent.length, 0);
+			assert.equal(fake.planCalls.length, 0);
 		});
 	}
 
 	test("chuyển tin nhắn thành MessageInput", async () =>
 	{
-		const fake = createFakeServices();
+		const fake = messageServices();
 		const { message, sent } = fakeMessage({ content: "Hôm nay deploy xong", attachments: 2, roleIds: [ROLE_BACKEND] });
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 
@@ -493,20 +549,28 @@ describe("event messageCreate", () =>
 
 	test("tin trong thread dùng channel cha", async () =>
 	{
-		const fake = createFakeServices();
+		const fake = messageServices();
 		const { message } = fakeMessage({ inThread: true });
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 		assert.equal(fake.messages[0].channelId, CHANNEL_GENERAL);
 		assert.equal(fake.messages[0].hasAttachments, false);
 	});
 
-	test("lên level thì thông báo và chỉ ping đúng người đó; kiểm tra quyền của chính bot", async () =>
+	test("lên level thì thông báo phong cách tu tiên và chỉ ping đúng người đó; kiểm tra quyền của chính bot", async () =>
 	{
-		const fake = createFakeServices({ xpResult: LEVEL_UP });
+		const fake = messageServices({ xpResult: PLAIN_LEVEL_UP });
 		const { message, sent, permissionChecks } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
-		assert.deepEqual(sent, [{ content: levelUpMessage(USER_A, 3), allowedMentions: { users: [USER_A] } }]);
+		assert.deepEqual(sent, [{ content: levelUpText(USER_A, 4), allowedMentions: { users: [USER_A] } }]);
 		assert.deepEqual(permissionChecks, [{ id: BOT_ID }]);
+	});
+
+	test("lên level vượt mốc cảnh giới thì gửi thông báo đột phá thay cho thông báo lên level", async () =>
+	{
+		const fake = messageServices({ xpResult: LEVEL_UP });
+		const { message, sent } = fakeMessage();
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+		assert.deepEqual(sent, [{ content: breakthroughText(USER_A, tierByKey("truc-co"), 3), allowedMentions: { users: [USER_A] } }]);
 	});
 
 	test("bot không có quyền gửi tin ở channel: bỏ qua thông báo, không gây lỗi", async () =>
@@ -518,7 +582,7 @@ describe("event messageCreate", () =>
 		];
 		for (const [label, options] of cases)
 		{
-			const fake = createFakeServices({ xpResult: LEVEL_UP });
+			const fake = messageServices({ xpResult: LEVEL_UP });
 			const { message, sent } = fakeMessage(options);
 			await new MessageCreate(fakeClient(fake.services)).execute(message);
 			assert.equal(fake.messages.length, 1, label);
@@ -528,26 +592,27 @@ describe("event messageCreate", () =>
 
 	test("thread: bot có Send Messages in Threads thì thông báo được", async () =>
 	{
-		const fake = createFakeServices({ xpResult: LEVEL_UP });
+		const fake = messageServices({ xpResult: LEVEL_UP });
 		const { message, sent } = fakeMessage({ inThread: true, botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads] });
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 		assert.equal(sent.length, 1);
 	});
 
-	test("gửi thông báo thất bại chỉ ghi cảnh báo, XP vẫn đã được cộng", async (t) =>
+	test("gửi thông báo thất bại chỉ ghi cảnh báo, XP vẫn đã được cộng, role vẫn được đồng bộ", async (t) =>
 	{
 		const warned = t.mock.method(console, "error", () => undefined);
-		const fake = createFakeServices({ xpResult: LEVEL_UP });
+		const fake = messageServices({ xpResult: LEVEL_UP });
 		const { message } = fakeMessage({ sendFails: true });
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 		assert.equal(fake.messages.length, 1);
 		assert.equal(warned.mock.callCount(), 1);
 		assert.match(String(warned.mock.calls[0].arguments[0]), /\[WARN\]/);
+		assert.equal(fake.planCalls.length, 1);
 	});
 
 	test("không thông báo khi admin tắt levelUpAnnouncements", async () =>
 	{
-		const fake = createFakeServices({ xpResult: LEVEL_UP, levelUpAnnouncements: false });
+		const fake = messageServices({ xpResult: LEVEL_UP, levelUpAnnouncements: false });
 		const { message, sent } = fakeMessage();
 		await new MessageCreate(fakeClient(fake.services)).execute(message);
 		assert.equal(fake.messages.length, 1);
@@ -557,13 +622,13 @@ describe("event messageCreate", () =>
 	test("không thông báo khi được XP nhưng chưa lên level, không được XP, hoặc channel không gửi được", async () =>
 	{
 		const cases: [MessageXpResult, boolean][] = [
-			[{ awarded: true, amount: 10, totalXp: 50, levelBefore: 0, levelAfter: 0 }, true],
+			[NO_LEVEL_UP, true],
 			[{ awarded: false, reason: "duplicate" }, true],
 			[LEVEL_UP, false],
 		];
 		for (const [xpResult, sendable] of cases)
 		{
-			const fake = createFakeServices({ xpResult });
+			const fake = messageServices({ xpResult });
 			const { message, sent } = fakeMessage({ sendable });
 			await new MessageCreate(fakeClient(fake.services)).execute(message);
 			assert.equal(fake.messages.length, 1);
@@ -571,9 +636,53 @@ describe("event messageCreate", () =>
 		}
 	});
 
+	test("mọi tin được XP đều đồng bộ role cảnh giới theo level mới (kể cả khi không lên level); tin không được XP thì không", async () =>
+	{
+		const awarded = messageServices({ xpResult: NO_LEVEL_UP });
+		await new MessageCreate(fakeClient(awarded.services)).execute(fakeMessage({ roleIds: [ROLE_BACKEND] }).message);
+		assert.deepEqual(awarded.planCalls, [{ guildId: GUILD, level: 0, roleIds: [ROLE_BACKEND] }]);
+
+		const levelUp = messageServices({ xpResult: PLAIN_LEVEL_UP });
+		await new MessageCreate(fakeClient(levelUp.services)).execute(fakeMessage().message);
+		assert.deepEqual(levelUp.planCalls.map(call => call.level), [4]);
+
+		const rejected = messageServices({ xpResult: { awarded: false, reason: "cooldown" } });
+		await new MessageCreate(fakeClient(rejected.services)).execute(fakeMessage().message);
+		assert.deepEqual(rejected.planCalls, []);
+	});
+
+	test("thêm role cảnh giới cho tác giả với lý do trong audit log của Discord", async () =>
+	{
+		const fake = messageServices({ xpResult: LEVEL_UP }, { add: [TIER_ROLE], remove: [] });
+		const { member, added } = tierMember([ROLE_BACKEND]);
+		const { message, sent } = fakeMessage();
+		Object.assign(message, { member });
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+
+		assert.deepEqual(added, [TIER_ROLE]);
+		assert.deepEqual(fake.planCalls, [{ guildId: GUILD, level: 3, roleIds: [ROLE_BACKEND] }]);
+		assert.deepEqual(fake.messages[0].roleIds, [ROLE_BACKEND]);
+		assert.equal(sent.length, 1);
+	});
+
+	test("lỗi khi đổi role chỉ ghi cảnh báo, không ảnh hưởng thông báo lên level", async (t) =>
+	{
+		const warned = t.mock.method(console, "error", () => undefined);
+		const fake = messageServices({ xpResult: PLAIN_LEVEL_UP }, { add: [TIER_ROLE], remove: [] });
+		const { member, added } = tierMember([], true);
+		const { message, sent } = fakeMessage();
+		Object.assign(message, { member });
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+
+		assert.deepEqual(added, []);
+		assert.equal(sent.length, 1);
+		assert.equal(warned.mock.callCount(), 1);
+		assert.match(String(warned.mock.calls[0].arguments[0]), /\[WARN\] Không thêm được role cảnh giới/);
+	});
+
 	test("lỗi từ service được ném ra cho EventHandler", async () =>
 	{
-		const fake = createFakeServices();
+		const fake = messageServices();
 		const services = { ...fake.services, activity: { handleMessage: () => { throw new Error("hỏng"); } } } as unknown as AppServices;
 		const { message } = fakeMessage();
 		await assert.rejects(new MessageCreate(fakeClient(services)).execute(message), /hỏng/);
