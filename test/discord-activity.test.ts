@@ -15,7 +15,7 @@ import {
 import type DiscordClient from "../src/classes/DiscordClient";
 import { NO_BADGE_TEXT } from "../src/discord/cardData";
 import { LeaderboardCardData, RankCardData, RenderedCard } from "../src/discord/cards/types";
-import { leaderboardEmbed, levelUpMessage, rankEmbed, RankView } from "../src/discord/views/activity";
+import { leaderboardEmbed, rankEmbed, RankView } from "../src/discord/views/activity";
 import MessageCreate from "../src/events/messageCreate";
 import { GuildMember } from "discord.js";
 import { breakthroughText, levelUpText } from "../src/discord/views/progression";
@@ -350,11 +350,6 @@ function fieldValue(embed: APIEmbed, name: string): string
 
 describe("views Activity", () =>
 {
-	test("levelUpMessage mention đúng người và level", () =>
-	{
-		assert.equal(levelUpMessage(USER_A, 3), `🎉 Chúc mừng <@${USER_A}> đã lên **Level 3**!`);
-	});
-
 	test("rankEmbed: ba phần tách biệt, số định dạng vi-VN, thanh tiến độ và hạng", () =>
 	{
 		const view: RankView = {

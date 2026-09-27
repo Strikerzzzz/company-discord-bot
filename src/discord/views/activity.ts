@@ -23,12 +23,6 @@ const SCOPE_LABELS: Readonly<Record<LeaderboardScope, string>> = {
 	team: "Team",
 };
 
-/** Thông báo lên level, gửi vào channel nơi người đó vừa nhắn. */
-export function levelUpMessage(userId: string, level: number): string
-{
-	return `🎉 Chúc mừng ${userMention(userId)} đã lên **Level ${formatNumber(level)}**!`;
-}
-
 function rankText(rank: number | null, totalRanked: number): string
 {
 	return rank === null ? "Chưa có hạng" : `**#${formatNumber(rank)}**/${formatNumber(totalRanked)}`;
