@@ -2,7 +2,7 @@
 
 > Roadmap tổng thể. Cập nhật lần cuối: 2026-09-26.
 > Theo DEC-021, Phase 2–10 được làm liên tục trên branch `phase-2-10/hoan-thien-tinh-nang`, kèm tính năng vote/bầu cử (DEC-026), và đã merge vào `main` (DEC-028).
-> Phase 12 (gamification và ảnh thẻ, DEC-029…031) làm trên branch `phase-12/gamification`.
+> Phase 12 (gamification và ảnh thẻ, DEC-029…032) làm trên branch `phase-12/gamification`, đã merge vào `main`.
 > Nguyên tắc: không xây feature trên nền chưa build được; viết test song song với code; mỗi phase nghiệp vụ chỉ bắt đầu khi các quyết định liên quan đã được chốt.
 
 ## Tổng quan
@@ -21,7 +21,7 @@
 | 9 | Contribution Leaderboards (cá nhân và team) | **Đã merge vào `main`** | DEC-024 |
 | 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
 | 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
-| 12 | Gamification và giao diện ảnh | **ĐÃ CODE**, đã review và sửa lỗi; chờ duyệt merge | DEC-028…031 |
+| 12 | Gamification và giao diện ảnh | **Đã merge vào `main`** (DEC-032) | DEC-028…032 |
 
 ## Chi tiết
 
@@ -90,7 +90,7 @@ Individual Contribution Leaderboard và Team Contribution Leaderboard. Tuỳ ch�
 
 Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống kê.
 
-### Phase 12 — Gamification và giao diện ảnh · ĐÃ CODE (chờ duyệt)
+### Phase 12 — Gamification và giao diện ảnh · ĐÃ MERGE (DEC-032)
 
 - **Mục tiêu:** làm level và bảng xếp hạng thú vị hơn, có giao diện riêng ngay trong Discord.
 - **Phạm vi:**
@@ -118,3 +118,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-26 | Thêm PROP-022, PROP-023 vào Phase 1 và làm xong; merge Phase 1 vào `main` (DEC-019). Còn bước 6 |
 | 2026-09-26 | DEC-021: Phase 2–10 làm liên tục trên một branch, thêm tính năng vote/bầu cử (DEC-026). Đã code, test (323) và qua review độc lập. Phase 11 chờ server Linux |
 | 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`. Thêm Phase 12 (gamification và ảnh thẻ, DEC-029…031) |
+| 2026-09-27 | DEC-032: duyệt và merge Phase 12 vào `main` |

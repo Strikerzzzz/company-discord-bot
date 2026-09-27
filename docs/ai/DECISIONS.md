@@ -247,7 +247,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - PEND-020 (PROP-028): admin đặt giới hạn **XP tối đa một người nhận từ vote trong một ngày** (giờ Việt Nam), cấu hình `pollXpDailyCap`, **mặc định 25**, 0 = không giới hạn. Vượt mức thì vẫn bỏ phiếu được, chỉ không được cộng thêm XP; phần XP bị cắt không được cộng bù về sau.
 - **Hệ quả đã biết** (review 2026-09-27):
   - Hạn mức vote trong ngày tính theo XP vote còn hiệu lực, nên admin reset XP của một người thì hạn mức hôm đó của người đó cũng được trả lại.
-  - Rút ghi nhận rồi ghi nhận lại có thể xoá một phần hình phạt của admin; chờ quyết định ở PROP-031 (PEND-021).
+  - Rút ghi nhận rồi ghi nhận lại có thể xoá một phần hình phạt của admin; đã chặn theo DEC-032 (PROP-031).
 
 ### DEC-029 — Gamification: cảnh giới tu tiên, chuỗi ngày, huy hiệu, bảng xếp hạng theo kỳ
 
@@ -287,6 +287,14 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Không nhận role có quyền nguy hiểm ở cấp server **hoặc** qua permission overwrite của bất kỳ kênh nào. Danh sách quyền nguy hiểm thêm Pin Messages, Bypass Slowmode, View Server Insights.
   - Tên lệnh theo DEC-020: `/config tier set-role|clear-role|list`, `/config board`.
 
+### DEC-032 — Duyệt Phase 12; chặn xoá hình phạt; giữ nguyên quy tắc ảnh kèm chữ ngắn
+
+- **Ngày:** 2026-09-27 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 duyệt / 2 oke theo bạn đi / 3 oke")
+- **Nội dung:**
+  - Duyệt và merge `phase-12/gamification` vào `main`.
+  - PEND-021 (PROP-031, phương án a): nếu một lượt rút ghi nhận làm phát sinh điểm bù (tác giả đang bị admin trừ điểm), người rút **không ghi nhận lại** được contribution đó. Bot giữ dòng vote với event đã huỷ, giống lượt đã bị reset (PEND-015). Phản hồi khi rút có báo rõ lý do. Lượt rút không phải bù thì vẫn ghi nhận lại bình thường.
+  - PEND-019 (PROP-027): người phụ trách trả lời "oke" cho câu hỏi kèm ghi chú "hiện là không"; AI hiểu là **giữ nguyên**. Ảnh kèm chữ quá ngắn (dưới 5 ký tự sau chuẩn hoá) không được XP; ảnh không kèm chữ hoặc ảnh kèm chữ từ 5 ký tự trở lên thì được.
+
 ---
 
 ## Đang chờ quyết định
@@ -296,7 +304,5 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
 | PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
 | PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
-| PEND-021 | Rút ghi nhận rồi ghi nhận lại có xoá được hình phạt của admin không? **Đang làm:** có (hệ quả của cách bù điểm ở DEC-028) | Contribution | PROP-031 |
-| PEND-019 | Ảnh kèm chữ **quá ngắn** (ví dụ "ok") có được XP như ảnh không kèm chữ không? **Đang làm:** không. Ảnh kèm chữ từ 5 ký tự trở lên đã được XP (DEC-028) | Activity XP | PROP-027 |
 
-**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028.
+**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028 · PEND-019, PEND-021 → DEC-032.

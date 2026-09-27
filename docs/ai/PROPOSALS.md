@@ -29,18 +29,18 @@
 | PROP-017 | Chống gian lận vote contribution | MEDIUM | IMPLEMENTED |
 | PROP-018 | Vận hành: logging tối giản và graceful shutdown | LOW | IMPLEMENTED |
 | PROP-019 | Dọn code demo và viết lại README | LOW | IMPLEMENTED |
-| PROP-020 | Leaderboard theo kỳ | LOW | APPROVED |
+| PROP-020 | Leaderboard theo kỳ | LOW | IMPLEMENTED |
 | PROP-021 | Metadata `package.json` của dự án | MEDIUM | IMPLEMENTED |
 | PROP-022 | Khai báo `@types/node` tường minh | LOW | IMPLEMENTED |
 | PROP-023 | Cố định line ending bằng `.gitattributes` | LOW | IMPLEMENTED |
-| PROP-024 | Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ | MEDIUM | APPROVED |
+| PROP-024 | Không để điểm contribution âm khi rút ghi nhận / gỡ sau khi admin đã trừ | MEDIUM | IMPLEMENTED |
 | PROP-025 | Ghi nhận đóng góp qua modal (người ghi nhận tự viết tiêu đề, mô tả) | MEDIUM | DEFERRED |
 | PROP-026 | Snapshot team của lượt ghi nhận: lúc gửi hay lúc được ghi nhận | LOW | IMPLEMENTED |
-| PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | PROPOSED |
-| PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | APPROVED |
-| PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | APPROVED |
+| PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | REJECTED |
+| PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | IMPLEMENTED |
+| PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | IMPLEMENTED |
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
-| PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | PROPOSED |
+| PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
 
 ---
 
@@ -852,7 +852,7 @@ LOW
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-029): bảng xếp hạng tuần/tháng theo giờ Việt Nam, làm trong Phase 12.
+IMPLEMENTED (2026-09-27, Phase 12): bảng tuần/tháng theo giờ Việt Nam cho Activity/Contribution × cá nhân/team; không tính event bù tự động.
 
 ---
 
@@ -1007,7 +1007,7 @@ MEDIUM
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-028): phương án (a), tự ghi event bù để tổng về 0. Làm trong Phase 12.
+IMPLEMENTED (2026-09-27, Phase 12): ContributionService.compensateNegative, event bù nguồn admin, actor null.
 
 ---
 
@@ -1122,7 +1122,7 @@ LOW
 
 ### Trạng thái
 
-PROPOSED. Ngày 2026-09-26 người phụ trách đã xác nhận ảnh kèm chữ giải thích (từ 5 ký tự trở lên) được XP (DEC-028); còn chờ quyết định cho ảnh kèm chữ quá ngắn (PEND-019).
+REJECTED (2026-09-27, DEC-032): giữ nguyên; ảnh kèm chữ quá ngắn không được XP, ảnh kèm chữ từ 5 ký tự trở lên hoặc ảnh không kèm chữ thì được.
 
 ---
 
@@ -1162,7 +1162,7 @@ LOW
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-028): admin đặt giới hạn XP từ vote mỗi ngày (mặc định 25, 0 = không giới hạn). Làm trong Phase 12.
+IMPLEMENTED (2026-09-27, Phase 12): giới hạn XP từ vote mỗi ngày giờ Việt Nam (pollXpDailyCap, mặc định 25).
 
 ---
 
@@ -1199,7 +1199,7 @@ Thấp.
 
 ### Trạng thái
 
-APPROVED (2026-09-26, DEC-030): nút chuyển loại điểm, phạm vi, kỳ và trang trên ảnh bảng xếp hạng. Làm trong Phase 12.
+IMPLEMENTED (2026-09-27, Phase 12): nút lb chuyển loại điểm, phạm vi, kỳ, trang và "Hạng của tôi" trên ảnh bảng xếp hạng.
 
 ---
 
@@ -1284,4 +1284,4 @@ MEDIUM
 
 ### Trạng thái
 
-PROPOSED
+IMPLEMENTED (2026-09-27, DEC-032): phương án (a). Lần rút làm phát sinh điểm bù thì giữ dòng vote (event đã huỷ), người rút không ghi nhận lại được; phản hồi báo rõ lý do.
