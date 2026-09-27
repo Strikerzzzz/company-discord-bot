@@ -41,7 +41,7 @@ import LeaderboardCmd, {
 	parseBoardId,
 } from "../src/interactions/commands/leaderboard";
 import { levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
-import { DEFAULT_TIER_SET, tierByKey, tierForLevel, nextTier } from "../src/modules/activity/tiers";
+import { applyTierOverrides, DEFAULT_TIER_SET, TIER_SETS, tierByKey, tierForLevel, nextTier, TierSet } from "../src/modules/activity/tiers";
 import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
 import { GamificationProfile } from "../src/modules/gamification/types";
 import { LeaderboardPage, LeaderboardPeriod, LeaderboardScope, ScoreKind } from "../src/modules/leaderboard/LeaderboardService";
@@ -257,7 +257,7 @@ function boardPage(entries: [string, number, number][], overrides: Partial<Leade
 
 function cardInput(overrides: Partial<LeaderboardCardInput>): LeaderboardCardInput
 {
-	return { kind: "activity", scope: "individual", page: boardPage([]), viewerId: null, ...overrides };
+	return { kind: "activity", scope: "individual", page: boardPage([]), viewerId: null, tierSet: DEFAULT_TIER_SET, ...overrides };
 }
 
 describe("dữ liệu ảnh bảng xếp hạng", () =>
@@ -330,6 +330,25 @@ describe("dữ liệu ảnh bảng xếp hạng", () =>
 		assert.equal(row.tier?.key, tierForLevel(12).key);
 	});
 
+	test("bậc trên dòng theo bộ danh hiệu của guild ở bảng tuần và tháng (tên tuỳ chỉnh), vẫn theo level tổng", () =>
+	{
+		const kiemHiep = applyTierOverrides(TIER_SETS["kiem-hiep"], [{ tierKey: "bac-8", name: "Minh Chủ", emoji: "🐲" }]);
+		for (const period of ["week", "month"] as const)
+		{
+			const data = buildLeaderboardCardData(cardInput({
+				page: boardPage([[USER_A, 1, 500], [USER_B, 2, 50]], { period, since: period === "week" ? WEEK_START : MONTH_START }),
+				totalXp: new Map([[USER_A, totalXpForLevel(45)], [USER_B, totalXpForLevel(10)]]),
+				tierSet: kiemHiep,
+			}));
+			assert.deepEqual(data.rows.map(row => [row.tier?.setKey, row.tier?.key, row.tier?.name, row.detail]), [
+				["kiem-hiep", "bac-8", "Minh Chủ", "Lv 45"],
+				["kiem-hiep", "bac-4", "Tráng Sĩ", "Lv 10"],
+			], period);
+		}
+		const [row] = buildLeaderboardCardData(cardInput({ page: boardPage([[USER_A, 1, totalXpForLevel(20)]]), tierSet: TIER_SETS["rank-game"] })).rows;
+		assert.equal(row.tier?.name, "Tinh Anh", "kỳ tổng cũng theo bộ");
+	});
+
 	test("Contribution cá nhân: \"N điểm\", không có cảnh giới hay dòng phụ", () =>
 	{
 		const [row] = buildLeaderboardCardData(cardInput({ kind: "contribution", page: boardPage([[USER_A, 1, 1234]]), viewerId: USER_A })).rows;
@@ -365,16 +384,26 @@ describe("dữ liệu ảnh bảng xếp hạng", () =>
 
 // ---------- Thẻ rank ----------
 
-function gamificationProfile(options: { totalXp?: number; streak?: number; unlocked?: string[]; current?: Record<string, number> } = {}): GamificationProfile
+interface ProfileOptions
+{
+	totalXp?: number;
+	streak?: number;
+	unlocked?: string[];
+	current?: Record<string, number>;
+	tierSet?: TierSet;
+}
+
+function gamificationProfile(options: ProfileOptions = {}): GamificationProfile
 {
 	const level = levelInfo(options.totalXp ?? 0);
 	const unlocked = new Set(options.unlocked ?? []);
+	const tierSet = options.tierSet ?? DEFAULT_TIER_SET;
 	return {
 		userId: USER_A,
 		level,
-		tierSet: DEFAULT_TIER_SET,
-		tier: tierForLevel(level.level),
-		nextTier: nextTier(level.level),
+		tierSet,
+		tier: tierForLevel(level.level, tierSet),
+		nextTier: nextTier(level.level, tierSet),
 		streak: { current: options.streak ?? 0, best: Math.max(options.streak ?? 0, 3), activeToday: true, lastActiveDay: 1 },
 		stats: { messages: 0, bestStreak: 0, recognitionsReceived: 0, recognitionsGiven: 0, pollsJoined: 0, contributions: 0 },
 		achievements: ACHIEVEMENTS.map(achievement => ({
@@ -423,7 +452,7 @@ describe("thẻ rank và phần chữ đi kèm", () =>
 			current: { "kien-tri": 5, "hoat-ngon": 700 },
 		}));
 		assert.equal(text, [
-			"🟡 **Kim Đan** · Level 7",
+			"🟡 Cảnh giới **Kim Đan** · Level 7",
 			"🔥 Chuỗi 12 ngày",
 			"💬 Khai Khẩu · 🌟 Được Công Nhận",
 			"🎯 Sắp đạt: 🔥 Kiên Trì (5/7)",
@@ -433,7 +462,27 @@ describe("thẻ rank và phần chữ đi kèm", () =>
 	test("chuỗi 0 thì không có dòng chuỗi; chưa có huy hiệu thì có lời động viên", () =>
 	{
 		const text = rankSummaryText(gamificationProfile());
-		assert.equal(text, ["🌱 **Luyện Khí** · Level 0", NO_BADGE_TEXT, "🎯 Sắp đạt: 💬 Khai Khẩu (0/100)"].join("\n"));
+		assert.equal(text, ["🌱 Cảnh giới **Luyện Khí** · Level 0", NO_BADGE_TEXT, "🎯 Sắp đạt: 💬 Khai Khẩu (0/100)"].join("\n"));
+		assert.ok(!NO_BADGE_TEXT.includes("tu luyện"), "lời động viên trung tính, hợp mọi bộ");
+	});
+
+	test("dòng bậc theo bộ danh hiệu của hồ sơ: tên gọi bậc, tên và emoji (kể cả tuỳ chỉnh)", () =>
+	{
+		const expected: Record<string, string> = {
+			"tu-tien": "🟡 Cảnh giới **Kim Đan** · Level 7",
+			"rank-game": "🟡 Hạng **Vàng** · Level 7",
+			"kiem-hiep": "🛡️ Danh hiệu **Hiệp Sĩ** · Level 7",
+			"cay-xanh": "🌿 Giai đoạn **Cây Non** · Level 7",
+			"vu-tru": "🌍 Thiên thể **Hành Tinh** · Level 7",
+		};
+		for (const set of Object.values(TIER_SETS))
+		{
+			const [first] = rankSummaryText(gamificationProfile({ totalXp: totalXpForLevel(7), tierSet: set })).split("\n");
+			assert.equal(first, expected[set.key], set.key);
+		}
+		const renamed = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-3", name: "Vàng Son", emoji: "🥇" }]);
+		const [line] = rankSummaryText(gamificationProfile({ totalXp: totalXpForLevel(7), tierSet: renamed })).split("\n");
+		assert.equal(line, "🥇 Hạng **Vàng Son** · Level 7");
 	});
 
 	test("quá 6 huy hiệu thì ghi \"+k\"; sắp đạt hoà tỉ lệ thì theo thứ tự huy hiệu", () =>
@@ -682,6 +731,22 @@ describe("/leaderboard: ảnh và nút", () =>
 			assert.deepEqual(calls.deferReply, [{ flags: MessageFlags.Ephemeral }]);
 			assert.equal(calls.edits.length, 1);
 		}
+	});
+
+	test("bậc trên ảnh theo bộ danh hiệu guild đang dùng, đọc lại mỗi lần vẽ: đổi tên bậc thì lần bấm nút sau thấy ngay", async () =>
+	{
+		const h = harness();
+		seedXp(h, USER_A, 500);
+		h.services.tierSets.select(GUILD, "rank-game", ADMIN);
+		await h.command.execute(fakeCommand({ strings: { ky: "tuan" } }).interaction);
+		assert.deepEqual(h.rendered[0].rows.map(row => [row.tier?.setKey, row.tier?.key, row.tier?.name]), [["rank-game", "bac-2", "Bạc"]]);
+
+		h.services.tierSets.rename(GUILD, [{ tierKey: "bac-2", name: "Bạc Ròng", emoji: null }], ADMIN);
+		h.clock.advanceSeconds(5);
+		const view = boardViewId({ kind: "activity", scope: "individual", period: "week", page: 1, ownerId: USER_A });
+		await h.command.executeButton(fakeButton(view, USER_A).interaction);
+		assert.equal(h.rendered.length, 2);
+		assert.equal(h.rendered[1].rows[0].tier?.name, "Bạc Ròng");
 	});
 
 	test("bảng team: tên và màu role từ server", async () =>

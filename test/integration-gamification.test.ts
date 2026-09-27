@@ -3,11 +3,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { Message, PermissionFlagsBits, PermissionsBitField } from "discord.js";
+import type DiscordClient from "../src/classes/DiscordClient";
 import { buildLeaderboardCardData, buildRankCardData, rankSummaryText } from "../src/discord/cardData";
 import { renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
 import { renderRankCard } from "../src/discord/cards/rankCard";
 import { openDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
+import MessageCreate from "../src/events/messageCreate";
 import { tierUp } from "../src/modules/activity/tiers";
 import { createServices } from "../src/services";
 import { MS_PER_DAY } from "../src/shared/time";
@@ -16,6 +19,34 @@ import { ADMIN, CHANNEL_GENERAL, FakeClock, GUILD, ROLE_BACKEND, ROLE_FRONTEND, 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ROLE_LUYEN_KHI = "600000000000000001";
 const ROLE_TRUC_CO = "600000000000000002";
+const BOT_ID = "900000000000000001";
+
+/** Tin nhắn giả của USER_A trong CHANNEL_GENERAL (không có member, nên không đồng bộ role); ghi lại những gì bot gửi. */
+function fakeMessage(content: string, sent: unknown[]): Message
+{
+	const message = {
+		author: { id: USER_A, bot: false },
+		webhookId: null,
+		system: false,
+		inGuild: () => true,
+		guildId: GUILD,
+		channelId: CHANNEL_GENERAL,
+		channel: {
+			isThread: () => false,
+			isSendable: () => true,
+			permissionsFor: () => new PermissionsBitField([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]),
+			send: (payload: unknown) =>
+			{
+				sent.push(payload);
+				return Promise.resolve();
+			},
+		},
+		content,
+		attachments: { size: 0 },
+		member: null,
+	};
+	return message as unknown as Message;
+}
 
 // Phase 12 end-to-end qua service thật và hàm vẽ ảnh thật (chỉ thay Discord bằng lời gọi trực tiếp).
 describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
@@ -121,6 +152,7 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 				people: new Map([[USER_A, { displayName: "Nguyễn Văn A", avatar: null }]]),
 				totalXp: new Map(week.entries.map(entry => [entry.id, s.activity.getProfile(GUILD, entry.id).level.totalXp])),
 				viewerId: USER_A,
+				tierSet: s.tierSets.current(GUILD),
 			}));
 			assert.ok(board.png.subarray(0, 8).equals(PNG_SIGNATURE));
 		}
@@ -128,6 +160,76 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 		{
 			db.close();
 			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+// Phase 13 end-to-end: bộ danh hiệu của guild đi xuyên qua service thật, event messageCreate thật, dữ liệu ảnh và hàm vẽ thật.
+describe("tích hợp: bộ danh hiệu (Phase 13)", () =>
+{
+	test("đổi bộ sang Rank game và đổi tên một bậc: hồ sơ, thông báo lên bậc, dữ liệu ảnh thẻ và bảng xếp hạng đều theo bộ mới", async () =>
+	{
+		const db = openDatabase(":memory:");
+		try
+		{
+			runMigrations(db);
+			const clock = new FakeClock(Date.UTC(2026, 0, 1, 0, 0, 0));
+			const s = createServices(db, { clock, backupDir: "khong-dung", backupKeep: 1 });
+			s.tierSets.select(GUILD, "rank-game", ADMIN);
+			s.tierSets.rename(GUILD, [{ tierKey: "bac-2", name: "Bạc Ròng", emoji: "🥈" }], ADMIN);
+
+			// 470 XP là Level 2; một tin nhắn được 10 XP qua event thật đưa lên Level 3, vượt mốc bậc 2.
+			s.activity.adjustXp({ guildId: GUILD, userId: USER_A, delta: 470, actorId: ADMIN, reason: "Khởi tạo", roleIds: [] });
+			const client = { services: s, guildIds: [GUILD], user: { id: BOT_ID } } as unknown as DiscordClient;
+			const sent: unknown[] = [];
+			await new MessageCreate(client).execute(fakeMessage("Báo cáo tiến độ dự án hôm nay", sent));
+			assert.deepEqual(sent, [{
+				content: `🏆 Thăng hạng! <@${USER_A}> đã leo lên hạng Bạc! 🥈 Hạng **Bạc Ròng** · Level 3`,
+				allowedMentions: { users: [USER_A] },
+			}]);
+
+			// Hồ sơ và phần chữ /rank theo bộ mới.
+			const profile = s.gamification.profile(GUILD, USER_A);
+			assert.equal(profile.level.level, 3);
+			assert.equal(profile.tierSet.key, "rank-game");
+			assert.deepEqual([profile.tier.key, profile.tier.name, profile.tier.emoji], ["bac-2", "Bạc Ròng", "🥈"]);
+			assert.equal(profile.nextTier?.name, "Vàng");
+			assert.equal(rankSummaryText(profile).split("\n")[0], "🥈 Hạng **Bạc Ròng** · Level 3");
+
+			const rankData = buildRankCardData({
+				displayName: "Nguyễn Văn A",
+				avatar: null,
+				activity: s.activity.getProfile(GUILD, USER_A),
+				contribution: s.contributions.getProfile(GUILD, USER_A),
+				gamification: profile,
+				teamNames: [],
+			});
+			assert.equal(rankData.tierSet.key, "rank-game");
+			assert.equal(rankData.tierSet.texts.cardName, "thẻ xếp hạng");
+			assert.equal(rankData.tier.name, "Bạc Ròng");
+			assert.ok((await renderRankCard(rankData)).png.subarray(0, 8).equals(PNG_SIGNATURE));
+
+			const week = s.leaderboard.query({ guildId: GUILD, kind: "activity", scope: "individual", period: "week", page: 1 });
+			const boardData = buildLeaderboardCardData({
+				kind: "activity",
+				scope: "individual",
+				page: week,
+				totalXp: new Map(week.entries.map(entry => [entry.id, s.activity.getProfile(GUILD, entry.id).level.totalXp])),
+				viewerId: USER_A,
+				tierSet: s.tierSets.current(GUILD),
+			});
+			assert.deepEqual(boardData.rows.map(row => [row.tier?.setKey, row.tier?.name, row.detail]), [["rank-game", "Bạc Ròng", "Lv 3"]]);
+			assert.ok((await renderLeaderboardCard(boardData)).png.subarray(0, 8).equals(PNG_SIGNATURE));
+
+			// Đổi về Tu tiên rồi lại sang Rank game: tên tuỳ chỉnh lưu theo từng bộ nên không mất.
+			s.tierSets.select(GUILD, "tu-tien", ADMIN);
+			assert.equal(s.gamification.profile(GUILD, USER_A).tier.name, "Trúc Cơ");
+			s.tierSets.select(GUILD, "rank-game", ADMIN);
+			assert.equal(s.gamification.profile(GUILD, USER_A).tier.name, "Bạc Ròng");
+		}
+		finally
+		{
+			db.close();
 		}
 	});
 });

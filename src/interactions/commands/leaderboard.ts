@@ -264,10 +264,14 @@ export default class LeaderboardCmd extends Command
 		return { kind, scope: "individual", period, page: Math.floor(position / CARD_PAGE_SIZE) + 1, ownerId: viewerId };
 	}
 
-	/** Nội dung message bảng xếp hạng: ảnh (hoặc embed nếu vẽ lỗi) và các nút; luôn thay toàn bộ ảnh, embed, nút cũ. */
+	/**
+	 * Nội dung message bảng xếp hạng: ảnh (hoặc embed nếu vẽ lỗi) và các nút; luôn thay toàn bộ ảnh, embed, nút cũ.
+	 * Bậc trên các dòng theo bộ danh hiệu guild đang dùng (DEC-033).
+	 */
 	private async boardMessage(guild: Guild | null, guildId: string, state: BoardState): Promise<InteractionEditReplyOptions>
 	{
-		const loaded = await loadLeaderboardCard(this.client, guild, guildId, { ...state, viewerId: state.ownerId });
+		const tierSet = this.client.services.tierSets.current(guildId);
+		const loaded = await loadLeaderboardCard(this.client, guild, guildId, { ...state, viewerId: state.ownerId, tierSet });
 		const components = boardComponents({ ...state, page: loaded.page.page }, loaded.page.totalPages);
 
 		const card = await this.tryRender(loaded.data);

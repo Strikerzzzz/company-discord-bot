@@ -1,7 +1,7 @@
 import { Guild, Interaction, PermissionFlagsBits } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
 import { levelInfo } from "../modules/activity/levels";
-import { tierForLevel } from "../modules/activity/tiers";
+import { tierForLevel, TierSet } from "../modules/activity/tiers";
 import { ActivityProfile } from "../modules/activity/types";
 import { ContributionProfile } from "../modules/contribution/types";
 import { AchievementProgress, GamificationProfile } from "../modules/gamification/types";
@@ -19,7 +19,7 @@ import { MemberDisplay, UNKNOWN_MEMBER_NAME } from "./memberDirectory";
  */
 
 export const DELETED_ROLE_NAME = "Role đã xoá";
-export const NO_BADGE_TEXT = "Chưa có huy hiệu nào — tu luyện thêm nhé!";
+export const NO_BADGE_TEXT = "Chưa có huy hiệu nào — hoạt động thêm để mở khoá nhé!";
 /** Số dòng của một trang bảng xếp hạng dạng ảnh. */
 export const CARD_PAGE_SIZE = 10;
 const MAX_SUMMARY_BADGES = 6;
@@ -56,10 +56,12 @@ export interface LeaderboardCardInput
 	/** Bảng cá nhân: tên và avatar của người trong trang; thiếu = "Người dùng không rõ", vẽ chữ cái đầu. */
 	people?: ReadonlyMap<string, CardPerson>;
 	/**
-	 * Bảng Activity cá nhân theo tuần/tháng: tổng XP từ trước tới nay của người trong trang, để tính level và cảnh giới
-	 * (cảnh giới luôn theo level tổng, không theo điểm của kỳ). Kỳ "all" thì điểm của dòng chính là tổng XP.
+	 * Bảng Activity cá nhân theo tuần/tháng: tổng XP từ trước tới nay của người trong trang, để tính level và bậc danh hiệu
+	 * (bậc luôn theo level tổng, không theo điểm của kỳ). Kỳ "all" thì điểm của dòng chính là tổng XP.
 	 */
 	totalXp?: ReadonlyMap<string, number>;
+	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh, DEC-033): bậc trên các dòng bảng Activity cá nhân lấy từ bộ này. */
+	tierSet: TierSet;
 	/** Bảng team: role còn tồn tại; thiếu = role đã bị xoá. */
 	roles?: ReadonlyMap<string, CardRole>;
 	/** Người đang xem: dòng của họ được vẽ nổi bật (chỉ bảng cá nhân); null = không ai. */
@@ -134,7 +136,7 @@ function personRow(input: LeaderboardCardInput, entry: LeaderboardEntry): Leader
 	{
 		const totalXp = input.page.period === "all" ? entry.value : input.totalXp?.get(entry.id) ?? entry.value;
 		const level = levelInfo(totalXp).level;
-		row.tier = tierForLevel(level);
+		row.tier = tierForLevel(level, input.tierSet);
 		row.detail = `Lv ${formatNumber(level)}`;
 	}
 	return row;
@@ -165,7 +167,7 @@ export interface RankCardInput
 	teamNames: readonly string[];
 }
 
-/** Dữ liệu ảnh thẻ /rank. Level và cảnh giới lấy cùng từ hồ sơ gamification để luôn khớp nhau. */
+/** Dữ liệu ảnh thẻ /rank. Level, bộ danh hiệu và bậc lấy cùng từ hồ sơ gamification để luôn khớp nhau. */
 export function buildRankCardData(input: RankCardInput): RankCardData
 {
 	const { activity, contribution, gamification } = input;
@@ -225,10 +227,14 @@ export function nextAchievement(achievements: readonly AchievementProgress[]): A
 	return best;
 }
 
-/** Phần chữ đi kèm ảnh /rank: cảnh giới, chuỗi ngày, huy hiệu đã đạt và huy hiệu sắp đạt. Không chứa chữ do người dùng nhập. */
+/**
+ * Phần chữ đi kèm ảnh /rank: bậc danh hiệu (theo tên gọi của bộ, ví dụ "Cảnh giới", "Hạng"), chuỗi ngày, huy hiệu đã đạt
+ * và huy hiệu sắp đạt. Tên bậc có thể do admin đặt nhưng đã được kiểm tra không chứa ký tự định dạng hay mention (DEC-033).
+ */
 export function rankSummaryText(profile: GamificationProfile): string
 {
-	const lines = [`${profile.tier.emoji} **${profile.tier.name}** · Level ${formatNumber(profile.level.level)}`];
+	const { tier, tierSet } = profile;
+	const lines = [`${tier.emoji} ${tierSet.texts.tierLabel} **${tier.name}** · Level ${formatNumber(profile.level.level)}`];
 	if (profile.streak.current > 0) lines.push(`🔥 Chuỗi ${formatNumber(profile.streak.current)} ngày`);
 
 	const unlocked = profile.achievements.filter(progress => progress.unlocked);
@@ -260,6 +266,8 @@ export interface LeaderboardCardRequest
 	/** Trang bắt đầu từ 1; ngoài khoảng thì service kẹp về trang hợp lệ gần nhất. */
 	page: number;
 	viewerId: string | null;
+	/** Bộ danh hiệu của guild (tierSets.current), để bậc trên các dòng đúng bộ và tên tuỳ chỉnh. */
+	tierSet: TierSet;
 }
 
 export interface LoadedLeaderboardCard
@@ -294,6 +302,7 @@ function loadRoles(guild: Guild | null, roleIds: readonly string[]): Map<string,
 /**
  * Dữ liệu ảnh của một trang bảng xếp hạng đã lấy: tên, avatar (song song, có cache) của người trong trang,
  * hoặc tên và màu role của team. `guild` null (không có trong cache) thì tên hiển thị là "Người dùng không rõ".
+ * `tierSet` là bộ danh hiệu của guild; người gọi lấy một lần rồi dùng cho mọi bảng của cùng lượt.
  */
 export async function loadLeaderboardCardData(
 	client: DiscordClient,
@@ -301,17 +310,18 @@ export async function loadLeaderboardCardData(
 	guildId: string,
 	board: { kind: ScoreKind; scope: LeaderboardScope; page: LeaderboardPage },
 	viewerId: string | null,
+	tierSet: TierSet,
 ): Promise<LeaderboardCardData>
 {
 	const { kind, scope, page } = board;
 	const ids = page.entries.map(entry => entry.id);
-	if (scope === "team") return buildLeaderboardCardData({ kind, scope, page, roles: loadRoles(guild, ids), viewerId });
+	if (scope === "team") return buildLeaderboardCardData({ kind, scope, page, roles: loadRoles(guild, ids), viewerId, tierSet });
 
 	const totalXp = kind === "activity" && page.period !== "all"
 		? new Map(ids.map(userId => [userId, client.services.activity.getProfile(guildId, userId).level.totalXp]))
 		: undefined;
 	const people = await loadPeople(client, guild, ids);
-	return buildLeaderboardCardData({ kind, scope, page, people, totalXp, viewerId });
+	return buildLeaderboardCardData({ kind, scope, page, people, totalXp, viewerId, tierSet });
 }
 
 /** Lấy một trang bảng xếp hạng (tối đa 10 dòng) và dữ liệu ảnh của nó (xem loadLeaderboardCardData). */
@@ -324,7 +334,7 @@ export async function loadLeaderboardCard(
 {
 	const { kind, scope, period } = request;
 	const page = client.services.leaderboard.query({ guildId, kind, scope, period, page: request.page, pageSize: CARD_PAGE_SIZE });
-	return { page, data: await loadLeaderboardCardData(client, guild, guildId, { kind, scope, page }, request.viewerId) };
+	return { page, data: await loadLeaderboardCardData(client, guild, guildId, { kind, scope, page }, request.viewerId, request.tierSet) };
 }
 
 /**

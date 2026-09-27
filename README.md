@@ -10,9 +10,10 @@ Ngoài ra bot có **vote / bầu cử / lấy ý kiến**:
 - được đổi phiếu tới khi vote đóng;
 - người tham gia được Activity XP một lần cho mỗi vote, tối đa một mức XP mỗi ngày do admin đặt (mặc định 25, 0 = không giới hạn).
 
-**Gamification phong cách tu tiên** (chỉ để hiển thị, không đổi công thức XP hay level):
-- **Cảnh giới** theo level: Luyện Khí, Trúc Cơ, Kim Đan, Nguyên Anh, Hóa Thần, Luyện Hư, Hợp Thể, Độ Kiếp. Lên level có thông báo tu tiên; vượt mốc cảnh giới có thông báo "đột phá" riêng.
-- **Role cảnh giới**: admin gán mỗi cảnh giới một Discord Role, bot tự thêm/bỏ để mỗi người giữ đúng role của cảnh giới hiện tại (cần quyền Manage Roles).
+**Gamification** (chỉ để hiển thị, không đổi công thức XP hay level):
+- **Bộ danh hiệu chọn được**: 8 bậc theo level (mốc 0/3/6/10/15/20/30/40), mỗi server chọn một trong 5 bộ: Tu tiên (mặc định, Luyện Khí → Độ Kiếp), Rank game (Đồng → Thách Đấu), Kiếm hiệp (Tân Thủ → Võ Lâm Minh Chủ), Cây xanh (Hạt Giống → Đại Thụ Ngàn Năm), Vũ trụ (Thiên Thạch → Vũ Trụ). Mỗi bộ có giọng văn riêng cho thông báo lên level, thông báo lên bậc và chữ trên ảnh thẻ. Admin đổi được tên và emoji từng bậc.
+- **Role danh hiệu**: mỗi bậc một Discord Role; bot tự thêm/bỏ để mỗi người giữ đúng role của bậc hiện tại. Bot tạo sẵn role (không có quyền gì, màu theo bậc) và đổi tên/màu role theo bộ đang dùng (cần quyền Manage Roles).
+- **Bảng điều khiển** `/config tier panel`: chọn bộ, chọn role cho từng bậc, đổi tên bậc, tạo/đồng bộ role, khôi phục tên mặc định.
 - **Chuỗi ngày hoạt động** (số ngày liên tiếp có tin được XP) và **huy hiệu**.
 - **Thẻ rank và bảng xếp hạng dạng ảnh**: bảng tổng, tuần này, tháng này; có nút chuyển loại điểm, phạm vi, kỳ và trang.
 - **Bảng vàng**: một message bảng xếp hạng dạng ảnh bot giữ trong kênh do admin chọn và tự cập nhật định kỳ.
@@ -25,7 +26,7 @@ Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Database của bo
 
 | Lệnh | Chức năng |
 | --- | --- |
-| `/rank [thanh-vien]` | Ảnh thẻ rank: level, cảnh giới, XP, hạng tổng và tuần; điểm contribution; chuỗi ngày hoạt động, huy hiệu; team |
+| `/rank [thanh-vien]` | Ảnh thẻ rank: level, danh hiệu (theo bộ server đang dùng), XP, hạng tổng và tuần; điểm contribution; chuỗi ngày hoạt động, huy hiệu; team |
 | `/leaderboard` | Ảnh bảng xếp hạng Activity hoặc Contribution, cá nhân hoặc team, tổng/tuần này/tháng này; nút để chuyển bảng và trang |
 | `/contribution submit` | Gửi một đóng góp |
 | `/contribution view` · `list` | Xem một đóng góp · danh sách đóng góp gần đây |
@@ -39,12 +40,15 @@ Cần quyền **Manage Server** hoặc role admin do bot cấu hình.
 
 | Lệnh | Chức năng |
 | --- | --- |
-| `/admin xp view · give · remove · reset · reset-all` | Xem, cộng, trừ, reset XP (role cảnh giới của người đó được cập nhật theo XP mới) |
+| `/admin xp view · give · remove · reset · reset-all` | Xem, cộng, trừ, reset XP (role danh hiệu của người đó được cập nhật theo XP mới) |
 | `/admin contribution adjust · remove · reset · reset-all` | Điều chỉnh điểm, gỡ contribution, reset |
 | `/admin stats` · `audit` · `backup` | Thống kê, nhật ký quản trị, sao lưu ngay |
 | `/config view · xp · channel · team · admin-role · contribution` | Cấu hình XP, cooldown, channel, team, quyền, điểm contribution |
 | `/config poll` | XP mặc định khi vote, giới hạn XP từ vote mỗi ngày (`gioi-han-xp-ngay`), role được tạo vote |
-| `/config tier set-role · clear-role · list` | Gán, bỏ, xem role Discord của từng cảnh giới (dùng role mới tạo riêng; người gán cần Manage Roles) |
+| `/config tier panel` | Bảng điều khiển danh hiệu (trả lời riêng): menu chọn bộ, ô chọn role cho 8 bậc, nút đổi tên bậc, tạo/đồng bộ role, khôi phục tên mặc định |
+| `/config tier style · rename · reset-names` | Chọn bộ danh hiệu; đổi tên và emoji một bậc; khôi phục tên mặc định của bộ đang dùng |
+| `/config tier setup-roles` | Bot tạo role (không có quyền gì) cho bậc chưa có role và đổi tên/màu role đã gán theo bộ đang dùng (người thao tác cần Manage Roles) |
+| `/config tier set-role · clear-role · list` | Gán, bỏ, xem role Discord của từng bậc (dùng role mới tạo riêng; người gán cần Manage Roles) |
 | `/config board kenh` · `tat` | Đặt kênh hoặc tắt Bảng vàng |
 
 ## Phát triển
@@ -83,9 +87,9 @@ Các con số nghiệp vụ (XP mỗi tin, cooldown, điểm mỗi lượt ghi n
 
 ## Triển khai
 
-Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, role cảnh giới, Bảng vàng, xử lý sự cố.
+Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, bộ danh hiệu và role danh hiệu, Bảng vàng, xử lý sự cố.
 
-Quyền của bot: View Channels, Send Messages, Send Messages in Threads, Embed Links, **Attach Files** (ảnh thẻ, Bảng vàng) và **Manage Roles** (role cảnh giới). Không dùng Administrator. Font Be Vietnam Pro (SIL OFL 1.1) nằm sẵn trong `assets/fonts/`.
+Quyền của bot: View Channels, Send Messages, Send Messages in Threads, Embed Links, **Attach Files** (ảnh thẻ, Bảng vàng) và **Manage Roles** (gán, tạo và đổi tên role danh hiệu; role của bot phải nằm trên các role này). Không dùng Administrator. Font Be Vietnam Pro (SIL OFL 1.1) nằm sẵn trong `assets/fonts/`.
 
 ## Tài liệu dự án
 

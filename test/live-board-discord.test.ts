@@ -4,6 +4,7 @@ import { AttachmentBuilder, PermissionFlagsBits, PermissionsBitField } from "dis
 import type DiscordClient from "../src/classes/DiscordClient";
 import { deleteLiveBoardMessage, LIVE_BOARD_RECHECK_MS, liveBoardContent, refreshLiveBoard, runLiveBoardSweep, startLiveBoardScheduler } from "../src/discord/liveBoard";
 import { RenderGate } from "../src/discord/renderGate";
+import { DEFAULT_TIER_SET, TIER_SETS } from "../src/modules/activity/tiers";
 import { AppServices, createServices } from "../src/services";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, OTHER_GUILD, ROLE_BACKEND, TestContext, USER_A, USER_B } from "./helpers";
 
@@ -160,7 +161,7 @@ describe("Bảng vàng: đăng và sửa message", () =>
 		assert.equal(await refreshLiveBoard(s.client, GUILD), true);
 		assert.equal(general.sent.length, 1);
 		const [payload] = general.sent;
-		assert.equal(payload.content, liveBoardContent(NOW));
+		assert.equal(payload.content, liveBoardContent(NOW, DEFAULT_TIER_SET));
 		assert.equal(payload.content, `🏆 **BẢNG VÀNG** · cập nhật lần cuối <t:${NOW / 1000}:R>\nDùng \`/rank\` xem thẻ tu luyện, \`/leaderboard\` xem đầy đủ.`);
 		assert.deepEqual(fileNames(payload), ["bang-vang-activity-tuan.png", "bang-vang-contribution-thang.png"]);
 		assert.equal(s.services.liveBoards.get(GUILD)?.messageId, `70000000000000${String(messageCounter).padStart(4, "0")}`);
@@ -196,12 +197,34 @@ describe("Bảng vàng: đăng và sửa message", () =>
 		assert.equal(general.edits.length, 1);
 		assert.equal(general.edits[0].messageId, messageId);
 		assert.deepEqual(general.edits[0].payload.attachments, [], "bỏ ảnh cũ, chỉ giữ ảnh mới");
-		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW + 600_000));
+		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW + 600_000, DEFAULT_TIER_SET));
 		assert.equal(general.edits[0].payload.files.length, 2);
 
 		assert.equal(await refreshLiveBoard(s.client, GUILD), false);
 		assert.equal(await refreshLiveBoard(s.client, GUILD, { force: true }), true);
 		assert.equal(general.edits.length, 2);
+	});
+
+	test("đổi bộ danh hiệu hoặc đổi tên bậc thì lượt sau sửa message dù điểm không đổi; chữ theo giọng văn của bộ", async () =>
+	{
+		const general = fakeChannel();
+		const s = setup({ [CHANNEL_GENERAL]: general });
+		seedXp(s, USER_A, 500);
+		s.services.liveBoards.setChannel(GUILD, CHANNEL_GENERAL, ADMIN);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), false, "chưa đổi gì thì bỏ qua");
+
+		s.services.tierSets.select(GUILD, "rank-game", ADMIN);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true, "đổi bộ thì vẽ lại");
+		assert.equal(general.edits.length, 1);
+		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW, TIER_SETS["rank-game"]));
+		assert.ok(general.edits[0].payload.content.includes("xem thẻ xếp hạng"));
+		assert.equal(await refreshLiveBoard(s.client, GUILD), false);
+
+		s.services.tierSets.rename(GUILD, [{ tierKey: "bac-2", name: "Bạc Ròng", emoji: null }], ADMIN);
+		assert.equal(await refreshLiveBoard(s.client, GUILD), true, "đổi tên bậc thì vẽ lại");
+		assert.equal(general.edits.length, 2);
+		assert.equal(general.sent.length, 1, "chỉ sửa, không đăng message mới");
 	});
 
 	test("dữ liệu không đổi nhưng lần sửa gần nhất đã quá 1 giờ: vẫn sửa; message bị xoá tay (10008) thì đăng lại", async () =>
@@ -221,7 +244,7 @@ describe("Bảng vàng: đăng và sửa message", () =>
 		assert.equal(await refreshLiveBoard(s.client, GUILD), true, "đủ 1 giờ thì sửa để biết message còn không");
 		assert.equal(general.edits.length, 1);
 		assert.equal(general.edits[0].messageId, first);
-		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW + LIVE_BOARD_RECHECK_MS));
+		assert.equal(general.edits[0].payload.content, liveBoardContent(NOW + LIVE_BOARD_RECHECK_MS, DEFAULT_TIER_SET));
 		assert.equal(await refreshLiveBoard(s.client, GUILD), false, "vừa sửa thì lại chờ đủ 1 giờ");
 
 		options.editError = discordError(10008);
