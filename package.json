@@ -12,6 +12,7 @@
     "dev": "npm run build && node --env-file=.env build/index.js",
     "build": "node scripts/clean.cjs build && tsc",
     "prod": "node --env-file-if-exists=.env build/index.js",
+    "selfcheck": "node --env-file-if-exists=.env build/selfcheck.js",
     "lint": "eslint .",
     "test": "node scripts/clean.cjs build-test && tsc -p test && node --test \"build-test/test/**/*.test.js\"",
     "check": "npm run build && npm run lint && npm test",
