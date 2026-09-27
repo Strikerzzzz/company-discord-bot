@@ -20,9 +20,10 @@ const NOW = Date.UTC(2026, 8, 27, 16, 0);
 const FROM = NOW - DAYS * DAY;
 const STEP = (DAYS * DAY) / EVENTS;
 
-// Ngưỡng rộng để không flaky trên máy chậm. Trên máy phát triển: bảng cá nhân tháng ~30 ms, bảng team tháng ~80 ms
-// (event trong kỳ phải cộng từ ledger vì không có cache theo kỳ; partial index không phủ được cột voided_at).
-const MAX_MS = 250;
+// Ngưỡng rộng để không flaky trên máy chậm hoặc đang bận. Trên máy phát triển: bảng cá nhân tháng ~30 ms, bảng team tháng
+// ~80 ms (event trong kỳ phải cộng từ ledger vì không có cache theo kỳ; partial index không phủ được cột voided_at), nhưng lúc
+// máy bận đo được tới ~400 ms. Test này để bắt lỗi quét lặp cỡ vài giây (LL-017: "Hạng của tôi" từng mất 7–10 s), nên 1 s là đủ.
+const MAX_MS = 1000;
 
 function timeMs(fn: () => unknown): number
 {

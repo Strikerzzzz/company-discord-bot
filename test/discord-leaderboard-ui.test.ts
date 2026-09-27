@@ -891,7 +891,7 @@ describe("/leaderboard: ảnh và nút", () =>
 		assert.deepEqual(h.rendered[0].rows.map(row => [row.rank, row.highlight]), [[1, false], [2, true]]);
 	});
 
-	test("\"Hạng của tôi\": nhóm 2000 người hoà điểm ở kỳ tháng, người cuối nhóm bấm → đúng trang, dưới 250 ms", async () =>
+	test("\"Hạng của tôi\": nhóm 2000 người hoà điểm ở kỳ tháng, người cuối nhóm bấm → đúng trang, dưới 1 giây", async () =>
 	{
 		const h = harness();
 		const tied = Array.from({ length: 2000 }, (_, index) => `3200000000000${String(index).padStart(5, "0")}`);
@@ -907,7 +907,8 @@ describe("/leaderboard: ảnh và nút", () =>
 		await h.command.executeButton(interaction);
 		const elapsed = performance.now() - started;
 
-		assert.ok(elapsed < 250, `mất ${elapsed.toFixed(1)} ms`);
+		// Ngưỡng rộng (máy bận có thể chậm vài lần); lỗi cần bắt là quét lặp cỡ vài giây (LL-017).
+		assert.ok(elapsed < 1000, `mất ${elapsed.toFixed(1)} ms`);
 		assert.equal(calls.deferUpdate, 1);
 		const data = h.rendered.at(-1);
 		assert.equal(data?.footer, "Trang 201/201 · 2.001 người");
