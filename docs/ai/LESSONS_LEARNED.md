@@ -217,3 +217,10 @@ Format mỗi mục:
 - **Phát hiện:** 2026-09-27 (Phase 13) · **Mức độ:** Thấp · **Trạng thái:** Đã sửa bằng một commit riêng (không amend)
 - **Hiện tượng:** Chạy `npm run check 2>&1 | grep ... && git add && git commit`. `grep` luôn tìm thấy dòng tổng kết nên trả mã 0, và commit vẫn chạy dù có 1 test fail (615/616).
 - **Bài học:** Muốn commit sau khi kiểm tra thì lấy **exit code của chính lệnh check**: ghi output ra file, xem `$?`, rồi mới commit. Không nối `grep` vào giữa điều kiện commit.
+
+## LL-019 — `interaction.memberPermissions` là quyền **theo kênh**; bit Manage Roles trong phân quyền kênh nghĩa là Manage Permissions
+
+- **Phát hiện:** 2026-09-27 (Phase 13, agent G3a) · **Mức độ:** Cao (vượt kiểm tra quyền) · **Trạng thái:** Đã sửa
+- **Hiện tượng:** Kiểm tra "người gọi có Manage Roles" trước khi gán role danh hiệu dùng `interaction.memberPermissions`. Giá trị này là quyền của người gọi **ở kênh đang gõ lệnh**, đã tính permission overwrite. Trong overwrite của kênh, bit `ManageRoles` hiển thị là "Manage Permissions" (quyền sửa phân quyền của riêng kênh đó). Vì vậy một admin bot chỉ được Manage Permissions ở một kênh vẫn qua được kiểm tra, rồi dùng bot để gán role cấp server.
+- **Xử lý:** kiểm tra quyền cấp server bằng `member.permissions` (GuildMember), không dùng `memberPermissions`.
+- **Bài học:** Quyền cấp server (Manage Roles, Manage Server, Administrator...) phải lấy từ `member.permissions`. `memberPermissions` và `permissionsIn(channel)` chỉ dùng cho quyền gắn với kênh (Send Messages, View Channel...). Review mọi chỗ đang kiểm quyền theo tiêu chí này. Chỗ `memberAccess()` dùng `ManageGuild` cho admin bot cũng nên rà lại (`ManageGuild` không có dạng overwrite theo kênh nên hiện không bị ảnh hưởng).

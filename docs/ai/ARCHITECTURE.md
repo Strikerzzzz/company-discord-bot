@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-27, Phase 12 (gamification và ảnh thẻ, branch `phase-12/gamification`). Phase 2–10 đã merge vào `main`.
+> Cập nhật lần cuối: 2026-09-27, Phase 13 (bộ danh hiệu, branch `phase-13/tier-sets`). Phase 0–12 đã merge vào `main`.
 > Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
 ## 1. Tổng quan
@@ -34,17 +34,18 @@ src/
 │   ├── guild-config/         Cấu hình guild/channel, giới hạn hợp lệ, permissions (isAdmin, canCreatePoll)
 │   ├── team/                 Team = role do admin chỉ định; resolveTeams() tạo snapshot
 │   ├── audit/                Nhật ký thao tác quản trị
-│   ├── activity/             levels (5n²+50n+100), tiers (8 cảnh giới tu tiên), antiSpam (chống trùng trong RAM), ActivityService
+│   ├── activity/             levels (5n²+50n+100), tiers (5 bộ danh hiệu × 8 bậc cùng mốc, khoá bậc bac-1…bac-8, giọng văn theo bộ), antiSpam (chống trùng trong RAM), ActivityService
 │   ├── contribution/         ContributionService (bù điểm để tổng không âm, PROP-024) + ContributionRepository
 │   ├── poll/                 PollService (giới hạn XP từ vote mỗi ngày, PROP-028) + PollRepository
 │   ├── leaderboard/          12 bảng: cá nhân/team × activity/contribution × tổng/tuần/tháng; userStanding
-│   ├── gamification/         GamificationService (hồ sơ: cảnh giới, chuỗi ngày, huy hiệu, XP tuần), streaks,
-│   │                         achievements (15 huy hiệu), GamificationRepository, TierRoleService (role theo cảnh giới)
+│   ├── gamification/         GamificationService (hồ sơ: bộ và bậc danh hiệu, chuỗi ngày, huy hiệu, XP tuần), streaks,
+│   │                         achievements (15 huy hiệu), GamificationRepository, TierRoleService (role theo bậc),
+│   │                         TierSetService (bộ đang dùng, tên/emoji tuỳ chỉnh theo bộ, DEC-033)
 │   ├── live-board/           LiveBoardService: kênh và message của Bảng vàng
 │   └── statistics/           Thống kê tổng quan 7 ngày cho admin
 ├── classes/                  Base class Command / ContextMenu / Event, DiscordClient (có `avatars`, `members`, `renderGate`), ProcessManager
 ├── handlers/                 loadModules (nạp theo thư mục), EventHandler, InteractionHandler (deploy), ButtonHandler
-├── events/                   clientReady (deploy, lịch đóng vote, lịch Bảng vàng), interactionCreate (dispatcher),
+├── events/                   clientReady (deploy, lịch đóng vote, lịch Bảng vàng), interactionCreate (dispatcher: lệnh, nút, menu chọn, form),
 │                             messageCreate (XP, thông báo lên level/đột phá, đồng bộ role cảnh giới)
 ├── interactions/
 │   ├── commands/             ping, rank, leaderboard, contribution, poll, admin, config
@@ -63,8 +64,10 @@ src/
     ├── memberDirectory.ts    Tên hiển thị + avatar URL theo user ID: cache discord.js → cache TTL → REST từng người
     ├── liveBoard.ts          Bảng vàng: đăng/sửa message 2–3 ảnh, khoá theo guild, lịch 10 phút, tự kiểm lại mỗi giờ
     ├── renderGate.ts         Cooldown vẽ ảnh 3 giây mỗi người (/rank, /leaderboard, nút lb) + tối đa 2 lần vẽ đồng thời
-    ├── roleSync.ts           Đồng bộ role cảnh giới (từng role một), tierRoleSafetyIssue (chặn role nguy hiểm)
-    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin, progression (lên level/đột phá)
+    ├── roleSync.ts           Đồng bộ role danh hiệu (từng role một), tierRoleSafetyIssue (chặn role nguy hiểm)
+    ├── tierRoleSetup.ts      Bot tạo role (không quyền) / đổi tên, màu role đã gán theo bộ; khoá chống chạy trùng theo guild
+    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin, progression (thông báo theo bộ),
+                              tierPanel (bảng điều khiển danh hiệu, Components V2)
 assets/fonts/                 Be Vietnam Pro (4 weight) + OFL.txt
 test/                         node:test + SQLite :memory: (xem mục 7)
 deploy/                       Unit systemd
@@ -132,7 +135,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 ### 3.5 Quản trị
 - Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
 - Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
-- `/config tier set-role|clear-role|list`: gán role cho cảnh giới; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
+- `/config tier panel`: bảng điều khiển (ephemeral, Components V2): menu chọn bộ, 8 ô chọn role (RoleSelect, điền sẵn), nút đổi tên (form 4 ô), tạo/đồng bộ role, khôi phục tên. Namespace `tierui`. `/config tier style|rename|reset-names|setup-roles` là lệnh gõ tay tương ứng.
+- Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`); component của command `adminOnly` cũng qua `assertAdmin` (DEC-033).
+- `/config tier set-role|clear-role|list`: gán role cho bậc; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
 ### 3.6 Quyền xem và đăng
 
@@ -144,7 +149,7 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 
 | Nhóm | Bảng |
 | --- | --- |
-| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`), `channel_settings`, `team_roles`, `tier_roles`, `live_boards` |
+| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`), `channel_settings`, `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
 | Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
@@ -155,6 +160,7 @@ Migration:
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
   - `contributions.source_message_id` + unique index một phần `(guild_id, source_message_id) WHERE source_message_id IS NOT NULL AND status = 'active'`.
+- **4** (Phase 13): đổi khoá cảnh giới cũ trong `tier_roles` sang `bac-N`, thêm `created_by_bot`; bảng `tier_set_config` (bộ đang dùng) và `tier_name_overrides` (tên/emoji tuỳ chỉnh theo bộ). Backup/restore không đổi.
 - **3** (Phase 12):
   - `guild_settings.poll_xp_daily_cap` (mặc định 25);
   - `tier_roles` (unique theo role trong guild), `live_boards`;
