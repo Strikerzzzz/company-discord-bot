@@ -31,7 +31,7 @@ import {
 } from "../src/discord/views/admin";
 import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
-import ConfigCmd from "../src/interactions/commands/config";
+import ConfigCmd, { CHANNEL_COOLDOWN_CONFLICT, CHANNEL_XP_CONFLICT } from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
 import { applyTierOverrides, DEFAULT_TIER_SET, TIER_SETS } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageXpResult, XpAdjustInput, XpEventView } from "../src/modules/activity/types";
@@ -562,6 +562,14 @@ describe("định nghĩa /admin và /config", () =>
 			["panel", "set-role", "clear-role", "list", "style", "rename", "reset-names", "setup-roles"],
 		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "poll"))), ["xp-mac-dinh", "gioi-han-xp-ngay", "role-tao-vote", "xoa-role-tao-vote"]);
+		assert.deepEqual(
+			names(children(optionAt(configJson.options, "channel", "set"))),
+			["kenh", "bat-xp", "xp-moi-tin", "dung-chung-xp", "cooldown-giay", "dung-chung-cooldown"],
+		);
+		for (const name of ["dung-chung-xp", "dung-chung-cooldown"])
+		{
+			assert.equal(optionAt(configJson.options, "channel", "set", name).type, ApplicationCommandOptionType.Boolean, name);
+		}
 	});
 
 	test("tên option tiếng Việt không dấu kebab-case, mô tả không quá 100 ký tự (DEC-020)", () =>
@@ -882,9 +890,17 @@ describe("views quản trị", () =>
 	test("mô tả cấu hình channel", () =>
 	{
 		const base = { channelId: CHANNEL_GENERAL, xpEnabled: true, xpPerMessage: null, xpCooldownSeconds: null };
-		assert.equal(describeChannelSettings(base), "bật XP, dùng giá trị chung");
-		assert.equal(describeChannelSettings({ ...base, xpCooldownSeconds: 90 }), "bật XP, cooldown 90 giây");
-		assert.equal(describeChannelSettings({ ...base, xpEnabled: false, xpPerMessage: 5 }), "tắt XP");
+		const guild = { xpPerMessage: 10, xpCooldownSeconds: 60 };
+		assert.equal(
+			describeChannelSettings(base, guild),
+			"bật XP, XP/tin dùng giá trị chung (10 XP), cooldown dùng giá trị chung (60 giây)",
+		);
+		assert.equal(describeChannelSettings({ ...base, xpCooldownSeconds: 90 }, guild), "bật XP, XP/tin dùng giá trị chung (10 XP), cooldown 90 giây");
+		assert.equal(
+			describeChannelSettings({ ...base, xpPerMessage: 1500 }, { xpPerMessage: 2000, xpCooldownSeconds: 3600 }),
+			"bật XP, 1.500 XP/tin, cooldown dùng giá trị chung (3.600 giây)",
+		);
+		assert.equal(describeChannelSettings({ ...base, xpEnabled: false, xpPerMessage: 5 }, guild), "tắt XP");
 	});
 
 	test("văn bản một dòng do người dùng nhập: masked link bị vô hiệu hoá", () =>
@@ -1220,6 +1236,99 @@ describe("/config", () =>
 		});
 		assert.ok(replyText(custom).endsWith("bật XP, 20 XP/tin, cooldown 30 giây."));
 		assert.deepEqual(context.deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL), { enabled: true, xpPerMessage: 20, cooldownSeconds: 30 });
+	});
+
+	test("channel set: dung-chung-xp và dung-chung-cooldown đưa riêng từng giá trị về giá trị chung, giữ bật/tắt XP (PROP-030)", async () =>
+	{
+		const { config, context } = createHarness();
+		const { guildConfig } = context.deps;
+		guildConfig.setChannel(GUILD, CHANNEL_GENERAL, { xpEnabled: true, xpPerMessage: 20, xpCooldownSeconds: 30 }, ADMIN);
+		guildConfig.setChannel(GUILD, CHANNEL_BOT, { xpEnabled: false, xpPerMessage: 7, xpCooldownSeconds: 15 }, ADMIN);
+
+		const xpOnly = await run(config, { group: "channel", subcommand: "set", options: { kenh: channel(CHANNEL_GENERAL), "dung-chung-xp": true } });
+		assert.equal(
+			replyText(xpOnly),
+			`Đã cập nhật cấu hình XP của <#${CHANNEL_GENERAL}>: bật XP, XP/tin dùng giá trị chung (10 XP), cooldown 30 giây.`,
+		);
+		assert.deepEqual(guildConfig.getChannel(GUILD, CHANNEL_GENERAL), {
+			channelId: CHANNEL_GENERAL,
+			xpEnabled: true,
+			xpPerMessage: null,
+			xpCooldownSeconds: 30,
+		});
+		const [entry] = context.deps.audit.list(GUILD, 1);
+		assert.equal(entry.action, "channel.set");
+		assert.deepEqual(entry.details, { xpPerMessage: null });
+
+		const cooldownOnly = await run(config, {
+			group: "channel",
+			subcommand: "set",
+			options: { kenh: channel(CHANNEL_GENERAL), "dung-chung-cooldown": true, "xp-moi-tin": 25 },
+		});
+		assert.ok(replyText(cooldownOnly).endsWith("bật XP, 25 XP/tin, cooldown dùng giá trị chung (60 giây)."));
+		assert.deepEqual(guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL), { enabled: true, xpPerMessage: 25, cooldownSeconds: 60 });
+
+		await run(config, {
+			group: "channel",
+			subcommand: "set",
+			options: { kenh: channel(CHANNEL_BOT), "dung-chung-xp": true, "dung-chung-cooldown": true },
+		});
+		assert.deepEqual(guildConfig.getChannel(GUILD, CHANNEL_BOT), {
+			channelId: CHANNEL_BOT,
+			xpEnabled: false,
+			xpPerMessage: null,
+			xpCooldownSeconds: null,
+		});
+
+		const listedOff = embedText(replyEmbed(await run(config, { group: "channel", subcommand: "list" })));
+		assert.ok(listedOff.includes(`<#${CHANNEL_BOT}>: tắt XP`));
+
+		await run(config, { subcommand: "xp", options: { "xp-moi-tin": 12 } });
+		const enabled = await run(config, { group: "channel", subcommand: "set", options: { kenh: channel(CHANNEL_BOT), "bat-xp": true } });
+		assert.ok(replyText(enabled).endsWith("bật XP, XP/tin dùng giá trị chung (12 XP), cooldown dùng giá trị chung (60 giây)."));
+		const listed = embedText(replyEmbed(await run(config, { group: "channel", subcommand: "list" })));
+		assert.ok(listed.includes(`<#${CHANNEL_GENERAL}>: bật XP, 25 XP/tin, cooldown dùng giá trị chung (60 giây)`));
+		assert.ok(listed.includes(`<#${CHANNEL_BOT}>: bật XP, XP/tin dùng giá trị chung (12 XP), cooldown dùng giá trị chung (60 giây)`));
+		const view = embedText(replyEmbed(await run(config, { subcommand: "view" })));
+		assert.ok(view.includes(`<#${CHANNEL_GENERAL}>: bật XP, 25 XP/tin, cooldown dùng giá trị chung (60 giây)`));
+	});
+
+	test("channel set: không cho vừa nhập số vừa chọn dùng giá trị chung; False không đổi gì", async () =>
+	{
+		const { config, context } = createHarness();
+		const { guildConfig } = context.deps;
+		guildConfig.setChannel(GUILD, CHANNEL_GENERAL, { xpPerMessage: 20, xpCooldownSeconds: 30 }, ADMIN);
+		const auditBefore = context.deps.audit.list(GUILD, 50).length;
+
+		await rejects(
+			config,
+			{ group: "channel", subcommand: "set", options: { kenh: channel(CHANNEL_GENERAL), "xp-moi-tin": 5, "dung-chung-xp": true } },
+			CHANNEL_XP_CONFLICT,
+		);
+		await rejects(
+			config,
+			{ group: "channel", subcommand: "set", options: { kenh: channel(CHANNEL_GENERAL), "cooldown-giay": 5, "dung-chung-cooldown": true, "bat-xp": false } },
+			CHANNEL_COOLDOWN_CONFLICT,
+		);
+		await rejects(
+			config,
+			{ group: "channel", subcommand: "set", options: { kenh: channel(CHANNEL_GENERAL), "dung-chung-xp": false, "dung-chung-cooldown": false } },
+			NO_CHANGE,
+		);
+		assert.deepEqual(guildConfig.getChannel(GUILD, CHANNEL_GENERAL), {
+			channelId: CHANNEL_GENERAL,
+			xpEnabled: true,
+			xpPerMessage: 20,
+			xpCooldownSeconds: 30,
+		});
+		assert.equal(context.deps.audit.list(GUILD, 50).length, auditBefore);
+
+		const kept = await run(config, {
+			group: "channel",
+			subcommand: "set",
+			options: { kenh: channel(CHANNEL_GENERAL), "dung-chung-xp": false, "cooldown-giay": 45 },
+		});
+		assert.ok(replyText(kept).endsWith("bật XP, 20 XP/tin, cooldown 45 giây."));
 	});
 
 	test("channel reset: báo khi vốn không có cấu hình riêng; list hiển thị channel", async () =>
