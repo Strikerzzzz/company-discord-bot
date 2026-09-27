@@ -555,7 +555,10 @@ describe("định nghĩa /admin và /config", () =>
 		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "channel"))), ["set", "reset", "list"]);
 		assert.deepEqual(names(children(optionAt(configJson.options, "team"))), ["add", "remove", "list"]);
-		assert.deepEqual(names(children(optionAt(configJson.options, "tier"))), ["set-role", "clear-role", "list"]);
+		assert.deepEqual(
+			names(children(optionAt(configJson.options, "tier"))),
+			["panel", "set-role", "clear-role", "list", "style", "rename", "reset-names", "setup-roles"],
+		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "poll"))), ["xp-mac-dinh", "gioi-han-xp-ngay", "role-tao-vote", "xoa-role-tao-vote"]);
 	});
 

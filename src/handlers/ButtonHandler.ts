@@ -4,9 +4,10 @@ import { Collection } from "discord.js";
 import { logger } from "../shared/logger";
 
 /**
- * customId của button có dạng "<namespace>" hoặc "<namespace>:<payload>".
- * Command khai báo các namespace mình sở hữu trong `buttonIds`; phần payload (ví dụ ID của một bản ghi)
- * do command tự parse và validate, vì người dùng Discord không sửa được customId nhưng payload vẫn có thể cũ hoặc sai.
+ * customId của component (nút, menu chọn, form) có dạng "<namespace>" hoặc "<namespace>:<payload>".
+ * Command khai báo các namespace mình sở hữu trong `buttonIds`; cùng một namespace dùng chung cho nút, menu chọn và form
+ * của command đó. Phần payload (ví dụ ID của một bản ghi) do command tự parse và validate, vì người dùng Discord không sửa
+ * được customId nhưng payload vẫn có thể cũ hoặc sai.
  */
 export default class ButtonHandler extends Collection<string, Command>
 {

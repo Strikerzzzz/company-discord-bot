@@ -6,7 +6,7 @@ import { roleIdsOf } from "./members";
 
 /**
  * Quyền quản trị, kiểm duyệt hoặc quyền đặc biệt: role có một trong các quyền này (ở cấp server hoặc trong phân quyền riêng
- * của một kênh) không được dùng làm role cảnh giới (DEC-031), vì bot tự gán role cảnh giới cho bất kỳ ai nhắn tin đủ nhiều.
+ * của một kênh) không được dùng làm role danh hiệu (DEC-031), vì bot tự gán role danh hiệu cho bất kỳ ai nhắn tin đủ nhiều.
  */
 const DANGEROUS_PERMISSIONS: readonly (readonly [bigint, string])[] = [
 	[PermissionFlagsBits.Administrator, "Administrator"],
@@ -151,34 +151,34 @@ function describeOverwrites(overwrites: readonly DangerousOverwrite[]): string
 }
 
 /**
- * Lý do (tiếng Việt, hiển thị cho admin) khiến `role` không được dùng làm role cảnh giới; null nếu dùng được.
+ * Lý do (tiếng Việt, hiển thị cho admin) khiến `role` không được dùng làm role danh hiệu; null nếu dùng được.
  * Chặn: @everyone, role do bot/integration quản lý, role có quyền nguy hiểm ở cấp server hoặc trong phân quyền riêng của
  * bất kỳ kênh nào, role không thấp hơn role cao nhất của bot.
  */
 export function tierRoleSafetyIssue(role: Role, botMember: GuildMember): string | null
 {
-	if (role.id === role.guild.id) return "Không thể dùng @everyone làm role cảnh giới.";
-	if (role.managed) return "Không thể dùng role do bot hoặc integration quản lý làm role cảnh giới.";
+	if (role.id === role.guild.id) return "Không thể dùng @everyone làm role danh hiệu.";
+	if (role.managed) return "Không thể dùng role do bot hoặc integration quản lý làm role danh hiệu.";
 
 	const dangerous = dangerousPermissionNames(role.permissions);
 	if (dangerous.length > 0)
 	{
-		return `Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì role này có quyền quản trị hoặc kiểm duyệt (${dangerous.join(", ")}). `
-			+ "Bot tự gán role cảnh giới cho thành viên, nên hãy dùng role không có các quyền này.";
+		return `Không thể dùng ${roleMention(role.id)} làm role danh hiệu vì role này có quyền quản trị hoặc kiểm duyệt (${dangerous.join(", ")}). `
+			+ "Bot tự gán role danh hiệu cho thành viên, nên hãy dùng role không có các quyền này.";
 	}
 
 	const overwrites = dangerousOverwritesOf(role);
 	if (overwrites.length > 0)
 	{
-		return `Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
-			+ `${describeOverwrites(overwrites)}. Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho cảnh giới.`;
+		return `Không thể dùng ${roleMention(role.id)} làm role danh hiệu vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
+			+ `${describeOverwrites(overwrites)}. Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho bậc danh hiệu.`;
 	}
 
 	const highest = botMember.roles.highest;
 	if (role.position >= highest.position)
 	{
 		return `Bot không quản lý được ${roleMention(role.id)} vì role này không thấp hơn role cao nhất của bot (${roleMention(highest.id)}). `
-			+ "Vào **Server Settings → Roles**, kéo role của bot lên trên các role cảnh giới rồi thử lại.";
+			+ "Vào **Server Settings → Roles**, kéo role của bot lên trên các role danh hiệu rồi thử lại.";
 	}
 	return null;
 }
@@ -254,8 +254,8 @@ async function applyPlan(member: GuildMember, level: number, tierRoles: TierRole
 }
 
 /**
- * Đưa role cảnh giới của member về đúng cảnh giới của `level` (DEC-031): thêm role của cảnh giới hiện tại, bỏ role của
- * các cảnh giới khác. Không gọi API nếu không có gì cần đổi. Role không quản lý được, lỗi API, hoặc vừa lỗi trong
+ * Đưa role danh hiệu của member về đúng bậc của `level` (DEC-031): thêm role của bậc hiện tại, bỏ role của
+ * các bậc khác. Không gọi API nếu không có gì cần đổi. Role không quản lý được, lỗi API, hoặc vừa lỗi trong
  * ROLE_FAILURE_BACKOFF_MS thì đưa vào `skipped` và ghi cảnh báo (có throttle theo guild). Không bao giờ ném lỗi.
  */
 export async function syncTierRoles(member: GuildMember, level: number, tierRoles: TierRoleServiceApi, reason: string): Promise<TierRoleSyncResult>

@@ -229,30 +229,6 @@ export function buildTeamListEmbed(teams: readonly string[]): EmbedBuilder
 
 // ---------- Cảnh giới ----------
 
-/** Chú thích chung về thời điểm bot đổi role cảnh giới (DEC-031: bot không đọc danh sách thành viên). */
-export const TIER_ROLE_SYNC_NOTE = "Role được cập nhật khi thành viên nhắn tin được XP; mỗi người chỉ giữ role của cảnh giới hiện tại.";
-
-/** Cảnh báo khi gán role cảnh giới: bot gỡ role này khỏi mọi người không ở đúng cảnh giới, nên role phải dành riêng cho cảnh giới. */
-export const TIER_ROLE_DEDICATED_NOTE = "⚠️ Nên dùng role **mới tạo riêng** cho cảnh giới: bot sẽ gỡ role này khỏi người không ở đúng cảnh giới "
-	+ "khi họ nhắn tin, và gán cho mọi người đạt cảnh giới.";
-
-/** Danh sách 8 cảnh giới: emoji, tên, mốc level và role đã gán (hoặc "chưa gán"). */
-export function buildTierRoleListEmbed(set: TierSet, mappings: readonly TierRoleMapping[]): EmbedBuilder
-{
-	const roleByTier = new Map(mappings.map(mapping => [mapping.tierKey, mapping.roleId]));
-	const lines = set.tiers.map(tier =>
-	{
-		const roleId = roleByTier.get(tier.key);
-		return `${tier.emoji} **${tier.name}** · từ Level ${formatNumber(tier.minLevel)} · ${roleId === undefined ? "chưa gán" : roleMention(roleId)}`;
-	});
-
-	return new EmbedBuilder()
-		.setColor(COLORS.primary)
-		.setTitle(`🏅 Role danh hiệu · bộ ${set.name} (${mappings.length}/${set.tiers.length})`)
-		.setDescription(lines.join("\n"))
-		.setFooter({ text: TIER_ROLE_SYNC_NOTE });
-}
-
 /** Một dòng mô tả kết quả đồng bộ role cảnh giới; null nếu không có gì thay đổi hay bị bỏ qua. */
 export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
 {

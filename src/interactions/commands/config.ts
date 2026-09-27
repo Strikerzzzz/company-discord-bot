@@ -1,40 +1,79 @@
 import {
-	APIRole,
+	AnySelectMenuInteraction,
+	ButtonInteraction,
 	ChannelType,
 	ChatInputCommandInteraction,
+	Guild,
 	GuildMember,
 	MessageFlags,
+	ModalMessageModalSubmitInteraction,
+	ModalSubmitInteraction,
 	PermissionFlagsBits,
 	PermissionsBitField,
-	Role,
+	RoleSelectMenuInteraction,
 	SlashCommandBuilder,
 	SlashCommandSubcommandBuilder,
 	SlashCommandSubcommandGroupBuilder,
+	StringSelectMenuInteraction,
 } from "discord.js";
 import Command from "../../classes/Command";
-import { channelMention, formatNumber, roleMention } from "../../discord/format";
+import { channelMention, roleMention } from "../../discord/format";
 import { requireGuildId } from "../../discord/guards";
 import { deleteLiveBoardMessage, refreshLiveBoard } from "../../discord/liveBoard";
-import { tierRoleSafetyIssue } from "../../discord/roleSync";
+import {
+	assignTierRole,
+	BOT_MEMBER_UNAVAILABLE,
+	callerManageRolesIssue,
+	syncTierSetRoles,
+	TierRoleActor,
+	tierRoleActor,
+	TierRoleAssignment,
+} from "../../discord/tierRoleSetup";
 import {
 	buildChannelListEmbed,
 	buildConfigEmbed,
 	buildTeamListEmbed,
-	buildTierRoleListEmbed,
 	describeChannelSettings,
 	describeSettingsPatch,
 	ephemeral,
 	ephemeralEmbed,
 	settingLine,
+} from "../../discord/views/admin";
+import {
+	buildTierRenameModal,
+	buildTierRoleListEmbed,
+	buildTierSetupReport,
+	INVALID_PANEL_ACTION,
+	parseTierPanelId,
+	TIER_PANEL_NAMESPACE,
 	TIER_ROLE_DEDICATED_NOTE,
 	TIER_ROLE_SYNC_NOTE,
-} from "../../discord/views/admin";
-import { isTierKey, Tier, tierByKey, TIERS } from "../../modules/activity/tiers";
+	tierKeysOfGroup,
+	TierNameGroup,
+	TierPanelData,
+	tierPanelReply,
+	tierPanelUpdate,
+	tierSetChangedHint,
+	tierTitle,
+} from "../../discord/views/tierPanel";
+import {
+	isTierKey,
+	isTierSetKey,
+	TIER_KEYS,
+	TIER_LEVELS,
+	TIER_SET_KEYS,
+	TIER_SETS,
+	Tier,
+	TierKey,
+	tierByKey,
+	TierSet,
+	TierSetKey,
+} from "../../modules/activity/tiers";
+import { parseTierDisplayName, TierRenameInput } from "../../modules/gamification/TierSetService";
 import { TierRoleMapping } from "../../modules/gamification/types";
 import { ChannelSettings, GuildSettings, NumericSettingKey, SETTING_LIMITS } from "../../modules/guild-config/types";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
-import { logger } from "../../shared/logger";
 
 const NO_CHANGE_MESSAGE = "Hãy chọn ít nhất một giá trị để thay đổi.";
 
@@ -74,13 +113,28 @@ const BOARD_CALLER_PERMISSIONS: PermissionList = [
 	[PermissionFlagsBits.SendMessages, "Send Messages"],
 ];
 
-/** Lựa chọn cảnh giới, ví dụ "Luyện Khí (Lv 0+)"; value là khoá cảnh giới. */
-const TIER_CHOICES = TIERS.map(tier => ({ name: `${tier.name} (Lv ${tier.minLevel}+)`, value: tier.key }));
+/** Lựa chọn bậc dạng trung tính "Bậc 3 (Lv 6+)", vì tên bậc đổi theo bộ và theo từng server (DEC-033); value là khoá bậc. */
+const TIER_CHOICES = TIER_KEYS.map((key, index) => ({ name: `Bậc ${index + 1} (Lv ${TIER_LEVELS[index]}+)`, value: key }));
+
+/** Lựa chọn bộ danh hiệu, ví dụ "Tu tiên (Luyện Khí → Độ Kiếp)"; value là khoá bộ. */
+const TIER_SET_CHOICES = TIER_SET_KEYS.map(key =>
+{
+	const { name, tiers } = TIER_SETS[key];
+	return { name: `${name} (${tiers[0].name} → ${tiers[tiers.length - 1].name})`, value: key };
+});
+
+/** Độ dài tối đa của option tên bậc (emoji + tên); kiểm tra chi tiết do TierSetService làm. */
+const TIER_NAME_OPTION_MAX = 60;
 
 const GUILD_UNAVAILABLE = "Không đọc được thông tin server. Vui lòng thử lại sau.";
-const BOT_MEMBER_UNAVAILABLE = "Không đọc được thông tin của bot trong server. Vui lòng thử lại sau.";
+const INVALID_TIER = "Bậc danh hiệu không hợp lệ.";
+const INVALID_TIER_SET = "Bộ danh hiệu không hợp lệ.";
+const SELECTED_ROLE_UNAVAILABLE = "Không tìm thấy role vừa chọn trong server. Vui lòng thử lại.";
 const MANAGE_ROLES_WARNING = "⚠️ Bot chưa có quyền **Manage Roles** nên chưa gán được role. "
-	+ "Hãy cấp quyền này cho role của bot và kéo role của bot lên trên các role cảnh giới (Server Settings → Roles).";
+	+ "Hãy cấp quyền này cho role của bot và kéo role của bot lên trên các role danh hiệu (Server Settings → Roles).";
+const SETUP_ROLES_HINT = "Tên và màu các role đã gán chưa đổi: dùng `/config tier setup-roles` (hoặc nút ✨ trong `/config tier panel`) "
+	+ "để bot đổi theo.";
+const RENAME_SET_CHANGED = "Bộ danh hiệu vừa được đổi trong lúc bạn nhập tên, nên bot chưa lưu gì. Hãy mở lại form đổi tên.";
 
 /** Thao tác với message Bảng vàng (tầng Discord, src/discord/liveBoard.ts). */
 export interface LiveBoardActions
@@ -177,24 +231,44 @@ function contributionSubcommand(sub: SlashCommandSubcommandBuilder): SlashComman
 function tierOption(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
 {
 	return sub.addStringOption(option => option
-		.setName("canh-gioi")
-		.setDescription("Cảnh giới tu luyện")
+		.setName("bac")
+		.setDescription("Bậc danh hiệu (tên từng bậc theo bộ đang dùng: xem /config tier list)")
 		.setRequired(true)
 		.addChoices(...TIER_CHOICES));
 }
 
-function tierRoleGroup(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder
+function tierGroup(group: SlashCommandSubcommandGroupBuilder): SlashCommandSubcommandGroupBuilder
 {
 	return group
 		.setName("tier")
-		.setDescription("Role Discord bot tự gán theo cảnh giới tu luyện")
+		.setDescription("Bộ danh hiệu, tên bậc và role Discord bot tự gán theo bậc")
+		.addSubcommand(sub => sub
+			.setName("panel")
+			.setDescription("Mở bảng điều khiển danh hiệu: chọn bộ, gán role từng bậc, đổi tên bậc, tạo role"))
 		.addSubcommand(sub => addRole(
-			tierOption(sub.setName("set-role").setDescription("Gán role cho một cảnh giới (nên dùng role mới tạo riêng)")),
-			"Role mới tạo riêng, bot sẽ tự gán cho thành viên đạt cảnh giới này",
+			tierOption(sub.setName("set-role").setDescription("Gán role cho một bậc danh hiệu (nên dùng role mới tạo riêng)")),
+			"Role mới tạo riêng, bot sẽ tự gán cho thành viên đạt bậc này",
 			true,
 		))
-		.addSubcommand(sub => tierOption(sub.setName("clear-role").setDescription("Bỏ role của một cảnh giới")))
-		.addSubcommand(sub => sub.setName("list").setDescription("Xem role của từng cảnh giới"));
+		.addSubcommand(sub => tierOption(sub.setName("clear-role").setDescription("Bỏ role của một bậc danh hiệu")))
+		.addSubcommand(sub => sub.setName("list").setDescription("Xem role của từng bậc danh hiệu"))
+		.addSubcommand(sub => sub
+			.setName("style")
+			.setDescription("Chọn bộ danh hiệu: tên, emoji, màu các bậc và giọng văn thông báo")
+			.addStringOption(option => option
+				.setName("bo")
+				.setDescription("Bộ danh hiệu")
+				.setRequired(true)
+				.addChoices(...TIER_SET_CHOICES)))
+		.addSubcommand(sub => tierOption(sub.setName("rename").setDescription("Đổi tên và emoji một bậc của bộ đang dùng"))
+			.addStringOption(option => option
+				.setName("ten")
+				.setDescription("Tên mới, emoji đặt ở đầu (ví dụ \"🟡 Kim Đan\"); bỏ trống để dùng lại tên mặc định")
+				.setMaxLength(TIER_NAME_OPTION_MAX)))
+		.addSubcommand(sub => sub.setName("reset-names").setDescription("Khôi phục tên mặc định cho mọi bậc của bộ đang dùng"))
+		.addSubcommand(sub => sub
+			.setName("setup-roles")
+			.setDescription("Bot tạo role cho bậc chưa có role, đổi tên và màu role đã gán theo bộ đang dùng"));
 }
 
 function liveBoardSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
@@ -225,66 +299,72 @@ function botMemberOf(interaction: ChatInputCommandInteraction<"cached">): GuildM
 	return me;
 }
 
-/** Thông tin mới nhất của bot từ Discord (role, quyền), để kiểm tra thứ bậc role không dựa vào cache cũ. */
-async function freshBotMemberOf(interaction: ChatInputCommandInteraction<"cached">): Promise<GuildMember>
-{
-	try
-	{
-		return await interaction.guild.members.fetchMe({ force: true });
-	}
-	catch (error)
-	{
-		logger.warn(`Không tải được thông tin của bot ở server "${interaction.guildId}":`, error);
-		throw new UserError(BOT_MEMBER_UNAVAILABLE);
-	}
-}
-
 /** Tên (in đậm) các quyền trong `list` mà `permissions` không có. */
 function missingPermissions(permissions: Readonly<PermissionsBitField>, list: PermissionList): string[]
 {
 	return list.filter(([flag]) => !permissions.has(flag)).map(([, name]) => `**${name}**`);
 }
 
+function tierKeyOf(interaction: ChatInputCommandInteraction): TierKey
+{
+	const key = interaction.options.getString("bac", true);
+	if (!isTierKey(key)) throw new UserError(INVALID_TIER);
+	return key;
+}
+
+/** Role đang gán cho bậc `tierKey`; null nếu chưa gán. */
+function assignedRole(mappings: readonly TierRoleMapping[], tierKey: TierKey): string | null
+{
+	return mappings.find(mapping => mapping.tierKey === tierKey)?.roleId ?? null;
+}
+
+/** Người thao tác role danh hiệu, từ interaction trong server có trong cache. */
+function actorOf(interaction: { guild: Guild; member: GuildMember }): TierRoleActor
+{
+	return tierRoleActor(interaction.guild, interaction.member);
+}
+
+/** Ghi chú sau khi gán role cho một bậc: role cũ không còn do bot quản lý, bot chưa có Manage Roles. */
+function assignmentNotes(roleId: string, assignment: TierRoleAssignment): string[]
+{
+	const notes: string[] = [];
+	const previous = assignment.previousRoleId;
+	if (previous !== null && previous !== roleId)
+	{
+		notes.push(`Role cũ ${roleMention(previous)} không còn do bot quản lý; bot không tự gỡ role đó khỏi những người đang có.`);
+	}
+	if (!assignment.botCanManageRoles) notes.push(MANAGE_ROLES_WARNING);
+	return notes;
+}
+
+/** Phản hồi sau khi bỏ role của một bậc. */
+function clearedNote(previousRoleId: string, tier: Tier): string
+{
+	return `Đã bỏ ${roleMention(previousRoleId)} khỏi bậc ${tierTitle(tier)}. Bot không tự gỡ role đó khỏi những người đang có; nếu cần, hãy gỡ thủ công.`;
+}
+
+function collapseSpaces(text: string): string
+{
+	return text.replace(/\s+/gu, " ").trim();
+}
+
 /**
- * Người gọi phải tự gán được `role` theo luật Discord áp cho người thường: có Manage Roles và role nằm dưới role cao nhất
- * của họ (chủ server luôn được). Như vậy role admin bot không đủ để mượn bot gán role mà chính người gọi không gán được.
+ * Chuỗi admin nhập cho một bậc ("🟡 Kim Đan", chỉ tên, chỉ emoji, hoặc rỗng) thành thay đổi để lưu. Phần trùng với
+ * mặc định của bộ lưu là null (dùng mặc định), để ô điền sẵn mà admin không sửa không biến thành tên tuỳ chỉnh.
  */
-function callerRoleIssue(interaction: ChatInputCommandInteraction<"cached">, role: Role): string | null
+function renameInput(set: TierSet, tierKey: TierKey, raw: string): TierRenameInput
 {
-	if (interaction.guild.ownerId === interaction.user.id) return null;
-	if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageRoles))
-	{
-		return "Bạn cần quyền **Manage Roles** để gán role cảnh giới, vì bot sẽ thay bạn gán role này cho thành viên.";
-	}
-	const highest = interaction.member.roles.highest;
-	if (role.position >= highest.position)
-	{
-		return `Bạn không gán được ${roleMention(role.id)} vì role này không thấp hơn role cao nhất của bạn (${roleMention(highest.id)}). `
-			+ "Discord chỉ cho gán role nằm dưới role cao nhất của mình.";
-	}
-	return null;
-}
-
-function tierOf(interaction: ChatInputCommandInteraction): Tier
-{
-	const key = interaction.options.getString("canh-gioi", true);
-	if (!isTierKey(key)) throw new UserError("Cảnh giới không hợp lệ.");
-	return tierByKey(key);
-}
-
-function tierTitle(tier: Tier): string
-{
-	return `${tier.emoji} **${tier.name}** (từ Level ${formatNumber(tier.minLevel)})`;
-}
-
-/** Role đang gán cho cảnh giới `tier`; null nếu chưa gán. */
-function assignedRole(mappings: readonly TierRoleMapping[], tier: Tier): string | null
-{
-	return mappings.find(mapping => mapping.tierKey === tier.key)?.roleId ?? null;
+	const parsed = parseTierDisplayName(raw);
+	const base = tierByKey(tierKey, TIER_SETS[set.key]);
+	return {
+		tierKey,
+		name: parsed.name !== null && collapseSpaces(parsed.name) === base.name ? null : parsed.name,
+		emoji: parsed.emoji === base.emoji ? null : parsed.emoji,
+	};
 }
 
 /** Chặn @everyone và role do bot/integration quản lý (không gán được cho người dùng). */
-function assertAssignableRole(role: Role | APIRole, guildId: string, purpose: string): void
+function assertAssignableRole(role: { id: string; managed: boolean }, guildId: string, purpose: string): void
 {
 	if (role.id === guildId) throw new UserError(`Không thể dùng @everyone ${purpose}.`);
 	if (role.managed) throw new UserError(`Không thể dùng role do bot hoặc integration quản lý ${purpose}.`);
@@ -295,10 +375,12 @@ function requireChange(patch: object): void
 	if (Object.keys(patch).length === 0) throw new UserError(NO_CHANGE_MESSAGE);
 }
 
-// Cấu hình bot theo server. Hai lớp quyền: ManageGuild (Discord) + adminOnly (dispatcher).
+// Cấu hình bot theo server. Hai lớp quyền: ManageGuild (Discord) + adminOnly (dispatcher, áp cả cho component của bảng điều khiển).
 export default class ConfigCmd extends Command
 {
 	override adminOnly = true;
+
+	override buttonIds = [TIER_PANEL_NAMESPACE];
 
 	/** Điểm inject để test thay bằng hàm giả; mặc định là các hàm thật của tầng Discord. */
 	liveBoardActions: LiveBoardActions = { refresh: refreshLiveBoard, remove: deleteLiveBoardMessage };
@@ -338,7 +420,7 @@ export default class ConfigCmd extends Command
 			.setDescription("Đặt hoặc xoá role được dùng lệnh admin của bot"), "Role admin bot (bỏ trống để xoá role admin)", false))
 		.addSubcommand(pollSubcommand)
 		.addSubcommand(contributionSubcommand)
-		.addSubcommandGroup(tierRoleGroup)
+		.addSubcommandGroup(tierGroup)
 		.addSubcommand(liveBoardSubcommand);
 
 	private get services(): AppServices
@@ -354,7 +436,7 @@ export default class ConfigCmd extends Command
 
 		if (group === "channel") await this.executeChannel(context, subcommand);
 		else if (group === "team") await this.executeTeam(context, subcommand);
-		else if (group === "tier") await this.executeTierRoles(context, subcommand);
+		else if (group === "tier") await this.executeTier(context, subcommand);
 		else if (subcommand === "view") await this.view(context);
 		else if (subcommand === "xp") await this.updateXp(context);
 		else if (subcommand === "admin-role") await this.updateAdminRole(context);
@@ -362,6 +444,45 @@ export default class ConfigCmd extends Command
 		else if (subcommand === "contribution") await this.updateContribution(context);
 		else if (subcommand === "board") await this.updateLiveBoard(context);
 		else throw new Error(`Subcommand không hợp lệ: /config ${group ?? ""} ${subcommand}`);
+	}
+
+	/** Nút của bảng điều khiển danh hiệu: tạo/đồng bộ role, mở form đổi tên, khôi phục tên mặc định. */
+	override async executeButton(interaction: ButtonInteraction): Promise<void>
+	{
+		const action = parseTierPanelId(interaction.customId);
+		const guildId = requireGuildId(interaction);
+		switch (action.type)
+		{
+		case "setup":
+			await this.panelSetupRoles(interaction);
+			break;
+		case "rename":
+			await interaction.showModal(buildTierRenameModal(this.services.tierSets.current(guildId), action.group));
+			break;
+		case "reset":
+			this.services.tierSets.resetNames(guildId, interaction.user.id);
+			await interaction.update(tierPanelUpdate(this.panelData(guildId, interaction.guild)));
+			break;
+		default:
+			throw new UserError(INVALID_PANEL_ACTION);
+		}
+	}
+
+	/** Menu chọn của bảng điều khiển: chọn bộ (StringSelect) hoặc gán role cho một bậc (RoleSelect). */
+	override async executeSelectMenu(interaction: AnySelectMenuInteraction): Promise<void>
+	{
+		const action = parseTierPanelId(interaction.customId);
+		if (action.type === "set" && interaction.isStringSelectMenu()) await this.panelSelectSet(interaction);
+		else if (action.type === "role" && interaction.isRoleSelectMenu()) await this.panelAssignRole(interaction, action.tierKey);
+		else throw new UserError(INVALID_PANEL_ACTION);
+	}
+
+	/** Form đổi tên bậc, mở từ nút của bảng điều khiển (nên cập nhật được chính bảng đó). */
+	override async executeModal(interaction: ModalSubmitInteraction): Promise<void>
+	{
+		const action = parseTierPanelId(interaction.customId);
+		if (action.type !== "names" || !interaction.isFromMessage()) throw new UserError(INVALID_PANEL_ACTION);
+		await this.panelRename(interaction, action.group, action.setKey);
 	}
 
 	private async executeChannel(context: ConfigContext, subcommand: string): Promise<void>
@@ -400,18 +521,34 @@ export default class ConfigCmd extends Command
 		}
 	}
 
-	private async executeTierRoles(context: ConfigContext, subcommand: string): Promise<void>
+	private async executeTier(context: ConfigContext, subcommand: string): Promise<void>
 	{
+		const { interaction, guildId } = context;
 		switch (subcommand)
 		{
+		case "panel":
+			await interaction.reply(tierPanelReply(this.panelData(guildId, interaction.guild)));
+			break;
 		case "set-role":
-			await this.assignTierRole(context);
+			await this.assignTierRoleCommand(context);
 			break;
 		case "clear-role":
 			await this.clearTierRole(context);
 			break;
 		case "list":
-			await context.interaction.reply(ephemeralEmbed(buildTierRoleListEmbed(this.services.tierSets.current(context.guildId), this.services.tierRoles.list(context.guildId))));
+			await interaction.reply(ephemeralEmbed(buildTierRoleListEmbed(this.services.tierSets.current(guildId), this.services.tierRoles.list(guildId))));
+			break;
+		case "style":
+			await this.selectTierSet(context);
+			break;
+		case "rename":
+			await this.renameTier(context);
+			break;
+		case "reset-names":
+			await this.resetTierNames(context);
+			break;
+		case "setup-roles":
+			await this.setupTierRoles(context);
 			break;
 		default:
 			throw new Error(`Subcommand không hợp lệ: /config tier ${subcommand}`);
@@ -554,75 +691,203 @@ export default class ConfigCmd extends Command
 		));
 	}
 
-	/** Vai trò khác của role trong cấu hình bot (role admin bot, role tạo vote, team); null nếu không có. */
-	private otherRoleUsage(guildId: string, roleId: string): string | null
-	{
-		const settings = this.services.guildConfig.getSettings(guildId);
-		if (settings.adminRoleId === roleId) return "role admin bot";
-		if (settings.pollCreatorRoleId === roleId) return "role được tạo vote";
-		if (this.services.teams.list(guildId).includes(roleId)) return "role của một team";
-		return null;
-	}
-
-	/** Role cảnh giới không được dùng vào việc khác: bot tự thêm và gỡ role cảnh giới theo level của từng người (DEC-031). */
+	/** Role danh hiệu không được dùng vào việc khác: bot tự thêm và gỡ role danh hiệu theo level của từng người (DEC-031). */
 	private assertNotTierRole(guildId: string, roleId: string, purpose: string): void
 	{
 		const mapping = this.services.tierRoles.list(guildId).find(entry => entry.roleId === roleId);
 		if (!mapping) return;
-		throw new UserError(`Không thể dùng ${roleMention(roleId)} ${purpose} vì role này đang là role của cảnh giới ${tierByKey(mapping.tierKey).name}: `
-			+ "bot tự thêm và gỡ role cảnh giới theo level của từng người. Hãy chọn role khác, hoặc bỏ gán bằng `/config tier clear-role` trước.");
+		const tier = tierByKey(mapping.tierKey, this.services.tierSets.current(guildId));
+		throw new UserError(`Không thể dùng ${roleMention(roleId)} ${purpose} vì role này đang là role của bậc danh hiệu ${tier.name}: `
+			+ "bot tự thêm và gỡ role danh hiệu theo level của từng người. Hãy chọn role khác, hoặc bỏ gán bằng `/config tier clear-role` trước.");
 	}
 
-	/**
-	 * Gán role cho một cảnh giới (DEC-031) sau khi kiểm tra: người gọi tự gán được role đó, role an toàn và bot quản lý được
-	 * (theo thông tin mới nhất của bot), role không đang giữ vai trò khác trong cấu hình bot.
-	 */
-	private async assignTierRole({ interaction: base, guildId, actorId }: ConfigContext): Promise<void>
+	// ---------- Danh hiệu (DEC-031, DEC-033) ----------
+
+	/** Dữ liệu dựng bảng điều khiển; `guild` (nếu có trong cache) để nhận ra role đã gán nhưng không còn trong server. */
+	private panelData(guildId: string, guild: Guild | null): TierPanelData
+	{
+		const mappings = this.services.tierRoles.list(guildId);
+		const missingRoleIds = new Set(guild ? mappings.filter(mapping => !guild.roles.cache.has(mapping.roleId)).map(mapping => mapping.roleId) : []);
+		return { set: this.services.tierSets.current(guildId), mappings, missingRoleIds };
+	}
+
+	/** Gán role cho một bậc (dùng chung kiểm tra với ô chọn role của bảng điều khiển, xem assignTierRole). */
+	private async assignTierRoleCommand({ interaction: base, guildId }: ConfigContext): Promise<void>
 	{
 		const interaction = requireCachedGuild(base);
-		const tier = tierOf(interaction);
+		const tier = tierByKey(tierKeyOf(interaction), this.services.tierSets.current(guildId));
 		const role = interaction.options.getRole("role", true);
-		const callerIssue = callerRoleIssue(interaction, role);
-		if (callerIssue !== null) throw new UserError(callerIssue);
+		const assignment = await assignTierRole(interaction.guild, actorOf(interaction), this.services, tier.key, role);
 
-		const me = await freshBotMemberOf(interaction);
-		const issue = tierRoleSafetyIssue(role, me);
-		if (issue !== null) throw new UserError(issue);
-
-		// Kiểm tra vai trò khác của role sau await, liền trước bước ghi, để không có await chen giữa bước đọc và bước ghi.
-		const usage = this.otherRoleUsage(guildId, role.id);
-		if (usage !== null)
-		{
-			throw new UserError(`Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì role này đang là ${usage}. `
-				+ "Bot tự gán role cảnh giới cho người đủ level và gỡ khỏi người khác, nên hãy tạo một role mới dành riêng cho cảnh giới.");
-		}
-		const { tierRoles } = this.services;
-		const previous = assignedRole(tierRoles.list(guildId), tier);
-		tierRoles.set(guildId, tier.key, role.id, actorId);
-
-		const lines = [`Đã gán ${roleMention(role.id)} cho cảnh giới ${tierTitle(tier)}.`, TIER_ROLE_SYNC_NOTE, TIER_ROLE_DEDICATED_NOTE];
-		if (previous !== null && previous !== role.id)
-		{
-			lines.push(`Role cũ ${roleMention(previous)} không còn do bot quản lý; bot không tự gỡ role đó khỏi những người đang có.`);
-		}
-		if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) lines.push(MANAGE_ROLES_WARNING);
+		const lines = [`Đã gán ${roleMention(role.id)} cho bậc ${tierTitle(tier)}.`, TIER_ROLE_SYNC_NOTE, TIER_ROLE_DEDICATED_NOTE];
+		lines.push(...assignmentNotes(role.id, assignment));
 		await interaction.reply(ephemeral(lines.join("\n")));
 	}
 
 	private async clearTierRole({ interaction, guildId, actorId }: ConfigContext): Promise<void>
 	{
-		const tier = tierOf(interaction);
+		const tier = tierByKey(tierKeyOf(interaction), this.services.tierSets.current(guildId));
 		const { tierRoles } = this.services;
-		const previous = assignedRole(tierRoles.list(guildId), tier);
+		const previous = assignedRole(tierRoles.list(guildId), tier.key);
 		if (previous === null || !tierRoles.clear(guildId, tier.key, actorId))
 		{
-			await interaction.reply(ephemeral(`Cảnh giới ${tierTitle(tier)} chưa được gán role.`));
+			await interaction.reply(ephemeral(`Bậc ${tierTitle(tier)} chưa được gán role.`));
 			return;
 		}
-		await interaction.reply(ephemeral(
-			`Đã bỏ ${roleMention(previous)} khỏi cảnh giới ${tierTitle(tier)}. Bot không tự gỡ role đó khỏi những người đang có; nếu cần, hãy gỡ thủ công.`,
-		));
+		await interaction.reply(ephemeral(clearedNote(previous, tier)));
 	}
+
+	private async selectTierSet({ interaction, guildId, actorId }: ConfigContext): Promise<void>
+	{
+		const key = interaction.options.getString("bo", true);
+		if (!isTierSetKey(key)) throw new UserError(INVALID_TIER_SET);
+		const { tierSets, tierRoles } = this.services;
+		if (tierSets.currentKey(guildId) === key)
+		{
+			await interaction.reply(ephemeral(`Server đang dùng bộ danh hiệu **${TIER_SETS[key].name}**.`));
+			return;
+		}
+		const set = tierSets.select(guildId, key, actorId);
+		const lines = [
+			`Đã chọn bộ danh hiệu **${set.name}** (${set.tiers[0].name} → ${set.tiers[set.tiers.length - 1].name}). `
+				+ "Tên bậc, emoji, màu và giọng văn thông báo đổi theo bộ này; role đã gán theo bậc được giữ nguyên.",
+		];
+		if (tierRoles.list(guildId).length > 0) lines.push(SETUP_ROLES_HINT);
+		await interaction.reply(ephemeral(lines.join("\n")));
+	}
+
+	private async renameTier({ interaction, guildId, actorId }: ConfigContext): Promise<void>
+	{
+		const tierKey = tierKeyOf(interaction);
+		const raw = interaction.options.getString("ten") ?? "";
+		const { tierSets, tierRoles } = this.services;
+		const set = tierSets.rename(guildId, [renameInput(tierSets.current(guildId), tierKey, raw)], actorId);
+		const tier = tierByKey(tierKey, set);
+
+		const lines = [raw.trim() === ""
+			? `Bậc ${tier.index + 1} dùng lại tên mặc định của bộ **${set.name}**: ${tierTitle(tier)}.`
+			: `Đã đổi tên bậc ${tier.index + 1} của bộ **${set.name}** thành ${tierTitle(tier)}.`];
+		if (assignedRole(tierRoles.list(guildId), tierKey) !== null) lines.push(SETUP_ROLES_HINT);
+		await interaction.reply(ephemeral(lines.join("\n")));
+	}
+
+	private async resetTierNames({ interaction, guildId, actorId }: ConfigContext): Promise<void>
+	{
+		const { tierSets, tierRoles } = this.services;
+		const hadCustomNames = tierSets.overrides(guildId, tierSets.currentKey(guildId)).length > 0;
+		const set = tierSets.resetNames(guildId, actorId);
+		if (!hadCustomNames)
+		{
+			await interaction.reply(ephemeral(`Bộ **${set.name}** vốn đang dùng tên mặc định.`));
+			return;
+		}
+		const lines = [`Đã khôi phục tên mặc định cho mọi bậc của bộ **${set.name}**.`];
+		if (tierRoles.list(guildId).length > 0) lines.push(SETUP_ROLES_HINT);
+		await interaction.reply(ephemeral(lines.join("\n")));
+	}
+
+	/** Tạo/đồng bộ role theo bộ đang dùng; kiểm tra quyền người gọi trước khi defer để lỗi được trả lời ngay. */
+	private async setupTierRoles({ interaction: base, guildId }: ConfigContext): Promise<void>
+	{
+		const interaction = requireCachedGuild(base);
+		const actor = actorOf(interaction);
+		const issue = callerManageRolesIssue(actor);
+		if (issue !== null) throw new UserError(issue);
+
+		// Tạo hay đổi tên tới 8 role có thể mất vài giây: defer trước để không quá hạn 3 giây của interaction.
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+		const set = this.services.tierSets.current(guildId);
+		const result = await syncTierSetRoles(interaction.guild, set, this.services, actor);
+		await interaction.editReply(buildTierSetupReport(set, result));
+	}
+
+	private async panelSelectSet(interaction: StringSelectMenuInteraction): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const key = interaction.values[0];
+		if (key === undefined || !isTierSetKey(key)) throw new UserError(INVALID_TIER_SET);
+		const changed = this.services.tierSets.currentKey(guildId) !== key;
+		const set = this.services.tierSets.select(guildId, key, interaction.user.id);
+		const data = this.panelData(guildId, interaction.guild);
+		await interaction.update(tierPanelUpdate(data));
+		if (changed && data.mappings.length > 0) await interaction.followUp(ephemeral(tierSetChangedHint(set)));
+	}
+
+	/**
+	 * Ô chọn role của một bậc: chọn role là gán ngay (cùng kiểm tra với `/config tier set-role`), xoá lựa chọn là bỏ gán.
+	 * Luôn vẽ lại bảng theo dữ liệu thật, nên khi lỗi ô chọn trở về role đang gán; lỗi được dispatcher báo riêng.
+	 */
+	private async panelAssignRole(interaction: RoleSelectMenuInteraction, tierKey: TierKey): Promise<void>
+	{
+		if (!interaction.inCachedGuild()) throw new UserError(GUILD_UNAVAILABLE);
+		const { guild, guildId } = interaction;
+		// Kiểm tra thứ bậc role phải tải lại thông tin bot từ Discord: defer trước để không quá hạn 3 giây.
+		await interaction.deferUpdate();
+		let notes: string[];
+		try
+		{
+			notes = await this.applyPanelRole(interaction, tierKey);
+		}
+		finally
+		{
+			await interaction.editReply(tierPanelUpdate(this.panelData(guildId, guild)));
+		}
+		if (notes.length > 0) await interaction.followUp(ephemeral(notes.join("\n")));
+	}
+
+	/** Gán hoặc bỏ gán role theo lựa chọn; trả về ghi chú cần báo riêng cho người thao tác. */
+	private async applyPanelRole(interaction: RoleSelectMenuInteraction<"cached">, tierKey: TierKey): Promise<string[]>
+	{
+		const { guild, guildId } = interaction;
+		const actor = actorOf(interaction);
+		const roleId = interaction.values[0];
+		if (roleId === undefined)
+		{
+			const previous = assignedRole(this.services.tierRoles.list(guildId), tierKey);
+			if (previous === null || !this.services.tierRoles.clear(guildId, tierKey, actor.id)) return [];
+			return [clearedNote(previous, tierByKey(tierKey, this.services.tierSets.current(guildId)))];
+		}
+		const role = interaction.roles.get(roleId) ?? guild.roles.cache.get(roleId);
+		if (!role) throw new UserError(SELECTED_ROLE_UNAVAILABLE);
+		return assignmentNotes(role.id, await assignTierRole(guild, actor, this.services, tierKey, role));
+	}
+
+	/** Nút ✨: tạo/đồng bộ role rồi vẽ lại bảng và báo riêng kết quả từng bậc. */
+	private async panelSetupRoles(interaction: ButtonInteraction): Promise<void>
+	{
+		if (!interaction.inCachedGuild()) throw new UserError(GUILD_UNAVAILABLE);
+		const { guild, guildId } = interaction;
+		const actor = actorOf(interaction);
+		const issue = callerManageRolesIssue(actor);
+		if (issue !== null) throw new UserError(issue);
+
+		await interaction.deferUpdate();
+		const set = this.services.tierSets.current(guildId);
+		const result = await syncTierSetRoles(guild, set, this.services, actor);
+		await interaction.editReply(tierPanelUpdate(this.panelData(guildId, guild)));
+		await interaction.followUp(ephemeral(buildTierSetupReport(set, result)));
+	}
+
+	/**
+	 * Lưu form đổi tên (DEC-033): mỗi ô tách emoji đầu chuỗi và tên; để trống là tên mặc định. Validate hết trước khi ghi
+	 * (TierSetService.rename): lỗi thì không đổi gì và dispatcher báo riêng. Bộ đã đổi kể từ lúc mở form thì không lưu.
+	 */
+	private async panelRename(interaction: ModalMessageModalSubmitInteraction, group: TierNameGroup, setKey: TierSetKey): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const { tierSets } = this.services;
+		if (tierSets.currentKey(guildId) !== setKey)
+		{
+			await interaction.update(tierPanelUpdate(this.panelData(guildId, interaction.guild)));
+			throw new UserError(RENAME_SET_CHANGED);
+		}
+		const set = tierSets.current(guildId);
+		const entries = tierKeysOfGroup(group).map(key => renameInput(set, key, interaction.fields.getTextInputValue(key)));
+		tierSets.rename(guildId, entries, interaction.user.id);
+		await interaction.update(tierPanelUpdate(this.panelData(guildId, interaction.guild)));
+	}
+
+	// ---------- Bảng vàng ----------
 
 	/** Đặt kênh hoặc tắt Bảng vàng (DEC-030); phải chọn đúng một trong hai. */
 	private async updateLiveBoard(context: ConfigContext): Promise<void>

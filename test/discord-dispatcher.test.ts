@@ -14,7 +14,10 @@ import { CHANNEL_GENERAL, GUILD, OTHER_GUILD, USER_A, USER_B } from "./helpers";
 
 const GENERIC_ERROR = "Đã có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại sau.";
 
-type Kind = "chat" | "button" | "contextMenu" | "autocomplete";
+type Kind = "chat" | "button" | "select" | "modal" | "contextMenu" | "autocomplete";
+
+/** Các loại component định tuyến theo namespace customId (buttonIds). */
+const COMPONENT_KINDS = ["button", "select", "modal"] as const;
 
 interface Call
 {
@@ -53,16 +56,28 @@ function fakeInteraction(spec: FakeInteractionSpec): { interaction: Interaction;
 		inGuild: () => guildId !== null,
 		isChatInputCommand: () => spec.kind === "chat",
 		isButton: () => spec.kind === "button",
+		isAnySelectMenu: () => spec.kind === "select",
+		isModalSubmit: () => spec.kind === "modal",
 		isContextMenuCommand: () => spec.kind === "contextMenu",
 		isMessageContextMenuCommand: () => spec.kind === "contextMenu",
 		isAutocomplete: () => spec.kind === "autocomplete",
 		isCommand: () => spec.kind === "chat" || spec.kind === "contextMenu",
-		isMessageComponent: () => spec.kind === "button",
+		isMessageComponent: () => spec.kind === "button" || spec.kind === "select",
 		isRepliable: () => spec.kind !== "autocomplete",
 		reply: (payload: unknown) =>
 		{
 			state.replied = true;
 			return record("reply", payload);
+		},
+		update: (payload: unknown) =>
+		{
+			state.replied = true;
+			return record("update", payload);
+		},
+		deferUpdate: () =>
+		{
+			state.deferred = true;
+			return record("deferUpdate");
 		},
 		deferReply: (payload?: { flags?: number }) =>
 		{
@@ -103,26 +118,31 @@ interface StubCommand
 {
 	adminOnly: boolean;
 	executed: number;
+	/** Tên các handler đã chạy, theo thứ tự. */
+	handlers: string[];
 	execute: (interaction: Interaction) => Promise<void>;
 	executeButton: (interaction: Interaction) => Promise<void>;
+	executeSelectMenu: (interaction: Interaction) => Promise<void>;
+	executeModal: (interaction: Interaction) => Promise<void>;
 	autocomplete: () => string[];
 }
 
 function stubCommand(behavior: (interaction: Interaction) => Promise<void> = () => Promise.resolve(), adminOnly = false): StubCommand
 {
+	const handle = (name: string) => (interaction: Interaction): Promise<void> =>
+	{
+		stub.executed++;
+		stub.handlers.push(name);
+		return behavior(interaction);
+	};
 	const stub: StubCommand = {
 		adminOnly,
 		executed: 0,
-		execute: interaction =>
-		{
-			stub.executed++;
-			return behavior(interaction);
-		},
-		executeButton: interaction =>
-		{
-			stub.executed++;
-			return behavior(interaction);
-		},
+		handlers: [],
+		execute: handle("execute"),
+		executeButton: handle("executeButton"),
+		executeSelectMenu: handle("executeSelectMenu"),
+		executeModal: handle("executeModal"),
 		autocomplete: () => ["gợi ý"],
 	};
 	return stub;
@@ -164,7 +184,7 @@ describe("dispatcher interactionCreate: guild và lệnh không xác định", (
 		const command = stubCommand();
 		const { event } = dispatcher({ commands: { lenh: command }, buttons: { lenh: command } });
 
-		for (const kind of ["chat", "button"] as const)
+		for (const kind of ["chat", ...COMPONENT_KINDS] as const)
 		{
 			const { interaction, calls } = fakeInteraction({ kind, guildId: OTHER_GUILD });
 			await event.execute(interaction);
@@ -189,10 +209,10 @@ describe("dispatcher interactionCreate: guild và lệnh không xác định", (
 		assert.deepEqual(calls, [{ method: "reply", payload: { content: "Lệnh này chỉ dùng được trong server.", flags: MessageFlags.Ephemeral } }]);
 	});
 
-	test("lệnh, context menu hay nút không còn handler: báo riêng thay vì im lặng", async () =>
+	test("lệnh, context menu, nút, menu chọn hay form không còn handler: báo riêng thay vì im lặng", async () =>
 	{
 		const { event } = dispatcher();
-		for (const kind of ["chat", "button", "contextMenu"] as const)
+		for (const kind of ["chat", ...COMPONENT_KINDS, "contextMenu"] as const)
 		{
 			const { interaction, calls } = fakeInteraction({ kind, name: "khong-con" });
 			await event.execute(interaction);
@@ -217,6 +237,90 @@ describe("dispatcher interactionCreate: guild và lệnh không xác định", (
 		const allowed = fakeInteraction({ kind: "chat", permissions: [PermissionFlagsBits.ManageGuild] });
 		await event.execute(allowed.interaction);
 		assert.equal(command.executed, 1);
+	});
+});
+
+describe("dispatcher interactionCreate: component (nút, menu chọn, form)", () =>
+{
+	test("định tuyến theo namespace customId tới đúng handler của command", async () =>
+	{
+		const command = stubCommand();
+		const { event } = dispatcher({ buttons: { bang: command } });
+		for (const kind of COMPONENT_KINDS)
+		{
+			const { interaction, calls } = fakeInteraction({ kind, name: "bang:payload" });
+			await event.execute(interaction);
+			assert.deepEqual(calls, [], kind);
+		}
+		assert.deepEqual(command.handlers, ["executeButton", "executeSelectMenu", "executeModal"]);
+	});
+
+	test("component của lệnh admin: người không có quyền admin bị chặn ở dispatcher như lệnh gõ (DEC-033)", async () =>
+	{
+		const command = stubCommand(() => Promise.resolve(), true);
+		const { event } = dispatcher({ buttons: { bang: command } });
+
+		for (const kind of COMPONENT_KINDS)
+		{
+			const denied = fakeInteraction({ kind, name: "bang:payload" });
+			await event.execute(denied.interaction);
+			assert.deepEqual(denied.calls, [{ method: "reply", payload: { content: "Bạn không có quyền dùng lệnh này.", flags: MessageFlags.Ephemeral } }], kind);
+		}
+		assert.equal(command.executed, 0);
+
+		for (const kind of COMPONENT_KINDS)
+		{
+			const allowed = fakeInteraction({ kind, name: "bang:payload", permissions: [PermissionFlagsBits.ManageGuild] });
+			await event.execute(allowed.interaction);
+		}
+		assert.deepEqual(command.handlers, ["executeButton", "executeSelectMenu", "executeModal"]);
+	});
+
+	test("component của lệnh không phải admin (contribution, poll, leaderboard) không bị kiểm tra quyền admin", async () =>
+	{
+		const command = stubCommand();
+		const { event } = dispatcher({ buttons: { contrib: command } });
+		for (const kind of COMPONENT_KINDS)
+		{
+			const { interaction, calls } = fakeInteraction({ kind, name: "contrib:1" });
+			await event.execute(interaction);
+			assert.deepEqual(calls, [], kind);
+		}
+		assert.equal(command.executed, 3);
+	});
+
+	test("lỗi sau khi đã cập nhật message của component: báo riêng bằng follow-up, không sửa message", async () =>
+	{
+		const command = stubCommand(async interaction =>
+		{
+			if (!interaction.isAnySelectMenu()) return;
+			await interaction.update({ content: "bảng mới" });
+			throw new UserError("Không gán được role này.");
+		});
+		const { event } = dispatcher({ buttons: { bang: command } });
+		const { interaction, calls } = fakeInteraction({ kind: "select", name: "bang:role" });
+
+		await event.execute(interaction);
+
+		assert.deepEqual(methods(calls), ["update", "followUp"]);
+		assert.deepEqual(calls[1].payload, { content: "Không gán được role này.", flags: MessageFlags.Ephemeral });
+	});
+
+	test("lỗi sau deferUpdate: báo riêng bằng follow-up", async () =>
+	{
+		const command = stubCommand(async interaction =>
+		{
+			if (!interaction.isButton()) return;
+			await interaction.deferUpdate();
+			throw new UserError("Bot chưa có quyền.");
+		});
+		const { event } = dispatcher({ buttons: { bang: command } });
+		const { interaction, calls } = fakeInteraction({ kind: "button", name: "bang:setup" });
+
+		await event.execute(interaction);
+
+		assert.deepEqual(methods(calls), ["deferUpdate", "followUp"]);
+		assert.deepEqual(calls[1].payload, { content: "Bot chưa có quyền.", flags: MessageFlags.Ephemeral });
 	});
 });
 

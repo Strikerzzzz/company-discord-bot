@@ -1,6 +1,8 @@
 import { ChatInputCommandInteraction,
+	AnySelectMenuInteraction,
 	ButtonInteraction,
 	AutocompleteInteraction,
+	ModalSubmitInteraction,
 	SlashCommandBuilder,
 	SlashCommandOptionsOnlyBuilder,
 	SlashCommandSubcommandsOnlyBuilder } from "discord.js";
@@ -15,10 +17,11 @@ export default abstract class Command
 	readonly client: DiscordClient;
 
 	abstract data: SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
-	// Namespace của các button mà command này xử lý; xem ButtonHandler.
+	// Namespace customId của các component (nút, menu chọn, form) mà command này xử lý; xem ButtonHandler.
 	buttonIds: string[] = [];
-	// true: dispatcher kiểm tra quyền admin (lớp 2, PROP-013) trước khi chạy execute/autocomplete.
-	// Lớp 1 là setDefaultMemberPermissions(ManageGuild) trong `data`; command admin phải đặt cả hai.
+	// true: dispatcher kiểm tra quyền admin (lớp 2, PROP-013) trước khi chạy execute/autocomplete và mọi component
+	// (nút, menu chọn, form) của command (DEC-033). Lớp 1 là setDefaultMemberPermissions(ManageGuild) trong `data`;
+	// command admin phải đặt cả hai.
 	adminOnly = false;
 
 	constructor(client: DiscordClient)
@@ -32,6 +35,18 @@ export default abstract class Command
 	executeButton(interaction: ButtonInteraction): Promise<void>
 	{
 		return Promise.reject(new Error(`Method not implemented for button: ${interaction.customId}`));
+	}
+
+	// Chỉ command có gửi menu chọn (khai báo trong buttonIds) mới cần override.
+	executeSelectMenu(interaction: AnySelectMenuInteraction): Promise<void>
+	{
+		return Promise.reject(new Error(`Method not implemented for select menu: ${interaction.customId}`));
+	}
+
+	// Chỉ command có mở form (modal, customId khai báo trong buttonIds) mới cần override.
+	executeModal(interaction: ModalSubmitInteraction): Promise<void>
+	{
+		return Promise.reject(new Error(`Method not implemented for modal: ${interaction.customId}`));
 	}
 
 	// Chỉ command có option bật autocomplete mới cần override.
