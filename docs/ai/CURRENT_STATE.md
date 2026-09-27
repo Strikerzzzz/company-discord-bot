@@ -5,9 +5,10 @@
 
 ## 1. Phase hiện tại
 
-**Phase 12 — Gamification và giao diện ảnh: ĐÃ MERGE VÀO `main`** (DEC-028…032).
+**Phase 13 — Bộ danh hiệu chọn được, bảng điều khiển role: ĐÃ CODE XONG, đã review độc lập và sửa lỗi** (DEC-033).
 
-- `main` có đủ Phase 0–10 và Phase 12. Không còn branch nào đang dở.
+- Branch `phase-13/tier-sets`, **chưa merge vào `main`**; chờ người phụ trách duyệt.
+- `main` có đủ Phase 0–10 và Phase 12 (DEC-032).
 - **Chưa chạy thật trên Discord.** Server Linux cấp ngày thứ 2. Lần chạy thật gộp Phase 1 bước 6, Phase 11 và kiểm Phase 12.
 
 ## 2. Tính năng đã có
@@ -15,8 +16,8 @@
 | Nhóm | Nội dung |
 | --- | --- |
 | Activity XP | XP cố định/tin (mặc định 10), cooldown 60s, level 5n²+50n+100, chống tin ngắn/trùng (trong RAM), cấu hình theo channel |
-| Cảnh giới tu tiên | 8 cảnh giới theo level (Luyện Khí → Độ Kiếp), thông báo "đột phá" khi vượt mốc, thông báo lên level theo phong cách tu tiên |
-| Role cảnh giới | `/config tier set-role|clear-role|list`; bot tự thêm/bỏ role khi thành viên nhắn tin được XP. Chặn role nguy hiểm, role trùng vai trò khác; người gán cần Manage Roles |
+| Bộ danh hiệu | 5 bộ (Tu tiên, Rank game, Kiếm hiệp, Cây xanh, Vũ trụ) × 8 bậc cùng mốc level; admin chọn bộ, đổi tên/emoji từng bậc; thông báo, ảnh thẻ theo giọng văn và trang trí của bộ (DEC-033) |
+| Role danh hiệu | Bảng điều khiển `/config tier panel` (menu chọn bộ, 8 ô chọn role, form đổi tên, nút tạo/đồng bộ role) và lệnh `/config tier …`; bot tự tạo role (không quyền), tự thêm/bỏ role khi thành viên nhắn tin được XP. Chặn role nguy hiểm, mentionable, trùng vai trò khác; người gán cần Manage Roles cấp server |
 | Chuỗi ngày, huy hiệu | Chuỗi ngày hoạt động (giờ Việt Nam), 15 huy hiệu; chỉ hiển thị, không cộng điểm |
 | Contribution | `/contribution submit/view/list`, context menu "Ghi nhận đóng góp", nút 👍; điểm không bao giờ âm (tự bù, PROP-024); rút ghi nhận khi tác giả đang bị phạt thì không ghi nhận lại được (PROP-031) |
 | Vote/bầu cử | `/poll create/close/results/list`, ẩn danh, XP một lần; giới hạn XP từ vote mỗi ngày do admin đặt (mặc định 25) |
@@ -78,3 +79,4 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-26 | DEC-028: merge Phase 2–10 vào `main`; trả lời PEND-015…020. Mở Phase 12 (DEC-029…031). |
 | 2026-09-27 | Phase 12: nền móng + 5 agent (2 đợt), 3 agent review độc lập, 2 agent sửa lỗi. 601 test. |
 | 2026-09-27 | DEC-032: duyệt Phase 12, làm PROP-031, giữ nguyên PROP-027. Merge Phase 12 vào `main` (603 test). Chờ chạy thật. |
+| 2026-09-27 | Phase 13 (DEC-033): nền móng + 3 agent (vẽ ảnh; bảng điều khiển và role; giọng văn), 3 agent review độc lập, 2 agent sửa lỗi. 725 test. Chờ duyệt merge. |

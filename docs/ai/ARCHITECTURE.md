@@ -138,6 +138,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 - Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
 - Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
 - `/config tier panel`: bảng điều khiển (ephemeral, Components V2): menu chọn bộ, 8 ô chọn role (RoleSelect, điền sẵn), nút đổi tên (form 4 ô), tạo/đồng bộ role, khôi phục tên. Namespace `tierui`. `/config tier style|rename|reset-names|setup-roles` là lệnh gõ tay tương ứng.
+  - customId mang trạng thái lúc vẽ để panel cũ không ghi đè: `tierui:reset:<setKey>`, `tierui:role:<bậc>:<roleId|none>`, `tierui:names:<nhóm>:<setKey>:<8 hex vân tay tên>`. Trạng thái đã đổi thì bot vẽ lại panel và báo riêng.
+  - Nút ✨ (`tierRoleSetup.ts`) chỉ đổi tên/màu role do bot tạo (`created_by_bot`), tạo role từ bậc 8 xuống bậc 1, dừng khi server đủ số role (30005); audit `tier_role.setup` ghi trong `finally`, bỏ qua khi không có thay đổi.
+  - Bỏ gán role do bot tạo (`clearTierRoleAssignment`, dùng chung cho `clear-role` và panel) thì xoá role đó nếu người gọi có Manage Roles; audit `tier_role.clear` có `deletedRoleId`.
 - Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`); component của command `adminOnly` cũng qua `assertAdmin` (DEC-033).
 - `/config tier set-role|clear-role|list`: gán role cho bậc; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
@@ -180,7 +183,7 @@ Quy tắc:
 
 - Intent: `Guilds`, `GuildMessages`, `MessageContent` (privileged, DEC-023). Không dùng `GuildMembers` hay `GuildPresences`.
 - Quyền bot tối thiểu: View Channels, Send Messages, Send Messages in Threads, Embed Links, Attach Files (ảnh thẻ, DEC-030), Manage Roles (role cảnh giới, DEC-031) (`docs/DEPLOY.md`).
-- Role cảnh giới: không nhận `@everyone`, role managed, role có quyền quản trị/kiểm duyệt, role không thấp hơn role cao nhất của bot; kiểm tra lại mỗi lần thêm role.
+- Role danh hiệu: không nhận `@everyone`, role managed, role mentionable, role có quyền quản trị/kiểm duyệt (cấp server hoặc overwrite kênh), role không thấp hơn role cao nhất của bot; kiểm tra lại mỗi lần thêm role. Quyền Manage Roles của người gọi lấy ở cấp server (`member.permissions`, LL-019).
 - `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level/đột phá mới ping người được nhắc.
 - Secret chỉ lấy từ env; logger che token; `build/` không chứa file cấu hình.
 - `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
