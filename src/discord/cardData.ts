@@ -173,6 +173,7 @@ export function buildRankCardData(input: RankCardInput): RankCardData
 		displayName: input.displayName,
 		avatar: input.avatar,
 		level: gamification.level,
+		tierSet: gamification.tierSet,
 		tier: gamification.tier,
 		nextTier: gamification.nextTier,
 		activity: {

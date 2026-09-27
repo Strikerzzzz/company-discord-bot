@@ -8,7 +8,7 @@ import { cleanDisplayName, colorForName, decodeAvatar, fitList, fitText, graphem
 import { ensureFonts, findFontDir, font } from "../src/discord/cards/fonts";
 import { LeaderboardCardData, LeaderboardCardRow, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { LevelInfo, levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
-import { nextTier, Tier, tierForLevel, TIERS } from "../src/modules/activity/tiers";
+import { DEFAULT_TIER_SET, nextTier, Tier, tierForLevel, TIERS } from "../src/modules/activity/tiers";
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_RENDER_MS = 1000;
@@ -59,6 +59,7 @@ function rankData(overrides: Partial<RankCardData> = {}, totalXp = 2300): RankCa
 		displayName: "Nguyễn Tuấn Tiến",
 		avatar: fakeAvatar(),
 		level,
+		tierSet: DEFAULT_TIER_SET,
 		tier: tierForLevel(level.level),
 		nextTier: nextTier(level.level),
 		activity: { rank: 3, totalRanked: 37, weeklyXp: 1240, weeklyRank: 2 },

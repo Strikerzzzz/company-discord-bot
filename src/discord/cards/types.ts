@@ -1,5 +1,5 @@
 import { LevelInfo } from "../../modules/activity/levels";
-import { Tier } from "../../modules/activity/tiers";
+import { Tier, TierSet } from "../../modules/activity/tiers";
 
 /*
  * Dữ liệu đầu vào của ảnh thẻ (DEC-030). Hàm vẽ chỉ nhận dữ liệu đã chuẩn bị sẵn (tên hiển thị, bytes avatar, chuỗi đã định dạng),
@@ -16,6 +16,8 @@ export interface RankCardData
 	displayName: string;
 	avatar: AvatarImage;
 	level: LevelInfo;
+	/** Bộ danh hiệu guild đang dùng (DEC-033): giọng văn trên thẻ (texts.maxTier, texts.idleToday, texts.tierLabel) và kiểu trang trí theo bộ. */
+	tierSet: TierSet;
 	tier: Tier;
 	/** null nếu đã ở cảnh giới cao nhất. */
 	nextTier: Tier | null;
