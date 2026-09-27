@@ -59,8 +59,9 @@ export default class InteractionCreate extends Event
 			if (command.adminOnly) assertAdmin(interaction, this.client.services);
 			await command.execute(interaction);
 		}
-		else if (interaction.isButton())
+		else if (interaction.isButton() || interaction.isAnySelectMenu() || interaction.isModalSubmit())
 		{
+			// Nút, menu chọn và form dùng chung namespace customId khai báo trong `buttonIds` của command.
 			const command = this.client.buttons.resolve(interaction.customId);
 			if (!command)
 			{
@@ -68,7 +69,12 @@ export default class InteractionCreate extends Event
 				return;
 			}
 
-			await command.executeButton(interaction);
+			// Component của lệnh admin kiểm tra quyền như lệnh gõ (lớp 2, DEC-033): ai đó có thể bấm vào component
+			// của một message còn lại sau khi đã mất quyền admin.
+			if (command.adminOnly) assertAdmin(interaction, this.client.services);
+			if (interaction.isButton()) await command.executeButton(interaction);
+			else if (interaction.isAnySelectMenu()) await command.executeSelectMenu(interaction);
+			else await command.executeModal(interaction);
 		}
 		else if (interaction.isContextMenuCommand())
 		{
@@ -98,9 +104,11 @@ export default class InteractionCreate extends Event
 
 function describe(interaction: Interaction): string
 {
+	// Đọc type trước khi thu hẹp kiểu: sau các nhánh dưới, TypeScript coi interaction là không còn loại nào khác.
+	const { type } = interaction;
 	if (interaction.isCommand() || interaction.isAutocomplete()) return `"${interaction.commandName}"`;
-	if (interaction.isMessageComponent()) return `"${interaction.customId}"`;
-	return `type ${interaction.type}`;
+	if (interaction.isMessageComponent() || interaction.isModalSubmit()) return `"${interaction.customId}"`;
+	return `type ${type}`;
 }
 
 /** Từ chối một interaction không xử lý được: trả lời riêng nếu reply được, autocomplete thì trả danh sách rỗng. */

@@ -164,10 +164,10 @@ describe("tierRoleSafetyIssue", () =>
 
 	test("chặn @everyone và role do integration quản lý", () =>
 	{
-		assert.equal(tierRoleSafetyIssue(fakeRole({ id: GUILD, position: 0 }), bot), "Không thể dùng @everyone làm role cảnh giới.");
+		assert.equal(tierRoleSafetyIssue(fakeRole({ id: GUILD, position: 0 }), bot), "Không thể dùng @everyone làm role danh hiệu.");
 		assert.equal(
 			tierRoleSafetyIssue(fakeRole({ id: ROLE_KIM_DAN, position: 3, managed: true }), bot),
-			"Không thể dùng role do bot hoặc integration quản lý làm role cảnh giới.",
+			"Không thể dùng role do bot hoặc integration quản lý làm role danh hiệu.",
 		);
 	});
 
@@ -219,8 +219,8 @@ describe("tierRoleSafetyIssue", () =>
 		});
 		assert.equal(
 			tierRoleSafetyIssue(role, bot),
-			`Không thể dùng <@&${ROLE_KIM_DAN}> làm role cảnh giới vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
-				+ `<#${CHANNEL_BOT}> (Manage Messages, Pin Messages). Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho cảnh giới.`,
+			`Không thể dùng <@&${ROLE_KIM_DAN}> làm role danh hiệu vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
+				+ `<#${CHANNEL_BOT}> (Manage Messages, Pin Messages). Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho bậc danh hiệu.`,
 		);
 	});
 
