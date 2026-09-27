@@ -7,7 +7,7 @@ import { Tier } from "../../modules/activity/tiers";
  * tầng gọi (command) đặt emoji ở phần chữ của tin nhắn đi kèm.
  */
 
-/** Bytes ảnh avatar (PNG/JPEG/WebP/GIF tĩnh) đã tải sẵn; null = vẽ chữ cái đầu của tên trên nền màu. */
+/** Bytes ảnh avatar (PNG/JPEG/WebP) đã tải sẵn; null = vẽ chữ cái đầu của tên trên nền màu. */
 export type AvatarImage = Buffer | null;
 
 export interface RankCardData

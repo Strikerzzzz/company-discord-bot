@@ -267,10 +267,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - `/rank` và `/leaderboard` trả về **ảnh PNG** do bot vẽ.
   - Thêm dependency `@napi-rs/canvas` **1.0.9** (pin chính xác; MIT; binary dựng sẵn cho từng nền tảng qua optionalDependencies; không có install script, nên chạy được với `ignore-scripts=true`). Đây là ngoại lệ đã duyệt của luật protected #7.
   - Font **Be Vietnam Pro** (SIL OFL 1.1) nằm trong `assets/fonts/`, kèm `OFL.txt`. Ảnh không vẽ emoji; emoji nằm ở phần chữ của tin nhắn.
-  - **Tải avatar từ CDN của Discord** để vẽ lên ảnh. Đây là ngoại lệ có kiểm soát của nguyên tắc "chỉ gọi Discord API": chỉ chấp nhận host `cdn.discordapp.com` và `media.discordapp.net` qua HTTPS, có timeout, giới hạn dung lượng và cache trong bộ nhớ. Không gọi host nào khác.
+  - **Tải avatar từ CDN của Discord** để vẽ lên ảnh. Đây là ngoại lệ có kiểm soát của nguyên tắc "chỉ gọi Discord API": chỉ chấp nhận host `cdn.discordapp.com` qua HTTPS (sau review 2026-09-27: bỏ `media.discordapp.net` vì không dùng tới và host này phục vụ file người dùng tải lên), chỉ ảnh PNG/JPEG/WebP (không GIF), có timeout, giới hạn dung lượng và cache trong bộ nhớ. Không gọi host nào khác.
   - **Bảng vàng:** admin chọn một channel, bot giữ ở đó một message bảng xếp hạng dạng ảnh và tự cập nhật định kỳ.
   - Bảng xếp hạng có **nút** chuyển loại điểm, phạm vi, kỳ và trang (PROP-029).
   - Bot cần thêm quyền **Attach Files**.
+  - Sau review 2026-09-27: vẽ ảnh có cooldown 3 giây mỗi người và tối đa 2 lần vẽ đồng thời, để một người spam không làm bot đứng.
 
 ### DEC-031 — Tự gán role Discord theo cảnh giới
 

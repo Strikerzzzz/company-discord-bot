@@ -42,7 +42,7 @@ src/
 │   │                         achievements (15 huy hiệu), GamificationRepository, TierRoleService (role theo cảnh giới)
 │   ├── live-board/           LiveBoardService: kênh và message của Bảng vàng
 │   └── statistics/           Thống kê tổng quan 7 ngày cho admin
-├── classes/                  Base class Command / ContextMenu / Event, DiscordClient (có `avatars`, `members`), ProcessManager
+├── classes/                  Base class Command / ContextMenu / Event, DiscordClient (có `avatars`, `members`, `renderGate`), ProcessManager
 ├── handlers/                 loadModules (nạp theo thư mục), EventHandler, InteractionHandler (deploy), ButtonHandler
 ├── events/                   clientReady (deploy, lịch đóng vote, lịch Bảng vàng), interactionCreate (dispatcher),
 │                             messageCreate (XP, thông báo lên level/đột phá, đồng bộ role cảnh giới)
@@ -61,7 +61,8 @@ src/
     ├── cardData.ts           Dựng dữ liệu ảnh từ service (hàm thuần) + loader tên/avatar; rankSummaryText
     ├── avatars.ts            AvatarFetcher: tải avatar từ CDN Discord (allowlist host, timeout, giới hạn dung lượng, cache)
     ├── memberDirectory.ts    Tên hiển thị + avatar URL theo user ID: cache discord.js → cache TTL → REST từng người
-    ├── liveBoard.ts          Bảng vàng: đăng/sửa message 2–3 ảnh, khoá theo guild, lịch 10 phút
+    ├── liveBoard.ts          Bảng vàng: đăng/sửa message 2–3 ảnh, khoá theo guild, lịch 10 phút, tự kiểm lại mỗi giờ
+    ├── renderGate.ts         Cooldown vẽ ảnh 3 giây mỗi người (/rank, /leaderboard, nút lb) + tối đa 2 lần vẽ đồng thời
     ├── roleSync.ts           Đồng bộ role cảnh giới (từng role một), tierRoleSafetyIssue (chặn role nguy hiểm)
     └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin, progression (lên level/đột phá)
 assets/fonts/                 Be Vietnam Pro (4 weight) + OFL.txt
@@ -181,7 +182,7 @@ Quy tắc:
 | Thời điểm | Đích |
 | --- | --- |
 | Runtime | Discord Gateway (WebSocket) và Discord REST, qua discord.js |
-| Runtime | CDN avatar của Discord (`cdn.discordapp.com`, `media.discordapp.net`), HTTPS, không theo redirect, qua `AvatarFetcher` (DEC-030) |
+| Runtime | CDN avatar của Discord (chỉ `cdn.discordapp.com`), HTTPS, không theo redirect, chỉ PNG/JPEG/WebP tối đa 512 KB, qua `AvatarFetcher` (DEC-030) |
 | Cài đặt | npm registry (không có install script; binary better-sqlite3 và `@napi-rs/canvas` nằm sẵn trong package theo nền tảng) |
 
 ## 7. Test

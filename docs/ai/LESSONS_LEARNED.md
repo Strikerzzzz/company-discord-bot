@@ -197,3 +197,17 @@ Format mỗi mục:
 - **Phát hiện:** 2026-09-26 · **Mức độ:** Thấp · **Trạng thái:** Đã biết, có cách tránh
 - **Hiện tượng:** Script Node viết ra file bằng heredoc `<<'EOF'` qua Bash tool bị mất một dấu `\`: `\\d` thành `\d`, `\\|` thành `\|` (chính đoạn này khi ghi bằng heredoc cũng bị mất dấu như vậy). Hậu quả là chuỗi neo không khớp, hoặc regex không hợp lệ. Hiện tượng giống lỗi của `node -e` đã ghi ở `CURRENT_STATE.md`.
 - **Bài học:** Script có `\` (regex, escape) thì viết bằng công cụ Write/Edit, không qua heredoc. Script sửa file phải kiểm tra chuỗi neo và báo lỗi nếu không khớp, không được lặng lẽ bỏ qua.
+
+## LL-017 — Hai tính năng đã duyệt, mỗi cái đúng một mình, ghép lại thì sai; và role tự gán là bề mặt leo thang quyền
+
+- **Phát hiện:** 2026-09-27 (review độc lập Phase 12, lúc đó cả 556 test đều pass) · **Mức độ:** Cao · **Trạng thái:** Đã sửa các lỗi đã xác nhận; PROP-031 chờ quyết định
+- **Hiện tượng:**
+  - Event bù điểm (PROP-024) mang thời điểm hiện tại, nên bảng tuần/tháng (DEC-029) tính nó là "điểm kiếm được". Kết quả: người vừa bị gỡ contribution lại lên top Bảng vàng. Mỗi tính năng có test riêng đều pass.
+  - Role cảnh giới (DEC-031) chỉ kiểm quyền của role, không kiểm vai trò của role trong bot (role admin bot, role tạo vote, role team), cũng không kiểm quyền của người gán. Người chỉ có role admin bot có thể biến mọi người thành admin bot, hoặc tự cấp role cho mình.
+  - "Hạng của tôi" dò từng trang khi nhiều người bằng điểm, nên mất tới khoảng 7–10 giây và chặn event loop. Test dùng dữ liệu nhỏ nên không thấy.
+  - Tên subcommand mới bằng tiếng Việt, trái DEC-020, do spec giao cho agent viết sai.
+- **Bài học:**
+  - Tính năng mới đọc ledger theo thời gian phải xét **mọi loại event**, kể cả event do hệ thống tự sinh (bù, điều chỉnh).
+  - Tính năng để bot thay người dùng làm một việc cần quyền (gán role, đăng bài) phải kiểm tra **cả quyền của người gọi**, không chỉ quyền của bot. Đồng thời phải chặn xung đột với những vai trò khác của cùng đối tượng.
+  - Test hiệu năng phải gồm trường hợp xấu nhất về phân bố dữ liệu (nhiều người bằng điểm), không chỉ tổng số dòng.
+  - Spec giao việc phải đối chiếu với DECISIONS (quy tắc đặt tên, ngôn ngữ) trước khi giao.
