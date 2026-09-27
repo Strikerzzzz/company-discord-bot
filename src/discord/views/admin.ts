@@ -178,11 +178,11 @@ export function buildConfigEmbed(
 		? fitLines(channelLines(channels), EMBED_FIELD_MAX, hidden => `… và ${hidden} channel khác (xem \`/config channel list\`)`)
 		: "Không có. Mọi channel dùng cấu hình chung.";
 	const boardText = gamification.boardChannelId === null
-		? "Đang tắt. Dùng `/config bang-vang` để bật."
+		? "Đang tắt. Dùng `/config board` để bật."
 		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
 	const tierRoleText = gamification.tierRoles.length > 0
 		? gamification.tierRoles.map(mapping => `${tierLabel(mapping.tierKey)}: ${roleMention(mapping.roleId)}`).join("\n")
-		: "Chưa gán role nào. Dùng `/config canh-gioi gan-role` để gán.";
+		: "Chưa gán role nào. Dùng `/config tier set-role` để gán.";
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
@@ -230,6 +230,10 @@ export function buildTeamListEmbed(teams: readonly string[]): EmbedBuilder
 /** Chú thích chung về thời điểm bot đổi role cảnh giới (DEC-031: bot không đọc danh sách thành viên). */
 export const TIER_ROLE_SYNC_NOTE = "Role được cập nhật khi thành viên nhắn tin được XP; mỗi người chỉ giữ role của cảnh giới hiện tại.";
 
+/** Cảnh báo khi gán role cảnh giới: bot gỡ role này khỏi mọi người không ở đúng cảnh giới, nên role phải dành riêng cho cảnh giới. */
+export const TIER_ROLE_DEDICATED_NOTE = "⚠️ Nên dùng role **mới tạo riêng** cho cảnh giới: bot sẽ gỡ role này khỏi người không ở đúng cảnh giới "
+	+ "khi họ nhắn tin, và gán cho mọi người đạt cảnh giới.";
+
 /** Danh sách 8 cảnh giới: emoji, tên, mốc level và role đã gán (hoặc "chưa gán"). */
 export function buildTierRoleListEmbed(mappings: readonly TierRoleMapping[]): EmbedBuilder
 {
@@ -254,7 +258,10 @@ export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
 	const parts: string[] = [];
 	if (result.added.length > 0) parts.push(`đã thêm ${mentions(result.added)}`);
 	if (result.removed.length > 0) parts.push(`đã bỏ ${mentions(result.removed)}`);
-	if (result.skipped.length > 0) parts.push(`không đổi được ${mentions(result.skipped)} (kiểm tra quyền Manage Roles và thứ bậc role của bot)`);
+	if (result.skipped.length > 0)
+	{
+		parts.push(`không đổi được ${mentions(result.skipped)} (kiểm tra quyền Manage Roles và thứ bậc role của bot; vừa lỗi thì bot chờ 10 phút mới thử lại)`);
+	}
 	return parts.length > 0 ? `☯️ Role cảnh giới: ${parts.join(" · ")}.` : null;
 }
 

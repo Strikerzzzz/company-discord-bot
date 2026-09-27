@@ -22,6 +22,10 @@ TimeoutStopSec=20
 # File mới (database, backup) chỉ user chạy bot đọc được: phiếu vote "ẩn danh" vẫn lưu user_id trong DB.
 UMask=0077
 
+# Trần bộ nhớ: bot bình thường dùng vài trăm MB (vẽ ảnh thẻ tốn thêm lúc cao điểm). Vượt trần thì kernel dừng process
+# và systemd khởi động lại (Restart=on-failure), thay vì làm cả server hết RAM.
+MemoryMax=1G
+
 # Giới hạn quyền của process: chỉ được ghi vào thư mục data (database và backup).
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -33,6 +37,9 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallFilter=@system-service
+# System call ngoài danh sách trên thì trả lỗi EPERM cho process thay vì giết process bằng SIGSYS. Thư viện native
+# (vẽ ảnh bằng @napi-rs/canvas/Skia, better-sqlite3) có thể gọi syscall hiếm gặp; khi đó chỉ thao tác đó lỗi, bot không sập.
+SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 ProtectKernelTunables=true
 ProtectKernelModules=true

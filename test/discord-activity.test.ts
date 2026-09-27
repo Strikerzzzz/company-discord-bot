@@ -480,7 +480,13 @@ describe("event messageCreate", () =>
 	function tierMember(roleIds: string[], addFails = false): { member: GuildMember; added: string[] }
 	{
 		const added: string[] = [];
-		const role = (id: string, position: number): object => ({ id, position, managed: false, guild: { id: GUILD }, permissions: new PermissionsBitField() });
+		const role = (id: string, position: number): object => ({
+			id,
+			position,
+			managed: false,
+			guild: { id: GUILD, channels: { cache: new Map() } },
+			permissions: new PermissionsBitField(),
+		});
 		const guild = {
 			id: GUILD,
 			members: { me: { permissions: new PermissionsBitField([PermissionFlagsBits.ManageRoles]), roles: { highest: role(BOT_ROLE, 10) } } },
@@ -496,7 +502,7 @@ describe("event messageCreate", () =>
 			},
 			remove: () => Promise.resolve(),
 		};
-		return { member: Object.setPrototypeOf({ guild, roles }, GuildMember.prototype) as GuildMember, added };
+		return { member: Object.setPrototypeOf({ guild, user: { id: USER_A }, roles }, GuildMember.prototype) as GuildMember, added };
 	}
 
 	const BOT_ROLE = "510000000000000099";

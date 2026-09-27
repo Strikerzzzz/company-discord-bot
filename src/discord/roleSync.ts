@@ -1,12 +1,12 @@
-import { GuildMember, PermissionFlagsBits, Role } from "discord.js";
+import { GuildMember, OverwriteType, PermissionFlagsBits, PermissionsBitField, Role } from "discord.js";
 import { TierRoleServiceApi } from "../modules/gamification/types";
 import { logger } from "../shared/logger";
-import { roleMention } from "./format";
+import { channelMention, roleMention } from "./format";
 import { roleIdsOf } from "./members";
 
 /**
- * Quyền quản trị hoặc kiểm duyệt: role có một trong các quyền này không được dùng làm role cảnh giới (DEC-031),
- * vì bot tự gán role cảnh giới cho bất kỳ ai nhắn tin đủ nhiều.
+ * Quyền quản trị, kiểm duyệt hoặc quyền đặc biệt: role có một trong các quyền này (ở cấp server hoặc trong phân quyền riêng
+ * của một kênh) không được dùng làm role cảnh giới (DEC-031), vì bot tự gán role cảnh giới cho bất kỳ ai nhắn tin đủ nhiều.
  */
 const DANGEROUS_PERMISSIONS: readonly (readonly [bigint, string])[] = [
 	[PermissionFlagsBits.Administrator, "Administrator"],
@@ -27,11 +27,22 @@ const DANGEROUS_PERMISSIONS: readonly (readonly [bigint, string])[] = [
 	[PermissionFlagsBits.MoveMembers, "Move Members"],
 	[PermissionFlagsBits.MuteMembers, "Mute Members"],
 	[PermissionFlagsBits.DeafenMembers, "Deafen Members"],
+	[PermissionFlagsBits.PinMessages, "Pin Messages"],
+	[PermissionFlagsBits.BypassSlowmode, "Bypass Slowmode"],
+	[PermissionFlagsBits.ViewGuildInsights, "View Server Insights"],
 ];
+
+/** Số kênh tối đa nêu tên trong thông báo về phân quyền riêng nguy hiểm của role. */
+const MAX_LISTED_CHANNELS = 3;
 
 /** Khoảng tối thiểu giữa hai cảnh báo cùng loại của một guild, để lỗi lặp lại ở mỗi tin nhắn không làm ngập log. */
 const WARN_THROTTLE_MS = 10 * 60 * 1000;
 const lastWarnings = new Map<string, number>();
+
+/** Sau một lần thêm/bỏ role lỗi, bỏ qua đúng (guild, user, role) đó trong khoảng này thay vì gọi lại API ở mỗi tin nhắn. */
+const ROLE_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
+/** Giới hạn số lỗi được nhớ cùng lúc, để map không phình vô hạn kể cả khi có rất nhiều lời gọi lỗi trong một khoảng ngắn. */
+const MAX_REMEMBERED_FAILURES = 10_000;
 
 export interface TierRoleSyncResult
 {
@@ -39,9 +50,59 @@ export interface TierRoleSyncResult
 	added: string[];
 	/** Role đã bỏ khỏi member. */
 	removed: string[];
-	/** Role lẽ ra phải thêm hoặc bỏ nhưng không làm được (thiếu quyền, thứ bậc role, role nguy hiểm, lỗi API). */
+	/** Role lẽ ra phải thêm hoặc bỏ nhưng không làm được (thiếu quyền, thứ bậc role, role nguy hiểm, lỗi API, vừa lỗi gần đây). */
 	skipped: string[];
 }
+
+/**
+ * Nhớ các khoá vừa lỗi trong `windowMs` để bỏ qua khoá đó tới khi hết hạn. Map giữ thứ tự chèn (ghi lại thì chuyển xuống
+ * cuối), nên mục cũ nhất luôn ở đầu: mỗi lần dùng chỉ cần dọn các mục hết hạn ở đầu map. Vượt `maxEntries` thì bỏ mục cũ nhất.
+ */
+export class FailureBackoff
+{
+	private readonly failures = new Map<string, number>();
+
+	constructor(private readonly windowMs: number, private readonly maxEntries: number)
+	{}
+
+	/** Số khoá lỗi đang được nhớ. */
+	get size(): number
+	{
+		return this.failures.size;
+	}
+
+	/** Khoá có lỗi trong `windowMs` tính tới `now` không. */
+	isBlocked(key: string, now: number): boolean
+	{
+		this.prune(now);
+		const failedAt = this.failures.get(key);
+		return failedAt !== undefined && now - failedAt < this.windowMs;
+	}
+
+	/** Ghi nhận khoá vừa lỗi lúc `now`. */
+	record(key: string, now: number): void
+	{
+		this.failures.delete(key);
+		this.failures.set(key, now);
+		this.prune(now);
+		for (const oldest of this.failures.keys())
+		{
+			if (this.failures.size <= this.maxEntries) break;
+			this.failures.delete(oldest);
+		}
+	}
+
+	private prune(now: number): void
+	{
+		for (const [key, failedAt] of this.failures)
+		{
+			if (now - failedAt < this.windowMs) break;
+			this.failures.delete(key);
+		}
+	}
+}
+
+const recentFailures = new FailureBackoff(ROLE_FAILURE_BACKOFF_MS, MAX_REMEMBERED_FAILURES);
 
 /** Cảnh báo có throttle theo guild và loại cảnh báo. */
 function warnThrottled(guildId: string, kind: string, message: string, error?: unknown): void
@@ -55,26 +116,62 @@ function warnThrottled(guildId: string, kind: string, message: string, error?: u
 	else logger.warn(message, error);
 }
 
-/** Tên các quyền nguy hiểm mà role có (Administrator không được tính là "có mọi quyền" ở đây, mà được liệt kê riêng). */
-function dangerousPermissionsOf(role: Role): string[]
+/** Tên các quyền nguy hiểm có trong `permissions` (Administrator không được tính là "có mọi quyền" ở đây, mà được liệt kê riêng). */
+function dangerousPermissionNames(permissions: Readonly<PermissionsBitField>): string[]
 {
-	return DANGEROUS_PERMISSIONS.filter(([flag]) => role.permissions.has(flag, false)).map(([, name]) => name);
+	return DANGEROUS_PERMISSIONS.filter(([flag]) => permissions.has(flag, false)).map(([, name]) => name);
+}
+
+interface DangerousOverwrite
+{
+	channelId: string;
+	permissions: string[];
+}
+
+/** Các kênh (kể cả category) có phân quyền riêng cho `role` cho phép quyền nguy hiểm. */
+function dangerousOverwritesOf(role: Role): DangerousOverwrite[]
+{
+	const found: DangerousOverwrite[] = [];
+	for (const channel of role.guild.channels.cache.values())
+	{
+		if (channel.isThread()) continue;
+		const overwrite = channel.permissionOverwrites.cache.get(role.id);
+		if (overwrite?.type !== OverwriteType.Role) continue;
+		const permissions = dangerousPermissionNames(overwrite.allow);
+		if (permissions.length > 0) found.push({ channelId: channel.id, permissions });
+	}
+	return found;
+}
+
+function describeOverwrites(overwrites: readonly DangerousOverwrite[]): string
+{
+	const listed = overwrites.slice(0, MAX_LISTED_CHANNELS).map(entry => `${channelMention(entry.channelId)} (${entry.permissions.join(", ")})`);
+	const hidden = overwrites.length - listed.length;
+	return hidden > 0 ? `${listed.join(", ")} và ${hidden} kênh khác` : listed.join(", ");
 }
 
 /**
  * Lý do (tiếng Việt, hiển thị cho admin) khiến `role` không được dùng làm role cảnh giới; null nếu dùng được.
- * Chặn: @everyone, role do bot/integration quản lý, role có quyền quản trị/kiểm duyệt, role không thấp hơn role cao nhất của bot.
+ * Chặn: @everyone, role do bot/integration quản lý, role có quyền nguy hiểm ở cấp server hoặc trong phân quyền riêng của
+ * bất kỳ kênh nào, role không thấp hơn role cao nhất của bot.
  */
 export function tierRoleSafetyIssue(role: Role, botMember: GuildMember): string | null
 {
 	if (role.id === role.guild.id) return "Không thể dùng @everyone làm role cảnh giới.";
 	if (role.managed) return "Không thể dùng role do bot hoặc integration quản lý làm role cảnh giới.";
 
-	const dangerous = dangerousPermissionsOf(role);
+	const dangerous = dangerousPermissionNames(role.permissions);
 	if (dangerous.length > 0)
 	{
 		return `Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì role này có quyền quản trị hoặc kiểm duyệt (${dangerous.join(", ")}). `
 			+ "Bot tự gán role cảnh giới cho thành viên, nên hãy dùng role không có các quyền này.";
+	}
+
+	const overwrites = dangerousOverwritesOf(role);
+	if (overwrites.length > 0)
+	{
+		return `Không thể dùng ${roleMention(role.id)} làm role cảnh giới vì phân quyền riêng của kênh cấp cho role này quyền quản trị hoặc kiểm duyệt: `
+			+ `${describeOverwrites(overwrites)}. Hãy gỡ các quyền đó trong phần phân quyền của kênh, hoặc dùng role mới tạo riêng cho cảnh giới.`;
 	}
 
 	const highest = botMember.roles.highest;
@@ -92,9 +189,14 @@ function canRemoveRole(role: Role, botMember: GuildMember): boolean
 	return role.id !== role.guild.id && !role.managed && role.position < botMember.roles.highest.position;
 }
 
-/** Thêm hoặc bỏ một role; lỗi API chỉ ghi cảnh báo. Gọi từng role (PUT/DELETE) thay vì PATCH cả danh sách role từ cache. */
+/**
+ * Thêm hoặc bỏ một role; lỗi API chỉ ghi cảnh báo. Lỗi được nhớ trong ROLE_FAILURE_BACKOFF_MS; trong thời gian đó không gọi
+ * lại API cho đúng (guild, user, role) này. Gọi từng role (PUT/DELETE) thay vì PATCH cả danh sách role từ cache.
+ */
 async function changeRole(member: GuildMember, roleId: string, action: "add" | "remove", reason: string): Promise<boolean>
 {
+	const key = `${member.guild.id}:${member.id}:${roleId}`;
+	if (recentFailures.isBlocked(key, Date.now())) return false;
 	try
 	{
 		if (action === "add") await member.roles.add(roleId, reason);
@@ -103,6 +205,7 @@ async function changeRole(member: GuildMember, roleId: string, action: "add" | "
 	}
 	catch (error)
 	{
+		recentFailures.record(key, Date.now());
 		warnThrottled(member.guild.id, "api", `Không ${action === "add" ? "thêm" : "bỏ"} được role cảnh giới "${roleId}" ở server "${member.guild.id}":`, error);
 		return false;
 	}
@@ -145,15 +248,15 @@ async function applyPlan(member: GuildMember, level: number, tierRoles: TierRole
 			guild.id,
 			"hierarchy",
 			`Không đồng bộ được role cảnh giới ${unmanageable.join(", ")} ở server "${guild.id}": role không còn, do integration quản lý, `
-				+ "có quyền quản trị/kiểm duyệt, hoặc không thấp hơn role cao nhất của bot.",
+				+ "có quyền quản trị/kiểm duyệt (ở server hoặc trong phân quyền riêng của kênh), hoặc không thấp hơn role cao nhất của bot.",
 		);
 	}
 }
 
 /**
  * Đưa role cảnh giới của member về đúng cảnh giới của `level` (DEC-031): thêm role của cảnh giới hiện tại, bỏ role của
- * các cảnh giới khác. Không gọi API nếu không có gì cần đổi. Role không quản lý được hoặc lỗi API thì đưa vào `skipped`
- * và ghi cảnh báo (có throttle theo guild). Không bao giờ ném lỗi.
+ * các cảnh giới khác. Không gọi API nếu không có gì cần đổi. Role không quản lý được, lỗi API, hoặc vừa lỗi trong
+ * ROLE_FAILURE_BACKOFF_MS thì đưa vào `skipped` và ghi cảnh báo (có throttle theo guild). Không bao giờ ném lỗi.
  */
 export async function syncTierRoles(member: GuildMember, level: number, tierRoles: TierRoleServiceApi, reason: string): Promise<TierRoleSyncResult>
 {

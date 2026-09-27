@@ -457,7 +457,13 @@ interface RoleChange
 function fakeGuildMember(roleIds: string[]): { member: GuildMember; changes: RoleChange[] }
 {
 	const changes: RoleChange[] = [];
-	const guildRole = (id: string, position: number): object => ({ id, position, managed: false, guild: { id: GUILD }, permissions: new PermissionsBitField() });
+	const guildRole = (id: string, position: number): object => ({
+		id,
+		position,
+		managed: false,
+		guild: { id: GUILD, channels: { cache: new Map() } },
+		permissions: new PermissionsBitField(),
+	});
 	const guild = {
 		id: GUILD,
 		members: { me: { permissions: new PermissionsBitField([PermissionFlagsBits.ManageRoles]), roles: { highest: guildRole(BOT_ROLE, 10) } } },
@@ -474,7 +480,7 @@ function fakeGuildMember(roleIds: string[]): { member: GuildMember; changes: Rol
 		changes.push({ action, roleId, reason });
 		return Promise.resolve();
 	};
-	const fake = { guild, roles: { cache: new Map(roleIds.map(id => [id, { id }])), add: record("add"), remove: record("remove") } };
+	const fake = { guild, user: { id: USER_A }, roles: { cache: new Map(roleIds.map(id => [id, { id }])), add: record("add"), remove: record("remove") } };
 	return { member: Object.setPrototypeOf(fake, GuildMember.prototype) as GuildMember, changes };
 }
 
@@ -539,11 +545,11 @@ describe("định nghĩa /admin và /config", () =>
 		assert.deepEqual(names(children(optionAt(adminJson.options, "contribution"))), ["adjust", "remove", "reset", "reset-all"]);
 		assert.deepEqual(
 			names(configJson.options ?? []),
-			["view", "xp", "channel", "team", "admin-role", "poll", "contribution", "canh-gioi", "bang-vang"],
+			["view", "xp", "channel", "team", "admin-role", "poll", "contribution", "tier", "board"],
 		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "channel"))), ["set", "reset", "list"]);
 		assert.deepEqual(names(children(optionAt(configJson.options, "team"))), ["add", "remove", "list"]);
-		assert.deepEqual(names(children(optionAt(configJson.options, "canh-gioi"))), ["gan-role", "bo-role", "list"]);
+		assert.deepEqual(names(children(optionAt(configJson.options, "tier"))), ["set-role", "clear-role", "list"]);
 		assert.deepEqual(names(children(optionAt(configJson.options, "poll"))), ["xp-mac-dinh", "gioi-han-xp-ngay", "role-tao-vote", "xoa-role-tao-vote"]);
 	});
 
@@ -747,8 +753,8 @@ describe("views quản trị", () =>
 		assert.ok(empty.includes("Chưa có team nào"));
 		assert.ok(empty.includes("Mọi channel dùng cấu hình chung"));
 		assert.ok(empty.includes("Giới hạn XP từ vote mỗi ngày: **không giới hạn**"));
-		assert.ok(empty.includes("Đang tắt. Dùng `/config bang-vang` để bật."));
-		assert.ok(empty.includes("Chưa gán role nào. Dùng `/config canh-gioi gan-role` để gán."));
+		assert.ok(empty.includes("Đang tắt. Dùng `/config board` để bật."));
+		assert.ok(empty.includes("Chưa gán role nào. Dùng `/config tier set-role` để gán."));
 	});
 
 	test("embed cấu hình rất nhiều channel vẫn vừa giới hạn field", () =>
@@ -895,7 +901,10 @@ describe("/admin", () =>
 		const fake = await run(admin, { group: "xp", subcommand: "give", options: { "thanh-vien": user(USER_A), "so-xp": 50 }, member });
 		assert.deepEqual(changes, []);
 		assert.equal(fake.edits.length, 1);
-		assert.match(String(fake.edits[0]), new RegExp(`không đổi được <@&${BOT_ROLE}> \\(kiểm tra quyền Manage Roles và thứ bậc role của bot\\)`));
+		assert.match(
+			String(fake.edits[0]),
+			new RegExp(`không đổi được <@&${BOT_ROLE}> \\(kiểm tra quyền Manage Roles và thứ bậc role của bot; vừa lỗi thì bot chờ 10 phút mới thử lại\\)`),
+		);
 	});
 
 	test("contribution adjust: từ chối 0, cộng và trừ đúng dấu", async () =>
@@ -1041,7 +1050,7 @@ describe("/config", () =>
 		const before = embedText(replyEmbed(await run(config, { subcommand: "view" })));
 		assert.ok(before.includes(`<@&${ROLE_BACKEND}>`));
 		assert.ok(before.includes(`<#${CHANNEL_BOT}>: tắt XP`));
-		assert.ok(before.includes("Đang tắt. Dùng `/config bang-vang` để bật."));
+		assert.ok(before.includes("Đang tắt. Dùng `/config board` để bật."));
 		assert.ok(before.includes("Role cảnh giới (0/8)"));
 
 		liveBoards.setChannel(GUILD, CHANNEL_GENERAL, ADMIN);

@@ -236,7 +236,8 @@ export class ContributionService implements ContributionServiceApi
 		{
 			const ledger = this.deps.contributionLedger;
 			const current = ledger.total(guildId, userId);
-			if (current + delta < 0) throw new UserError(`Không thể trừ quá số điểm hiện có (hiện có ${current} điểm).`);
+			// Chỉ chặn khi trừ: tổng đang âm (dữ liệu cũ trước DEC-028) vẫn phải cộng được để đưa về lại.
+			if (delta < 0 && current + delta < 0) throw new UserError(`Không thể trừ quá số điểm hiện có (hiện có ${current} điểm).`);
 
 			ledger.record({
 				guildId,
