@@ -126,12 +126,12 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
   - Namespace nút `lb`: `lb:v:<a|c>:<i|t>:<all|w|m>:<page>:<ownerId>`, `lb:me:<a|c>:<all|w|m>:<ownerId>`. Nút disabled dùng `lb:x:<vị trí>` để customId không trùng.
   - Chủ bảng bấm thì sửa message (thay ảnh bằng `files` + `attachments: []`); người khác bấm thì nhận bảng riêng (ephemeral).
 - Trả lời riêng khi người gọi không có quyền gửi tin, hoặc bot không có Attach Files ở kênh (`mustReplyPrivately`).
-- Bảng vàng: `/config bang-vang` đặt kênh → `LiveBoardService` → `refreshLiveBoard(force)`. Lịch 10 phút sửa message khi chữ ký dữ liệu đổi. Nội dung: Activity cá nhân tuần, Contribution cá nhân tháng, Activity team tuần (nếu có team).
+- Bảng vàng: `/config board` đặt kênh → `LiveBoardService` → `refreshLiveBoard(force)`. Lịch 10 phút sửa message khi chữ ký dữ liệu đổi. Nội dung: Activity cá nhân tuần, Contribution cá nhân tháng, Activity team tuần (nếu có team).
 
 ### 3.5 Quản trị
 - Dispatcher kiểm tra `adminOnly` (lớp 2) cho `/admin` và `/config`; command khai báo thêm `setDefaultMemberPermissions(ManageGuild)` (lớp 1).
 - Mọi thay đổi điểm và cấu hình ghi `audit_log`. Reset chỉ void event (DEC-027).
-- `/config canh-gioi gan-role|bo-role|list`: gán role cho cảnh giới, chặn role nguy hiểm (`tierRoleSafetyIssue`). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
+- `/config tier set-role|clear-role|list`: gán role cho cảnh giới; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
 ### 3.6 Quyền xem và đăng
 
@@ -191,6 +191,6 @@ Quy tắc:
 - Tầng Discord được test bằng fake interaction/service.
 - `test/integration.test.ts` chạy kịch bản end-to-end qua toàn bộ service thật; `test/integration-gamification.test.ts` làm tương tự cho Phase 12, gồm cả vẽ ảnh thật.
 - Hiệu năng: `test/ledger-perf.test.ts` (bảng team tổng), `test/ledger-period-perf.test.ts` (bảng theo kỳ, 200k event).
-- Ảnh: `test/cards.test.ts` vẽ thật và kiểm PNG; lệnh `/rank`, `/leaderboard` cho phép thay hàm vẽ (`renderCard`) trong test. `/config bang-vang` cho phép thay hàm Bảng vàng (`liveBoardActions`).
+- Ảnh: `test/cards.test.ts` vẽ thật và kiểm PNG; lệnh `/rank`, `/leaderboard` cho phép thay hàm vẽ (`renderCard`) trong test. `/config board` cho phép thay hàm Bảng vàng (`liveBoardActions`).
 - `test/audit-view.test.ts` kiểm hiển thị audit với dữ liệu thật (LL-011).
 - `test/commands.test.ts` kiểm mọi command build được JSON, không trùng tên, và command admin có đủ hai lớp quyền.
