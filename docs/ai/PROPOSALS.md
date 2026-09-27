@@ -39,9 +39,9 @@
 | PROP-027 | Tin có chữ ngắn kèm file đính kèm | LOW | REJECTED |
 | PROP-028 | Giới hạn XP từ vote (người tạo tự vote, giới hạn mỗi ngày) | LOW | IMPLEMENTED |
 | PROP-029 | Nút chuyển trang cho bảng xếp hạng | LOW | IMPLEMENTED |
-| PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | PROPOSED |
+| PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | APPROVED |
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
-| PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | PROPOSED |
+| PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | REJECTED |
 
 ---
 
@@ -1237,7 +1237,7 @@ Thấp.
 
 ### Trạng thái
 
-PROPOSED
+APPROVED (2026-09-27, DEC-034): người phụ trách bảo làm hết việc còn lại. Làm trong Phase 14.
 
 ---
 
@@ -1321,4 +1321,4 @@ MEDIUM
 
 ### Trạng thái
 
-PROPOSED
+REJECTED (2026-09-27, DEC-034): người phụ trách chỉ có role admin bot, nên giữ quyền đổi role admin cho role này.

@@ -315,6 +315,18 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Tên bậc không được chứa link hay invite, ký tự vô hình hoặc giả chữ, hay chuỗi dấu kết hợp (Zalgo). Tối đa 32 ký tự và 48 đơn vị UTF-16. Emoji phải là một emoji Unicode chuẩn (RGI). Thông báo công khai tắt xem trước link.
   - Bậc đã đổi tên thì thông báo lên bậc dùng vế trung tính "vượt mốc Level N" thay cho vế có tên mặc định, để câu không tự mâu thuẫn.
 
+### DEC-034 — Duyệt Phase 13; giữ quyền đổi role admin cho role admin bot; hoàn tất việc còn lại trước khi chạy thật
+
+- **Ngày:** 2026-09-27 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 duyệt / 2 role admin bot cũng được mà, tôi chỉ có role đấy, cứ để thế đi / còn việc gì không, nếu còn làm hết đi nhé")
+- **Nội dung:**
+  - Duyệt và merge `phase-13/tier-sets` vào `main`.
+  - PROP-032 **không làm**: người có role admin bot tiếp tục dùng được `/config admin-role`. Người phụ trách chính là người chỉ có role admin bot, nên hạn chế này sẽ khoá chính họ.
+  - "Làm hết việc còn lại" (Phase 14, branch `phase-14/hoan-tat`), gồm:
+    - PROP-030: đưa riêng XP hoặc cooldown của một channel về giá trị chung.
+    - Ảnh bảng Contribution và bảng team trang trí theo bộ danh hiệu của guild, như bảng Activity (DEC-033).
+    - Lệnh tự kiểm tra môi trường `npm run selfcheck` để chạy trên server trước khi bật bot, không kết nối Discord.
+    - Checklist chạy thật trên Discord (`docs/TEST-PLAN.md`).
+
 ---
 
 ## Đang chờ quyết định
