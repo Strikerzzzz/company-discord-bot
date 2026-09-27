@@ -1,5 +1,5 @@
 import { createCanvas, Image } from "@napi-rs/canvas";
-import { drawFormation, drawMountains, drawQiStreams, drawStarfield } from "./decor";
+import { drawFormation } from "./decor";
 import {
 	cleanDisplayName,
 	cleanText,
@@ -24,12 +24,15 @@ import {
 } from "./draw";
 import { ensureFonts, font } from "./fonts";
 import { drawMedal, drawSparkle, drawTrophy, medalColor } from "./icons";
-import { drawTierPill, measureTierPill, PALETTE, tierColors } from "./theme";
+import { CardStyle, cardStyle } from "./styles";
+import { drawTierPill, PALETTE, tierColors, tierSetKeyOf } from "./theme";
 import { LeaderboardCardData, LeaderboardCardRow, RenderedCard } from "./types";
 
 /*
- * Ảnh bảng xếp hạng "Bảng vàng" (DEC-030): header có cúp vàng trong trận pháp, tối đa 10 dòng (top 3 có huy chương),
+ * Ảnh bảng xếp hạng "Bảng vàng" (DEC-030): header có cúp vàng trong khung trang trí, tối đa 10 dòng (top 3 có huy chương),
  * dòng của người xem được làm nổi bật, chân ảnh. Chiều cao đổi theo số dòng.
+ * Bảng có bậc (Activity cá nhân) mang phong cách của bộ danh hiệu (DEC-033), suy ra từ bậc của các dòng (luôn cùng bộ);
+ * bảng không có bậc (Contribution, team) dùng phong cách trung tính.
  */
 
 const WIDTH = 1000;
@@ -61,33 +64,21 @@ function cardHeight(rowCount: number): number
 	return ROWS_TOP + body + FOOTER_H;
 }
 
-function drawBackground(ctx: Ctx, height: number, seed: number): void
+function drawBackground(ctx: Ctx, style: CardStyle, height: number, seed: number): void
 {
 	const rand = mulberry32(seed);
 	ctx.fillStyle = linearGradient(ctx, 0, 0, WIDTH * 0.4, height, ["#1a1530", PALETTE.night, "#0d1224"]);
 	ctx.fillRect(0, 0, WIDTH, height);
-	drawGlow(ctx, EMBLEM_X, EMBLEM_Y, 340, PALETTE.gold, 0.2);
-	drawGlow(ctx, WIDTH - 80, 20, 360, "#7c4dff", 0.18);
-	drawGlow(ctx, WIDTH / 2, height + 60, 520, "#3949ab", 0.2);
-	drawQiStreams(ctx, rand, { x: 0, y: 10, width: WIDTH, height: 130 }, 4, PALETTE.gold, 0.1);
-	drawMountains(ctx, rand, { x: 0, y: 40, width: WIDTH, height: 100 }, [
-		{ color: "rgba(124, 77, 255, 0.07)", ridge: 0.45, amplitude: 50 },
-		{ color: "rgba(10, 13, 27, 0.35)", ridge: 0.75, amplitude: 35 },
-	]);
-	drawMountains(ctx, rand, { x: 0, y: height - 160, width: WIDTH, height: 160 }, [
-		{ color: "rgba(124, 77, 255, 0.06)", ridge: 0.3, amplitude: 60 },
-		{ color: "rgba(57, 73, 171, 0.08)", ridge: 0.55, amplitude: 45 },
-	]);
-	drawStarfield(ctx, rand, { x: 0, y: 0, width: WIDTH, height }, Math.round(height / 7), ["#ffffff", PALETTE.gold, "#b39ddb"], [
+	style.boardBackground(ctx, rand, WIDTH, height, [
 		{ x: PAD + 90, y: 30, width: WIDTH - PAD * 2 - 90, height: 80 },
 		{ x: PAD, y: ROWS_TOP, width: WIDTH - PAD * 2, height: height - ROWS_TOP - 20 },
 	]);
 }
 
-function drawHeader(ctx: Ctx, data: LeaderboardCardData, seed: number): void
+function drawHeader(ctx: Ctx, style: CardStyle, data: LeaderboardCardData, seed: number): void
 {
 	drawGlow(ctx, EMBLEM_X, EMBLEM_Y, 60, PALETTE.gold, 0.45);
-	drawFormation(ctx, EMBLEM_X, EMBLEM_Y, 46, PALETTE.gold, 2 + (seed % 2));
+	style.boardRing(ctx, EMBLEM_X, EMBLEM_Y, 46, seed);
 	fillCircle(ctx, EMBLEM_X, EMBLEM_Y, 27, linearGradient(ctx, EMBLEM_X, EMBLEM_Y - 27, EMBLEM_X, EMBLEM_Y + 27, ["#3a2a12", "#1b1426"]));
 	strokeCircle(ctx, EMBLEM_X, EMBLEM_Y, 27, linearGradient(ctx, EMBLEM_X - 27, EMBLEM_Y - 27, EMBLEM_X + 27, EMBLEM_Y + 27, ["#fff3b0", PALETTE.goldDeep]), 2.5);
 	drawTrophy(ctx, EMBLEM_X, EMBLEM_Y + 1, 30, PALETTE.gold);
@@ -241,9 +232,10 @@ function drawRow(ctx: Ctx, row: RowView, y: number): void
 	if (!hasSecondLine) return;
 	const secondY = centerY + 17;
 	let cursor = textX;
-	if (tier && measureTierPill(ctx, tier, 24) < textMax)
+	const pillMax = row.detail.length > 0 ? textMax - 70 : textMax;
+	if (tier && pillMax >= 64)
 	{
-		cursor += drawTierPill(ctx, tier, cursor, secondY, 24) + 10;
+		cursor += drawTierPill(ctx, tier, cursor, secondY, 24, pillMax) + 10;
 	}
 	if (row.detail.length > 0)
 	{
@@ -261,7 +253,7 @@ function drawEmpty(ctx: Ctx, text: string): void
 {
 	const centerY = ROWS_TOP + EMPTY_H / 2 - 22;
 	drawGlow(ctx, WIDTH / 2, centerY, 120, "#7c4dff", 0.25);
-	drawFormation(ctx, WIDTH / 2, centerY, 62, "#b39ddb", 3);
+	drawFormation(ctx, WIDTH / 2, centerY, 62, "#b39ddb", 1);
 	drawSparkle(ctx, WIDTH / 2, centerY, 16, "#e8e0ff", 0.9);
 	ctx.save();
 	ctx.textAlign = "center";
@@ -311,6 +303,17 @@ function toRowView(row: LeaderboardCardRow, avatar: Image | null): RowView
 	};
 }
 
+/** Phong cách của bảng: theo bộ danh hiệu của dòng đầu tiên có bậc hợp lệ; không dòng nào có bậc thì trung tính. */
+export function boardStyle(rows: readonly LeaderboardCardRow[]): CardStyle
+{
+	for (const row of rows)
+	{
+		const key = tierSetKeyOf(row?.tier);
+		if (key) return cardStyle(key);
+	}
+	return cardStyle(null);
+}
+
 /** Vẽ ảnh bảng xếp hạng (tối đa 10 dòng). Không throw vì dữ liệu người dùng. */
 export async function renderLeaderboardCard(data: LeaderboardCardData): Promise<RenderedCard>
 {
@@ -320,18 +323,19 @@ export async function renderLeaderboardCard(data: LeaderboardCardData): Promise<
 	const rows = source.map((row, index) => toRowView(row, avatars[index]));
 	const height = cardHeight(rows.length);
 	const seed = hashString(`${data.title}|${data.subtitle}`);
+	const style = boardStyle(source);
 
 	const canvas = createCanvas(WIDTH, height);
 	const ctx = canvas.getContext("2d");
 	roundedRectPath(ctx, 0, 0, WIDTH, height, CARD_RADIUS);
 	ctx.clip();
 
-	drawBackground(ctx, height, seed);
-	drawHeader(ctx, data, seed);
+	drawBackground(ctx, style, height, seed);
+	drawHeader(ctx, style, data, seed);
 	if (rows.length === 0) drawEmpty(ctx, cleanText(data.emptyText));
 	rows.forEach((row, index) => drawRow(ctx, row, ROWS_TOP + index * (ROW_H + ROW_GAP)));
 	drawFooter(ctx, cleanText(data.footer), height);
-	strokeRoundedRect(ctx, 1, 1, WIDTH - 2, height - 2, CARD_RADIUS - 1, linearGradient(ctx, 0, 0, WIDTH, height, [rgba(PALETTE.gold, 0.55), rgba("#7c4dff", 0.2), rgba(PALETTE.gold, 0.4)]), 2);
+	strokeRoundedRect(ctx, 1, 1, WIDTH - 2, height - 2, CARD_RADIUS - 1, linearGradient(ctx, 0, 0, WIDTH, height, [rgba(PALETTE.gold, 0.55), rgba(style.boardAccent, 0.2), rgba(PALETTE.gold, 0.4)]), 2);
 
 	const png = await canvas.encode("png");
 	return { png, fileName: "leaderboard.png", width: WIDTH, height };

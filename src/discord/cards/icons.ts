@@ -1,7 +1,8 @@
-import { Ctx, fillCircle, linearGradient, mix, rgba, strokeCircle, TAU } from "./draw";
+import { Ctx, fillCircle, linearGradient, mix, Paint, rgba, strokeCircle, TAU } from "./draw";
 
 /*
  * Biểu tượng vẽ bằng path (font không có emoji). Mỗi hàm vẽ trong ô vuông cạnh `size` có tâm (x, y) và không đổi trạng thái ctx.
+ * Biểu tượng bậc của từng bộ danh hiệu nằm ở emblems.ts; file này chứa biểu tượng chung và các hình cơ bản dùng lại.
  */
 
 /** Ngôi sao 4 cánh lấp lánh. */
@@ -34,7 +35,7 @@ export function starPath(ctx: Ctx, x: number, y: number, outer: number, inner: n
 	ctx.closePath();
 }
 
-export function drawStar(ctx: Ctx, x: number, y: number, size: number, color: string): void
+export function drawStar(ctx: Ctx, x: number, y: number, size: number, color: Paint): void
 {
 	ctx.save();
 	starPath(ctx, x, y, size * 0.5, size * 0.22, 5);
@@ -128,21 +129,27 @@ export function drawRising(ctx: Ctx, x: number, y: number, size: number, color: 
 	ctx.restore();
 }
 
+/** Đường lục giác đều; `rotation` = 0 là lục giác đầu bằng (hai đỉnh nằm ngang hai bên), -π/2 là lục giác đầu nhọn. */
+export function hexagonPath(ctx: Ctx, x: number, y: number, radius: number, rotation = 0): void
+{
+	ctx.beginPath();
+	for (let index = 0; index < 6; index++)
+	{
+		const angle = rotation + (index * Math.PI) / 3;
+		const px = x + Math.cos(angle) * radius;
+		const py = y + Math.sin(angle) * radius;
+		if (index === 0) ctx.moveTo(px, py);
+		else ctx.lineTo(px, py);
+	}
+	ctx.closePath();
+}
+
 /** Huy hiệu lục giác có ngôi sao. */
 export function drawBadge(ctx: Ctx, x: number, y: number, size: number, color: string): void
 {
 	const s = size / 2;
 	ctx.save();
-	ctx.beginPath();
-	for (let index = 0; index < 6; index++)
-	{
-		const angle = -Math.PI / 2 + (index * Math.PI) / 3;
-		const px = x + Math.cos(angle) * s;
-		const py = y + Math.sin(angle) * s;
-		if (index === 0) ctx.moveTo(px, py);
-		else ctx.lineTo(px, py);
-	}
-	ctx.closePath();
+	hexagonPath(ctx, x, y, s, -Math.PI / 2);
 	ctx.fillStyle = color;
 	ctx.fill();
 	starPath(ctx, x, y + s * 0.04, s * 0.55, s * 0.24, 5);
@@ -183,134 +190,201 @@ export function boltPath(ctx: Ctx, x: number, y: number, size: number): void
 	ctx.closePath();
 }
 
-function drawLeaf(ctx: Ctx, x: number, y: number, size: number, angle: number, color: string): void
+/** Chiếc lá mọc từ gốc (x, y) theo hướng `angle` (0 = sang phải), dài `size`; `width` là độ bầu của lá so với chiều dài. */
+export function drawLeaf(ctx: Ctx, x: number, y: number, size: number, angle: number, color: Paint, width = 0.35): void
 {
 	ctx.save();
 	ctx.translate(x, y);
 	ctx.rotate(angle);
 	ctx.beginPath();
 	ctx.moveTo(0, 0);
-	ctx.quadraticCurveTo(size * 0.5, -size * 0.35, size, 0);
-	ctx.quadraticCurveTo(size * 0.5, size * 0.35, 0, 0);
+	ctx.quadraticCurveTo(size * 0.5, -size * width, size, 0);
+	ctx.quadraticCurveTo(size * 0.5, size * width, 0, 0);
 	ctx.fillStyle = color;
 	ctx.fill();
 	ctx.restore();
 }
 
-/**
- * Biểu tượng của từng cảnh giới (thay cho emoji trong tin nhắn): mầm cây, nền đá, kim đan, nguyên anh, lửa, xoáy hư không,
- * thái cực và tia sét. `key` là TierKey; key lạ thì vẽ viên linh châu.
- */
-export function drawTierEmblem(ctx: Ctx, key: string, x: number, y: number, size: number, color: string): void
+/** Bông hoa 5 cánh, tâm (x, y), đường kính `size`. */
+export function drawFlower(ctx: Ctx, x: number, y: number, size: number, petal: string, center: string, rotation = 0): void
 {
 	const s = size / 2;
 	ctx.save();
-	ctx.lineCap = "round";
-	ctx.lineJoin = "round";
-	switch (key)
+	for (let index = 0; index < 5; index++)
 	{
-	case "bac-1":
-	{
-		ctx.strokeStyle = color;
-		ctx.lineWidth = Math.max(1.5, size * 0.11);
+		const angle = rotation - Math.PI / 2 + (index * TAU) / 5;
 		ctx.beginPath();
-		ctx.moveTo(x, y + s * 0.9);
-		ctx.quadraticCurveTo(x - s * 0.05, y + s * 0.2, x, y - s * 0.1);
-		ctx.stroke();
-		drawLeaf(ctx, x, y - s * 0.05, s * 0.95, -Math.PI * 0.2, color);
-		drawLeaf(ctx, x, y + s * 0.2, s * 0.8, -Math.PI * 0.85, mix(color, "#ffffff", 0.25));
-		break;
+		ctx.ellipse(x + Math.cos(angle) * s * 0.52, y + Math.sin(angle) * s * 0.52, s * 0.48, s * 0.3, angle, 0, TAU);
+		ctx.fillStyle = index % 2 === 0 ? petal : mix(petal, "#ffffff", 0.18);
+		ctx.fill();
 	}
-	case "bac-2":
+	fillCircle(ctx, x, y, s * 0.3, center);
+	ctx.restore();
+}
+
+/**
+ * Thanh kiếm dài `length`, tâm (x, y); `angle` = 0 thì mũi kiếm chỉ lên, tăng theo chiều kim đồng hồ.
+ * `thickness` là nửa bề rộng lưỡi so với chiều dài (biểu tượng nhỏ cần lưỡi dày hơn để dễ nhìn).
+ */
+export function drawSword(ctx: Ctx, x: number, y: number, length: number, angle: number, blade: string, guard: string, thickness = 0.045): void
+{
+	const tip = -length / 2;
+	const guardY = tip + length * 0.68;
+	const half = Math.max(0.8, length * thickness);
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.rotate(angle);
+	ctx.beginPath();
+	ctx.moveTo(0, tip);
+	ctx.lineTo(half, tip + half * 2.6);
+	ctx.lineTo(half, guardY);
+	ctx.lineTo(-half, guardY);
+	ctx.lineTo(-half, tip + half * 2.6);
+	ctx.closePath();
+	ctx.fillStyle = linearGradient(ctx, -half, 0, half, 0, [mix(blade, "#ffffff", 0.6), blade, mix(blade, "#000000", 0.3)]);
+	ctx.fill();
+	ctx.strokeStyle = rgba("#ffffff", 0.5);
+	ctx.lineWidth = Math.max(0.5, half * 0.35);
+	ctx.beginPath();
+	ctx.moveTo(0, tip + half * 3);
+	ctx.lineTo(0, guardY - half);
+	ctx.stroke();
+	ctx.fillStyle = guard;
+	ctx.beginPath();
+	ctx.roundRect(-length * 0.13, guardY - length * 0.022, length * 0.26, length * 0.044, length * 0.02);
+	ctx.fill();
+	ctx.fillStyle = mix(guard, "#000000", 0.4);
+	ctx.fillRect(-half * 0.8, guardY + length * 0.022, half * 1.6, length * 0.2);
+	fillCircle(ctx, 0, guardY + length * 0.25, half * 1.35, guard);
+	ctx.restore();
+}
+
+/** Vương miện 3 đỉnh, tâm (x, y), rộng `size` (cao khoảng 0,56 × size). */
+export function drawCrown(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	const s = size / 2;
+	const tips: [number, number][] = [[x - s, y - s * 0.3], [x, y - s * 0.62], [x + s, y - s * 0.3]];
+	ctx.save();
+	ctx.beginPath();
+	ctx.moveTo(x - s * 0.86, y + s * 0.5);
+	ctx.lineTo(x - s, y - s * 0.3);
+	ctx.lineTo(x - s * 0.45, y + s * 0.02);
+	ctx.lineTo(x, y - s * 0.62);
+	ctx.lineTo(x + s * 0.45, y + s * 0.02);
+	ctx.lineTo(x + s, y - s * 0.3);
+	ctx.lineTo(x + s * 0.86, y + s * 0.5);
+	ctx.closePath();
+	ctx.fillStyle = linearGradient(ctx, x, y - s * 0.62, x, y + s * 0.5, [mix(color, "#ffffff", 0.55), color, mix(color, "#000000", 0.3)]);
+	ctx.fill();
+	ctx.fillStyle = mix(color, "#000000", 0.35);
+	ctx.fillRect(x - s * 0.86, y + s * 0.28, s * 1.72, s * 0.22);
+	for (const [px, py] of tips) fillCircle(ctx, px, py, Math.max(0.8, s * 0.14), mix(color, "#ffffff", 0.65));
+	ctx.restore();
+}
+
+/** Đôi cánh hai bên gốc (x, y): mỗi bên `feathers` lông xoè lên trên, lông trên cùng dài bằng `span`; `gap` là nửa khoảng cách giữa hai gốc cánh. */
+export function drawWings(ctx: Ctx, x: number, y: number, span: number, color: string, feathers = 3, gap = 0): void
+{
+	const steps = Math.max(1, feathers - 1);
+	ctx.save();
+	for (const side of [-1, 1])
 	{
-		const bricks: [number, number, number][] = [[-0.95, 0.42, 0.92], [0.03, 0.42, 0.92], [-0.66, -0.14, 0.63], [0.03, -0.14, 0.63], [-0.34, -0.7, 0.68]];
-		bricks.forEach(([left, top, width], index) =>
+		const baseX = x + side * gap;
+		for (let index = feathers - 1; index >= 0; index--)
 		{
-			ctx.fillStyle = index < 2 ? mix(color, "#000000", 0.15) : index < 4 ? color : mix(color, "#ffffff", 0.3);
+			const angle = -0.8 + index * (0.8 / steps);
+			const length = span * (1 - index * (0.3 / steps));
+			const tipX = baseX + side * Math.cos(angle) * length;
+			const tipY = y + Math.sin(angle) * length;
+			const thickness = span * 0.22;
+			const middleX = (baseX + tipX) / 2;
+			const middleY = (y + tipY) / 2;
 			ctx.beginPath();
-			ctx.roundRect(x + left * s, y + top * s, width * s, s * 0.5, s * 0.1);
+			ctx.moveTo(baseX, y - thickness * 0.35);
+			ctx.quadraticCurveTo(middleX, middleY - thickness, tipX, tipY);
+			ctx.quadraticCurveTo(middleX + side * thickness * 0.2, middleY + thickness * 0.5, baseX, y + thickness * 0.55);
+			ctx.closePath();
+			ctx.fillStyle = index === 0 ? mix(color, "#ffffff", 0.3) : mix(color, "#000000", index * 0.14);
 			ctx.fill();
-		});
-		break;
-	}
-	case "bac-3":
-	{
-		const gradient = ctx.createRadialGradient(x - s * 0.3, y - s * 0.35, s * 0.1, x, y, s * 0.85);
-		gradient.addColorStop(0, "#fffde7");
-		gradient.addColorStop(0.45, color);
-		gradient.addColorStop(1, mix(color, "#8d4a00", 0.55));
-		fillCircle(ctx, x, y, s * 0.78, gradient);
-		strokeCircle(ctx, x, y, s * 0.95, rgba(color, 0.7), Math.max(1, size * 0.06));
-		break;
-	}
-	case "bac-4":
-	{
-		strokeCircle(ctx, x, y - s * 0.62, s * 0.38, color, Math.max(1.2, size * 0.07));
-		fillCircle(ctx, x, y - s * 0.05, s * 0.3, color);
-		ctx.fillStyle = color;
-		ctx.beginPath();
-		ctx.moveTo(x - s * 0.62, y + s * 0.95);
-		ctx.quadraticCurveTo(x - s * 0.55, y + s * 0.25, x, y + s * 0.25);
-		ctx.quadraticCurveTo(x + s * 0.55, y + s * 0.25, x + s * 0.62, y + s * 0.95);
-		ctx.closePath();
-		ctx.fill();
-		break;
-	}
-	case "bac-5":
-	{
-		drawFlame(ctx, x, y, size * 0.95, true, color, mix(color, "#ffe082", 0.7));
-		break;
-	}
-	case "bac-6":
-	{
-		ctx.strokeStyle = color;
-		ctx.lineWidth = Math.max(1.5, size * 0.1);
-		ctx.beginPath();
-		for (let step = 0; step <= 60; step++)
-		{
-			const t = step / 60;
-			const angle = t * Math.PI * 3.6;
-			const radius = s * 0.1 + t * s * 0.82;
-			const px = x + Math.cos(angle) * radius;
-			const py = y + Math.sin(angle) * radius;
-			if (step === 0) ctx.moveTo(px, py);
-			else ctx.lineTo(px, py);
 		}
-		ctx.stroke();
-		break;
-	}
-	case "bac-7":
-	{
-		const r = s * 0.9;
-		fillCircle(ctx, x, y, r, color);
-		ctx.fillStyle = "#101426";
-		ctx.beginPath();
-		ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2);
-		ctx.arc(x, y + r / 2, r / 2, Math.PI / 2, -Math.PI / 2, true);
-		ctx.arc(x, y - r / 2, r / 2, Math.PI / 2, -Math.PI / 2, false);
-		ctx.closePath();
-		ctx.fill();
-		fillCircle(ctx, x, y - r / 2, r * 0.16, color);
-		fillCircle(ctx, x, y + r / 2, r * 0.16, "#101426");
-		strokeCircle(ctx, x, y, r, color, Math.max(1, size * 0.06));
-		break;
-	}
-	case "bac-8":
-	{
-		boltPath(ctx, x, y, size);
-		ctx.fillStyle = linearGradient(ctx, x, y - s, x, y + s, ["#fff8d6", color, mix(color, "#ff6f00", 0.4)]);
-		ctx.fill();
-		break;
-	}
-	default:
-	{
-		const gradient = ctx.createRadialGradient(x - s * 0.3, y - s * 0.3, s * 0.1, x, y, s);
-		gradient.addColorStop(0, "#ffffff");
-		gradient.addColorStop(1, color);
-		fillCircle(ctx, x, y, s * 0.8, gradient);
-	}
 	}
 	ctx.restore();
+}
+
+/** Mây lành (tường vân): một vòng xoắn kèm đuôi mây; `flip` = -1 thì lật ngang. */
+export function drawCloudCurl(ctx: Ctx, x: number, y: number, size: number, color: string, lineWidth: number, flip = 1): void
+{
+	const s = size / 2;
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.scale(flip, 1);
+	ctx.strokeStyle = color;
+	ctx.lineWidth = lineWidth;
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.beginPath();
+	const centerX = -s * 0.4;
+	const centerY = -s * 0.02;
+	for (let step = 0; step <= 36; step++)
+	{
+		const t = step / 36;
+		const angle = Math.PI * 1.5 + t * Math.PI * 2;
+		const radius = s * (0.08 + 0.4 * t);
+		const px = centerX + Math.cos(angle) * radius;
+		const py = centerY + Math.sin(angle) * radius;
+		if (step === 0) ctx.moveTo(px, py);
+		else ctx.lineTo(px, py);
+	}
+	ctx.bezierCurveTo(-s * 0.05, -s * 0.5, s * 0.25, s * 0.35, s * 0.6, s * 0.28);
+	ctx.bezierCurveTo(s * 0.95, s * 0.2, s * 0.95, -s * 0.22, s * 0.62, -s * 0.2);
+	ctx.bezierCurveTo(s * 0.42, -s * 0.18, s * 0.4, s * 0.05, s * 0.58, s * 0.05);
+	ctx.stroke();
+	ctx.restore();
+}
+
+/** Hành tinh cầu, có thể kèm vành (nửa vành sau vẽ trước quả cầu, nửa vành trước vẽ sau). */
+export function drawPlanet(ctx: Ctx, x: number, y: number, radius: number, color: string, ring: boolean, tilt = -0.35): void
+{
+	const ringStroke = (start: number, end: number): void =>
+	{
+		ctx.save();
+		ctx.translate(x, y);
+		ctx.rotate(tilt);
+		ctx.beginPath();
+		ctx.ellipse(0, 0, radius * 1.75, radius * 0.46, 0, start, end);
+		ctx.strokeStyle = mix(color, "#ffffff", 0.5);
+		ctx.lineWidth = Math.max(1, radius * 0.16);
+		ctx.stroke();
+		ctx.restore();
+	};
+	ctx.save();
+	if (ring) ringStroke(Math.PI, TAU);
+	const body = ctx.createRadialGradient(x - radius * 0.4, y - radius * 0.4, radius * 0.1, x, y, radius);
+	body.addColorStop(0, mix(color, "#ffffff", 0.6));
+	body.addColorStop(0.55, color);
+	body.addColorStop(1, mix(color, "#000000", 0.55));
+	fillCircle(ctx, x, y, radius, body);
+	ctx.save();
+	ctx.beginPath();
+	ctx.arc(x, y, radius, 0, TAU);
+	ctx.clip();
+	ctx.fillStyle = rgba(mix(color, "#000000", 0.45), 0.4);
+	ctx.fillRect(x - radius, y - radius * 0.28, radius * 2, radius * 0.2);
+	ctx.fillRect(x - radius, y + radius * 0.22, radius * 2, radius * 0.13);
+	ctx.restore();
+	if (ring) ringStroke(0, Math.PI);
+	ctx.restore();
+}
+
+/** Viên linh châu: quả cầu sáng, dùng làm biểu tượng dự phòng. */
+export function drawOrb(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	const s = size / 2;
+	const gradient = ctx.createRadialGradient(x - s * 0.3, y - s * 0.3, s * 0.1, x, y, s);
+	gradient.addColorStop(0, "#ffffff");
+	gradient.addColorStop(1, color);
+	fillCircle(ctx, x, y, s * 0.8, gradient);
+	strokeCircle(ctx, x, y, s * 0.92, rgba(color, 0.5), Math.max(1, size * 0.05));
 }
 
 const MEDALS: Record<1 | 2 | 3, { light: string; base: string; dark: string; ribbon: string }> = {

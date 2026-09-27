@@ -1,6 +1,5 @@
 import { createCanvas, Image } from "@napi-rs/canvas";
 import { Tier } from "../../modules/activity/tiers";
-import { drawFormation, drawLightning, drawMountains, drawQiStreams, drawStarfield, drawSunburst } from "./decor";
 import {
 	clamp,
 	cleanDisplayName,
@@ -28,12 +27,14 @@ import {
 } from "./draw";
 import { ensureFonts, font } from "./fonts";
 import { drawBadge, drawFlame, drawGroup, drawRising, drawSparkle, drawStar, drawTrophy } from "./icons";
-import { drawTierPill, isTopTier, measureTierPill, PALETTE, tierColors, tierIndex } from "./theme";
+import { CardStyle, cardStyle, RankScene } from "./styles";
+import { CardTexts, cardTexts, drawTierPill, isTopTier, PALETTE, tierColors, tierIndex, tierName, tierSetKeyOf } from "./theme";
 import { RankCardData, RenderedCard } from "./types";
 
 /*
- * Ảnh thẻ /rank (DEC-030): avatar trong trận pháp bát quái, tên, huy hiệu cảnh giới, level, thanh linh lực (tiến độ level)
- * và 5 ô chỉ số. Màu và độ "phức tạp" của hoa văn đổi theo cảnh giới; Độ Kiếp có thêm hào quang, tia sét và viền vàng.
+ * Ảnh thẻ /rank (DEC-030, DEC-033): avatar trong khung trang trí của bộ danh hiệu, tên, huy hiệu bậc, level, thanh tiến độ level
+ * và 5 ô chỉ số. Màu và độ "phức tạp" của hoa văn đổi theo bậc; bậc cao nhất có hiệu ứng riêng của từng bộ và viền vàng.
+ * Chữ mang giọng văn của bộ (bậc cao nhất, nhắc chuỗi ngày) lấy từ `tierSet.texts`.
  */
 
 const WIDTH = 1000;
@@ -44,13 +45,14 @@ const RIGHT = WIDTH - PAD;
 const AVATAR_X = 164;
 const AVATAR_Y = 160;
 const AVATAR_R = 84;
-const FORMATION_R = 126;
+const FRAME_R = 126;
 const INFO_X = 322;
 const BAR_Y = 206;
 const BAR_H = 26;
 const TILES_Y = 298;
 const TILE_H = 136;
 const TILE_GAP = 10;
+const GROUND_Y = 250;
 
 interface TileLine
 {
@@ -75,6 +77,8 @@ interface RankView
 {
 	name: string;
 	tier: Tier;
+	style: CardStyle;
+	texts: CardTexts;
 	colors: { color: string; from: string; to: string };
 	complexity: number;
 	top: boolean;
@@ -100,7 +104,19 @@ function nonNegative(value: number): number
 	return Math.max(0, safeInt(value));
 }
 
-function buildTiles(data: RankCardData, accent: string): Tile[]
+/**
+ * Dòng nhắc cuối ô chuỗi ngày: đang giữ chuỗi mà hôm nay chưa có tin được XP thì nhắc theo giọng văn của bộ (`texts.idleToday`);
+ * đang lập kỷ lục thì chúc mừng; chưa có chuỗi thì gợi ý nhắn tin. Trả về null nếu không cần dòng nhắc.
+ */
+export function streakHint(current: number, best: number, activeToday: boolean, texts: CardTexts): TileLine | null
+{
+	if (current > 0 && !activeToday) return { text: texts.idleToday, color: PALETTE.warning };
+	if (current > 1 && current >= best) return { text: "Đang lập kỷ lục!", color: PALETTE.gold };
+	if (current === 0) return { text: "Nhắn tin để nhóm lửa", color: PALETTE.textMuted };
+	return null;
+}
+
+function buildTiles(data: RankCardData, accent: string, texts: CardTexts): Tile[]
 {
 	const activityRank = rankOf(data.activity?.rank ?? null);
 	const activityTotal = nonNegative(data.activity?.totalRanked ?? 0);
@@ -138,9 +154,8 @@ function buildTiles(data: RankCardData, accent: string): Tile[]
 
 	const streakLines: TileLine[] = [];
 	if (best > 0) streakLines.push({ text: `Kỷ lục ${formatCount(best)} ngày`, color: PALETTE.textSoft });
-	if (streak > 0 && !activeToday) streakLines.push({ text: "Hôm nay chưa tu luyện", color: PALETTE.warning });
-	else if (streak > 1 && streak >= best) streakLines.push({ text: "Đang lập kỷ lục!", color: PALETTE.gold });
-	else if (streak === 0) streakLines.push({ text: "Nhắn tin để nhóm lửa", color: PALETTE.textMuted });
+	const hint = streakHint(streak, best, activeToday, texts);
+	if (hint) streakLines.push(hint);
 
 	return [
 		{
@@ -196,6 +211,8 @@ function toView(data: RankCardData): RankView
 {
 	const name = cleanDisplayName(data.displayName);
 	const colors = tierColors(data.tier);
+	const texts = cardTexts(data.tierSet);
+	const setKey = tierSetKeyOf(data.tier) ?? data.tierSet?.key ?? null;
 	const xpIntoLevel = nonNegative(data.level?.xpIntoLevel ?? 0);
 	const xpForNextLevel = nonNegative(data.level?.xpForNextLevel ?? 0);
 	const teams = Array.isArray(data.teamNames)
@@ -204,6 +221,8 @@ function toView(data: RankCardData): RankView
 	return {
 		name,
 		tier: data.tier,
+		style: cardStyle(setKey),
+		texts,
 		colors,
 		complexity: tierIndex(data.tier),
 		top: isTopTier(data.tier) || data.nextTier === null,
@@ -214,60 +233,60 @@ function toView(data: RankCardData): RankView
 		totalXp: nonNegative(data.level?.totalXp ?? 0),
 		ratio: xpForNextLevel > 0 ? clamp(xpIntoLevel / xpForNextLevel, 0, 1) : 0,
 		teams,
-		tiles: buildTiles(data, colors.color),
-		seed: hashString(`${name}|${data.tier.key}`),
+		tiles: buildTiles(data, colors.color, texts),
+		seed: hashString(`${name}|${setKey ?? "?"}|${data.tier?.key}`),
 	};
 }
 
-function drawBackground(ctx: Ctx, view: RankView): void
+function toScene(view: RankView): RankScene
+{
+	return {
+		rand: mulberry32(view.seed),
+		width: WIDTH,
+		height: HEIGHT,
+		colors: view.colors,
+		complexity: view.complexity,
+		top: view.top,
+		avatarX: AVATAR_X,
+		avatarY: AVATAR_Y,
+		frameRadius: FRAME_R,
+		textAreas: [
+			{ x: RIGHT - 170, y: 36, width: 170, height: 34 },
+			{ x: INFO_X - 10, y: 100, width: RIGHT - INFO_X + 10, height: 180 },
+			{ x: PAD, y: TILES_Y, width: RIGHT - PAD, height: TILE_H },
+		],
+		groundY: GROUND_Y,
+	};
+}
+
+function drawBackground(ctx: Ctx, view: RankView, scene: RankScene): void
 {
 	const { color, from, to } = view.colors;
-	const rand = mulberry32(view.seed);
-
 	ctx.fillStyle = linearGradient(ctx, 0, 0, WIDTH, HEIGHT, [mix(from, PALETTE.night, 0.62), PALETTE.night, mix(to, PALETTE.nightSoft, 0.86)]);
 	ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
 	drawGlow(ctx, AVATAR_X, AVATAR_Y, 420, color, 0.3);
 	drawGlow(ctx, WIDTH - 120, 40, 380, to, 0.16);
-	drawQiStreams(ctx, rand, { x: 0, y: 20, width: WIDTH, height: 250 }, 4 + Math.floor(view.complexity / 2), to, 0.11);
-	drawMountains(ctx, rand, { x: 0, y: 250, width: WIDTH, height: HEIGHT - 250 }, [
-		{ color: rgba(mix(from, "#ffffff", 0.15), 0.13), ridge: 0.3, amplitude: 60 },
-		{ color: rgba(mix(from, PALETTE.night, 0.5), 0.35), ridge: 0.52, amplitude: 55 },
-		{ color: rgba(PALETTE.night, 0.55), ridge: 0.75, amplitude: 40 },
-	]);
-	const textAreas = [
-		{ x: RIGHT - 170, y: 36, width: 170, height: 34 },
-		{ x: INFO_X - 10, y: 100, width: RIGHT - INFO_X + 10, height: 180 },
-		{ x: PAD, y: TILES_Y, width: RIGHT - PAD, height: TILE_H },
-	];
-	drawStarfield(ctx, rand, { x: 0, y: 0, width: WIDTH, height: HEIGHT }, 60 + view.complexity * 14, ["#ffffff", color, to], textAreas);
-
-	if (view.top)
-	{
-		drawLightning(ctx, rand, 318, -10, 268, 64, "#b388ff", 2.2);
-		drawLightning(ctx, rand, 760, -10, 812, 36, PALETTE.gold, 1.8);
-	}
+	view.style.rankBackground(ctx, scene);
 }
 
 function drawCardBorder(ctx: Ctx, view: RankView): void
 {
 	if (view.top)
 	{
-		strokeRoundedRect(ctx, 2, 2, WIDTH - 4, HEIGHT - 4, CARD_RADIUS - 2, linearGradient(ctx, 0, 0, WIDTH, HEIGHT, ["#fff3b0", PALETTE.gold, "#b388ff", PALETTE.gold, "#fff3b0"]), 4);
-		strokeRoundedRect(ctx, 9, 9, WIDTH - 18, HEIGHT - 18, CARD_RADIUS - 8, rgba(PALETTE.gold, 0.35), 1);
-		const corners: [number, number][] = [[22, 22], [WIDTH - 22, 22], [22, HEIGHT - 22], [WIDTH - 22, HEIGHT - 22]];
-		for (const [x, y] of corners) drawSparkle(ctx, x, y, 8, "#fff3b0");
+		const { primary, secondary, light } = view.style.top;
+		strokeRoundedRect(ctx, 2, 2, WIDTH - 4, HEIGHT - 4, CARD_RADIUS - 2, linearGradient(ctx, 0, 0, WIDTH, HEIGHT, [light, primary, secondary, primary, light]), 4);
+		strokeRoundedRect(ctx, 9, 9, WIDTH - 18, HEIGHT - 18, CARD_RADIUS - 8, rgba(primary, 0.35), 1);
+		view.style.corners(ctx, WIDTH, HEIGHT);
 		return;
 	}
 	strokeRoundedRect(ctx, 1, 1, WIDTH - 2, HEIGHT - 2, CARD_RADIUS - 1, linearGradient(ctx, 0, 0, WIDTH, HEIGHT, [rgba(view.colors.to, 0.55), rgba(view.colors.color, 0.12), rgba(view.colors.to, 0.4)]), 2);
 }
 
-function drawAvatarBlock(ctx: Ctx, view: RankView, avatar: Image | null): void
+function drawAvatarBlock(ctx: Ctx, view: RankView, scene: RankScene, avatar: Image | null): void
 {
 	const { color, from, to } = view.colors;
-	if (view.top) drawSunburst(ctx, AVATAR_X, AVATAR_Y, FORMATION_R + 70, PALETTE.gold, 0.2, 24);
-	drawGlow(ctx, AVATAR_X, AVATAR_Y, FORMATION_R + 30, color, 0.35);
-	drawFormation(ctx, AVATAR_X, AVATAR_Y, FORMATION_R, mix(color, "#ffffff", 0.2), view.complexity);
+	drawGlow(ctx, AVATAR_X, AVATAR_Y, FRAME_R + 30, color, 0.35);
+	view.style.rankFrame(ctx, scene);
 
 	ctx.save();
 	ctx.shadowColor = rgba(color, 0.85);
@@ -289,6 +308,7 @@ function drawAvatarBlock(ctx: Ctx, view: RankView, avatar: Image | null): void
 	ctx.restore();
 
 	drawAvatar(ctx, avatar, view.name, AVATAR_X, AVATAR_Y, AVATAR_R);
+	view.style.rankFront(ctx, scene);
 }
 
 function drawHeader(ctx: Ctx, view: RankView): void
@@ -325,14 +345,14 @@ function drawHeader(ctx: Ctx, view: RankView): void
 	fitFontSize(ctx, view.name, 800, 44, 32, textRight - INFO_X);
 	const name = fitText(ctx, view.name, textRight - INFO_X);
 	const nameWidth = Math.max(1, ctx.measureText(name).width);
-	ctx.fillStyle = view.top ? linearGradient(ctx, INFO_X, 0, INFO_X + nameWidth, 0, ["#fff6d8", PALETTE.gold, "#fff6d8"]) : PALETTE.text;
+	const top = view.style.top;
+	ctx.fillStyle = view.top ? linearGradient(ctx, INFO_X, 0, INFO_X + nameWidth, 0, [mix(top.light, "#ffffff", 0.4), top.primary, mix(top.light, "#ffffff", 0.4)]) : PALETTE.text;
 	ctx.fillText(name, INFO_X, 86);
 	ctx.restore();
 
 	const pillHeight = 38;
 	const pillCenter = 124;
-	const pillWidth = Math.min(measureTierPill(ctx, view.tier, pillHeight), textRight - INFO_X);
-	drawTierPill(ctx, view.tier, INFO_X, pillCenter, pillHeight);
+	const pillWidth = drawTierPill(ctx, view.tier, INFO_X, pillCenter, pillHeight, textRight - INFO_X);
 
 	const teamX = INFO_X + pillWidth + 18;
 	const teamMax = textRight - teamX - 26;
@@ -420,33 +440,37 @@ function drawProgress(ctx: Ctx, view: RankView): void
 	ctx.textBaseline = "alphabetic";
 	ctx.textAlign = "left";
 	const lineY = 266;
+	const percent = `${Math.floor(view.ratio * 100)}%`;
+	ctx.font = font(800, 19);
+	const percentWidth = ctx.measureText(percent).width;
+	const lineMax = RIGHT - percentWidth - 24 - INFO_X;
 	if (view.top || view.nextTier === null)
 	{
+		const accent = view.style.top.primary;
 		ctx.font = font(700, 19);
-		ctx.fillStyle = PALETTE.gold;
-		drawSparkle(ctx, INFO_X + 8, lineY - 7, 8, PALETTE.gold);
-		ctx.fillText("Đã đạt cảnh giới tối cao", INFO_X + 24, lineY);
+		ctx.fillStyle = accent;
+		drawSparkle(ctx, INFO_X + 8, lineY - 7, 8, accent);
+		ctx.fillText(fitText(ctx, view.texts.maxTier, lineMax - 24), INFO_X + 24, lineY);
 	}
 	else
 	{
 		const next = view.nextTier;
 		const nextColors = tierColors(next);
 		const remaining = Math.max(1, safeInt(next.minLevel) - view.level);
-		const prefix = `Còn ${formatCount(remaining)} level nữa lên `;
+		const prefix = `Còn ${formatCount(remaining)} level nữa lên ${view.texts.tierLabel.toLocaleLowerCase("vi")} `;
 		ctx.font = font(600, 19);
 		ctx.fillStyle = PALETTE.textSoft;
-		ctx.fillText(prefix, INFO_X, lineY);
-		const prefixWidth = ctx.measureText(prefix).width;
+		const fittedPrefix = fitText(ctx, prefix, lineMax * 0.7);
+		ctx.fillText(fittedPrefix, INFO_X, lineY);
+		const prefixWidth = ctx.measureText(fittedPrefix).width;
 		ctx.font = font(800, 19);
 		ctx.fillStyle = mix(nextColors.color, "#ffffff", 0.25);
-		const nextName = fitText(ctx, cleanDisplayName(next.name), RIGHT - 90 - INFO_X - prefixWidth);
-		ctx.fillText(nextName, INFO_X + prefixWidth, lineY);
+		ctx.fillText(fitText(ctx, tierName(next), lineMax - prefixWidth), INFO_X + prefixWidth, lineY);
 	}
 
-	const percent = `${Math.floor(view.ratio * 100)}%`;
 	ctx.font = font(800, 19);
 	ctx.fillStyle = mix(color, "#ffffff", 0.3);
-	ctx.fillText(percent, RIGHT - ctx.measureText(percent).width, lineY);
+	ctx.fillText(percent, RIGHT - percentWidth, lineY);
 	ctx.restore();
 }
 
@@ -521,7 +545,7 @@ function drawTile(ctx: Ctx, tile: Tile, x: number, y: number, width: number): vo
 
 	tile.lines.slice(0, 2).forEach((line, index) =>
 	{
-		ctx.font = font(600, 15);
+		fitFontSize(ctx, line.text, 600, 15, 13, inner);
 		ctx.fillStyle = line.color;
 		ctx.fillText(fitText(ctx, line.text, inner), x + padding, y + 106 + index * 20);
 	});
@@ -543,20 +567,21 @@ function drawTiles(ctx: Ctx, view: RankView): void
 	}
 }
 
-/** Vẽ ảnh thẻ rank. Không throw vì dữ liệu người dùng (tên lạ, avatar hỏng, số lớn, hạng null...). */
+/** Vẽ ảnh thẻ rank. Không throw vì dữ liệu người dùng (tên lạ, avatar hỏng, số lớn, hạng null, bộ hoặc bậc lạ...). */
 export async function renderRankCard(data: RankCardData): Promise<RenderedCard>
 {
 	ensureFonts();
 	const avatar = await decodeAvatar(data.avatar);
 	const view = toView(data);
+	const scene = toScene(view);
 
 	const canvas = createCanvas(WIDTH, HEIGHT);
 	const ctx = canvas.getContext("2d");
 	roundedRectPath(ctx, 0, 0, WIDTH, HEIGHT, CARD_RADIUS);
 	ctx.clip();
 
-	drawBackground(ctx, view);
-	drawAvatarBlock(ctx, view, avatar);
+	drawBackground(ctx, view, scene);
+	drawAvatarBlock(ctx, view, scene, avatar);
 	drawHeader(ctx, view);
 	drawProgress(ctx, view);
 	drawTiles(ctx, view);
