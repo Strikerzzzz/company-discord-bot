@@ -109,11 +109,37 @@ describe("thông báo lên bậc", () =>
 		}
 	});
 
-	test("tên và emoji tuỳ chỉnh của admin được dùng; vế lên bậc giữ nguyên", () =>
+	test("bậc đã đổi tên: dùng tên và emoji tuỳ chỉnh, vế lên bậc chuyển sang câu trung tính theo mốc level", () =>
 	{
 		const set = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-3", name: "Vàng Son", emoji: "🥇" }]);
 		const text = promotionText(set, USER_A, tierByKey("bac-3", set), 6);
-		assert.equal(text, `🏆 Thăng hạng! <@${USER_A}> đã chạm tới hạng Vàng! 🥇 Hạng **Vàng Son** · Level 6`);
+		assert.equal(text, `🏆 Thăng hạng! <@${USER_A}> đã vượt mốc Level 6! 🥇 Hạng **Vàng Son** · Level 6`);
+		assert.ok(!text.includes("hạng Vàng!"), "không nhắc tên mặc định mâu thuẫn với tên mới");
+	});
+
+	test("chỉ đổi emoji (tên giữ mặc định) thì vẫn dùng vế lên bậc riêng của bộ", () =>
+	{
+		const set = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-2", name: null, emoji: "🥈" }]);
+		assert.equal(promotionText(set, USER_A, tierByKey("bac-2", set), 3), `🏆 Thăng hạng! <@${USER_A}> đã leo lên hạng Bạc! 🥈 Hạng **Bạc** · Level 3`);
+	});
+
+	test("mọi bộ, mọi bậc đã đổi tên: vế trung tính \"vượt mốc Level {mốc}\", không còn vế nhắc tên mặc định", () =>
+	{
+		for (const base of ALL_SETS)
+		{
+			const set = applyTierOverrides(base, base.tiers.map(tier => ({ tierKey: tier.key, name: `${tier.name} Pro`, emoji: null })));
+			for (const tier of set.tiers)
+			{
+				const label = `${set.key}/${tier.key}`;
+				const text = promotionText(set, USER_B, tier, tier.minLevel + 1);
+				assert.ok(text.includes(`đã vượt mốc Level ${tier.minLevel}!`), `${label}: ${text}`);
+				assert.ok(!text.includes(base.tiers[tier.index].breakthrough), label);
+				assert.ok(text.includes(`${tier.emoji} ${set.texts.tierLabel} **${tier.name}**`), label);
+				assert.ok(text.endsWith(`Level ${tier.minLevel + 1}`), label);
+				assert.deepEqual(leftoverPlaceholders(text), [], label);
+				assert.deepEqual(mentionsIn(text), [`<@${USER_B}>`], label);
+			}
+		}
 	});
 
 	test("thay placeholder an toàn: giá trị không bị quét lại, ký tự $ giữ nguyên, placeholder lạ giữ nguyên chữ", () =>

@@ -11,7 +11,14 @@ import {
 	tierUp,
 } from "../src/modules/activity/tiers";
 import { GamificationService } from "../src/modules/gamification/GamificationService";
-import { TierSetService, normalizeTierEmoji, normalizeTierName, parseTierDisplayName, TIER_NAME_MAX } from "../src/modules/gamification/TierSetService";
+import {
+	TierSetService,
+	normalizeTierEmoji,
+	normalizeTierName,
+	parseTierDisplayName,
+	TIER_NAME_MAX,
+	TIER_NAME_MAX_UTF16,
+} from "../src/modules/gamification/TierSetService";
 import { UserError } from "../src/shared/errors";
 import { ADMIN, createTestContext, GUILD, OTHER_GUILD } from "./helpers";
 
@@ -91,18 +98,106 @@ describe("tên bậc tuỳ chỉnh", () =>
 		assert.deepEqual(parseTierDisplayName("   "), { emoji: null, name: null });
 	});
 
-	test("normalizeTierName: gộp khoảng trắng, giới hạn độ dài, chặn ký tự định dạng và emoji", () =>
+	test("parseTierDisplayName chỉ tách emoji RGI: keycap, cờ, ZWJ; emoji kèm ký tự thừa hay ký hiệu ™ © thì cả chuỗi là tên", () =>
 	{
-		assert.equal(normalizeTierName("  Huyền   Thoại  "), "Huyền Thoại");
-		assert.throws(() => normalizeTierName("x".repeat(TIER_NAME_MAX + 1)), UserError);
-		for (const bad of ["@everyone", "**Đậm**", "<@&123>", "a|b", "Tên​ẩn", "Sao ⭐"]) assert.throws(() => normalizeTierName(bad), UserError, bad);
+		assert.deepEqual(parseTierDisplayName("1️⃣ Top Một"), { emoji: "1️⃣", name: "Top Một" });
+		assert.deepEqual(parseTierDisplayName("#️⃣Hashtag"), { emoji: "#️⃣", name: "Hashtag" });
+		assert.deepEqual(parseTierDisplayName("🇻🇳 Việt Nam"), { emoji: "🇻🇳", name: "Việt Nam" });
+		assert.deepEqual(parseTierDisplayName("🛡️ Hiệp Sĩ"), { emoji: "🛡️", name: "Hiệp Sĩ" });
+		for (const text of ["🟡\u200C Kim Đan", "🛡\u20E0 Khiên", "🟡\u0336 Vàng", "©Team", "™ Pro", "1 Top"])
+		{
+			assert.deepEqual(parseTierDisplayName(text), { emoji: null, name: text }, JSON.stringify(text));
+		}
 	});
 
-	test("normalizeTierEmoji: đúng một emoji Unicode", () =>
+	test("mọi bậc mặc định của mọi bộ: emoji hợp lệ, tên hợp lệ, ô điền sẵn \"emoji tên\" tách lại đúng", () =>
 	{
-		assert.equal(normalizeTierEmoji("🦄"), "🦄");
-		assert.equal(normalizeTierEmoji("🇻🇳"), "🇻🇳");
-		for (const bad of ["ab", "🦄🦄", "<:cat:123456789012345678>", "a"]) assert.throws(() => normalizeTierEmoji(bad), UserError, bad);
+		for (const set of Object.values(TIER_SETS))
+		{
+			for (const tier of set.tiers)
+			{
+				const label = `${set.key}/${tier.key}`;
+				assert.equal(normalizeTierEmoji(tier.emoji), tier.emoji, label);
+				assert.equal(normalizeTierName(tier.name), tier.name, label);
+				assert.deepEqual(parseTierDisplayName(`${tier.emoji} ${tier.name}`), { emoji: tier.emoji, name: tier.name }, label);
+			}
+		}
+	});
+
+	test("normalizeTierName: gộp khoảng trắng, chuẩn hoá NFC; nhận tiếng Việt, ký hiệu ™ ©, chữ có tối đa 2 dấu", () =>
+	{
+		assert.equal(normalizeTierName("  Huyền   Thoại  "), "Huyền Thoại");
+		const vietnamese = "Ặc Biệt Tổng Quản Ỗ Ửng";
+		assert.equal(normalizeTierName(vietnamese.normalize("NFD")), vietnamese.normalize("NFC"), "dấu tách rời được ghép lại");
+		for (const valid of ["Pro™", "©Team", "Level 99", "Tier-1 / A.B", "Thách Đấu 2026", "ที่หนึ่ง", "x".repeat(TIER_NAME_MAX)])
+		{
+			assert.equal(normalizeTierName(valid), valid.normalize("NFC"), valid);
+		}
+	});
+
+	test("normalizeTierName: tối đa 32 ký tự hiển thị và 48 đơn vị UTF-16", () =>
+	{
+		assert.equal(TIER_NAME_MAX_UTF16, 48);
+		assert.throws(() => normalizeTierName("x".repeat(TIER_NAME_MAX + 1)), userError(`Tên bậc phải dài từ 1 đến ${TIER_NAME_MAX} ký tự.`));
+		const wide = "𝐀";
+		assert.equal(wide.length, 2);
+		assert.equal(normalizeTierName(wide.repeat(24)), wide.repeat(24));
+		assert.throws(() => normalizeTierName(wide.repeat(25)), userError(/^Tên bậc quá dài/));
+	});
+
+	test("normalizeTierName: chặn ký tự định dạng, ký tự vô hình, ký tự trống giả chữ, tên không có chữ hay số", () =>
+	{
+		for (const bad of ["@everyone", "**Đậm**", "<@&123>", "a|b", "a_b", "[link]"])
+		{
+			assert.throws(() => normalizeTierName(bad), userError(/không được chứa các ký tự </), bad);
+		}
+		const invisible = ["Tên\u200Bẩn", "Tên\u200Cẩn", "Tên\u00ADẩn", "Tên\u034Fẩn", "Tên\u2060ẩn", "A\uFE0F", "\u2800", "Tên\u3164", "\uFFA0", "\u115F", "\u1160Tên", "Tên\u202Eẩn"];
+		for (const bad of invisible)
+		{
+			assert.throws(() => normalizeTierName(bad), userError(/ký tự vô hình/), JSON.stringify(bad));
+		}
+		for (const bad of ["!!!", "-", "…", "™", "( )"])
+		{
+			assert.throws(() => normalizeTierName(bad), userError("Tên bậc phải có ít nhất một chữ cái hoặc chữ số."), bad);
+		}
+	});
+
+	test("normalizeTierName: chặn chữ Zalgo (quá 2 dấu trên một chữ) và dấu bao quanh", () =>
+	{
+		assert.equal(normalizeTierName("x\u0300\u0301"), "x\u0300\u0301", "2 dấu trên một chữ vẫn hợp lệ");
+		for (const bad of ["x\u0300\u0301\u0302", "Ze\u0336\u0337\u0338lgo", "Kim Đa\u0300\u0301\u0302\u0303n", "1\u20E3 Top", "🛡\u20E0 Khiên"])
+		{
+			assert.throws(() => normalizeTierName(bad), userError(/không được chồng quá 2 dấu/), JSON.stringify(bad));
+		}
+	});
+
+	test("normalizeTierName: chặn emoji trong tên (Emoji_Presentation hoặc emoji RGI)", () =>
+	{
+		for (const bad of ["Sao ⭐", "Kỹ Sư 👩‍💻", "Top 1️⃣", "VN 🇻🇳", "🟡\u0336 Vàng", "Khiên 🛡️"])
+		{
+			assert.throws(() => normalizeTierName(bad), userError(/không được chứa emoji/), JSON.stringify(bad));
+		}
+	});
+
+	test("normalizeTierName: chặn link và lời mời vào server, không phân biệt hoa thường", () =>
+	{
+		const links = ["https://evil.example", "ftp://x", "Vào WWW.example.com", "Discord.GG/abc", "discord.com/invite/abc", "DISCORDAPP.COM/INVITE/xyz"];
+		for (const bad of links)
+		{
+			assert.throws(() => normalizeTierName(bad), userError("Tên bậc không được chứa đường link hay lời mời vào server Discord."), bad);
+		}
+		assert.equal(normalizeTierName("Discord Master"), "Discord Master");
+	});
+
+	test("normalizeTierEmoji: đúng một emoji Unicode chuẩn (RGI)", () =>
+	{
+		for (const valid of ["🦄", "🇻🇳", "1️⃣", "#️⃣", "👩‍💻", "🛡️", "👍🏽", "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}"]) assert.equal(normalizeTierEmoji(valid), valid, valid);
+		assert.equal(normalizeTierEmoji(" 🦄 "), "🦄");
+		const bad = ["ab", "🦄🦄", "<:cat:123456789012345678>", "a", "1", "©", "🟡\u200C", "🛡\u20E0", "🟡\u0336", "🟡\u{E0061}", "🟡 a"];
+		for (const text of bad)
+		{
+			assert.throws(() => normalizeTierEmoji(text), userError(/^Emoji của bậc phải là đúng một emoji Unicode chuẩn/), JSON.stringify(text));
+		}
 	});
 });
 
@@ -151,6 +246,25 @@ describe("TierSetService", () =>
 		const renames = context.deps.audit.list(GUILD, 20).filter(entry => entry.action === "tier_name.set");
 		assert.equal(renames.length, 2);
 		assert.deepEqual(renames.map(entry => entry.details?.tierKey).sort(), ["bac-1", "bac-8"]);
+	});
+
+	test("rename từ chối emoji kèm ký tự thừa và tên chứa link, không ghi gì; nhận emoji keycap và cờ", () =>
+	{
+		const { context, service } = setup();
+		const invalid = [
+			{ tierKey: "bac-1", name: null, emoji: "🟡\u200C" },
+			{ tierKey: "bac-1", name: "discord.gg/abc", emoji: null },
+			{ tierKey: "bac-1", name: "\u3164", emoji: null },
+		] as const;
+		for (const entry of invalid)
+		{
+			assert.throws(() => service.rename(GUILD, [{ tierKey: "bac-2", name: "Hợp Lệ", emoji: null }, entry], ADMIN), UserError);
+		}
+		assert.deepEqual(service.overrides(GUILD, DEFAULT_TIER_SET_KEY), []);
+		assert.equal(context.deps.audit.list(GUILD, 10).length, 0);
+
+		const set = service.rename(GUILD, [{ tierKey: "bac-1", name: "Top Một", emoji: "1️⃣" }, { tierKey: "bac-2", name: "Việt Nam", emoji: "🇻🇳" }], ADMIN);
+		assert.deepEqual(set.tiers.slice(0, 2).map(tier => `${tier.emoji} ${tier.name}`), ["1️⃣ Top Một", "🇻🇳 Việt Nam"]);
 	});
 
 	test("tên tuỳ chỉnh lưu theo từng bộ: đổi bộ rồi quay lại vẫn còn; xoá tuỳ chỉnh một bậc bằng null", () =>

@@ -18,12 +18,26 @@ import { AuditService } from "../audit/AuditService";
 
 /** Giới hạn tên bậc tuỳ chỉnh (tính theo ký tự hiển thị). */
 export const TIER_NAME_MAX = 32;
+/** Giới hạn tên bậc tính theo đơn vị UTF-16 (cách Discord đếm độ dài), để ký tự ghép dài không làm vỡ giới hạn. */
+export const TIER_NAME_MAX_UTF16 = 48;
 const EMOJI_MAX_UTF16 = 16;
+/** Số dấu kết hợp tối đa trên một ký tự hiển thị: tiếng Việt cần tối đa 2 (ví dụ "Ặ" khi chưa ghép NFC), nhiều hơn là chữ Zalgo. */
+const MARKS_PER_GRAPHEME_MAX = 2;
 
-// Ký tự làm hỏng định dạng tin nhắn (markdown, mention) hoặc không hiển thị được.
+// Ký tự làm hỏng định dạng tin nhắn (markdown, mention).
 const FORBIDDEN_NAME_CHARS = /[<>@*_~`|\\[\]]/u;
-const CONTROL_CHARS = /[\p{Cc}\p{Cf}]/u;
-const EMOJI_CHAR = /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+// Ký tự điều khiển, ký tự vô hình (Default_Ignorable) và ký tự trống trông như chữ (braille trống, Hangul filler).
+const INVISIBLE_CHARS = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2800\u3164\uFFA0\u115F\u1160]/u;
+// Dấu bao quanh (ví dụ U+20E3 keycap, U+20E0) biến chữ thường thành hình giống emoji.
+const ENCLOSING_MARK = /\p{Me}/u;
+const COMBINING_MARK = /\p{M}/gu;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+const EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u;
+// Đúng một emoji Unicode chuẩn (RGI): nhận keycap, cờ, chuỗi ZWJ; từ chối emoji kèm ZWNJ, tag hay dấu kết hợp thừa.
+// Tạo bằng constructor vì TypeScript target ES2022 không nhận regex literal có cờ "v" (Node 22 hỗ trợ).
+const RGI_EMOJI = new RegExp("^\\p{RGI_Emoji}$", "v");
+// Link và lời mời vào server Discord (so sánh không phân biệt hoa thường).
+const LINK_PATTERNS = ["://", "www.", "discord.gg", "discord.com/invite", "discordapp.com/invite"] as const;
 const WHITESPACE = /\s+/gu;
 const graphemes = new Intl.Segmenter("vi", { granularity: "grapheme" });
 
@@ -70,13 +84,32 @@ function graphemeList(text: string): string[]
 	return Array.from(graphemes.segment(text), segment => segment.segment);
 }
 
-function isEmojiGrapheme(grapheme: string): boolean
+/** Đúng một emoji Unicode chuẩn (RGI), không kèm ký tự hay dấu thừa. */
+function isRgiEmoji(text: string): boolean
 {
-	return EMOJI_CHAR.test(grapheme);
+	return RGI_EMOJI.test(text);
+}
+
+/** Ký tự hiển thị mang dáng emoji: emoji RGI, hoặc có ký tự mặc định hiện dạng emoji (™, © thì không). */
+function looksLikeEmoji(grapheme: string): boolean
+{
+	return isRgiEmoji(grapheme) || EMOJI_PRESENTATION.test(grapheme);
+}
+
+function markCount(grapheme: string): number
+{
+	return grapheme.match(COMBINING_MARK)?.length ?? 0;
+}
+
+function containsLink(name: string): boolean
+{
+	const lower = name.toLowerCase();
+	return LINK_PATTERNS.some(pattern => lower.includes(pattern));
 }
 
 /**
  * Tách chuỗi admin nhập (ví dụ "🟡 Kim Đan") thành emoji đầu chuỗi và tên. Chuỗi rỗng → cả hai null (dùng mặc định).
+ * Emoji đầu chuỗi phải là đúng một emoji RGI (cùng tiêu chí với `normalizeTierEmoji`); nếu không, cả chuỗi là tên.
  * Không validate; gọi `rename` để kiểm tra.
  */
 export function parseTierDisplayName(raw: string): { emoji: string | null; name: string | null }
@@ -84,7 +117,7 @@ export function parseTierDisplayName(raw: string): { emoji: string | null; name:
 	const text = raw.normalize("NFC").trim();
 	if (text === "") return { emoji: null, name: null };
 	const [first, ...rest] = graphemeList(text);
-	if (first !== undefined && isEmojiGrapheme(first))
+	if (first !== undefined && isRgiEmoji(first))
 	{
 		const name = rest.join("").trim();
 		return { emoji: first, name: name === "" ? null : name };
@@ -96,24 +129,35 @@ export function parseTierDisplayName(raw: string): { emoji: string | null; name:
 export function normalizeTierName(raw: string): string
 {
 	const name = raw.normalize("NFC").replace(WHITESPACE, " ").trim();
-	const length = graphemeList(name).length;
-	if (length === 0 || length > TIER_NAME_MAX) throw new UserError(`Tên bậc phải dài từ 1 đến ${TIER_NAME_MAX} ký tự.`);
-	if (FORBIDDEN_NAME_CHARS.test(name) || CONTROL_CHARS.test(name))
+	const parts = graphemeList(name);
+	if (parts.length === 0 || parts.length > TIER_NAME_MAX) throw new UserError(`Tên bậc phải dài từ 1 đến ${TIER_NAME_MAX} ký tự.`);
+	if (FORBIDDEN_NAME_CHARS.test(name)) throw new UserError("Tên bậc không được chứa các ký tự < > @ * _ ~ ` | \\ [ ] hoặc ký tự điều khiển.");
+	// Kiểm tra emoji trước ký tự vô hình: emoji ZWJ hay emoji kèm U+FE0F chứa ký tự vô hình, báo "chứa emoji" thì dễ hiểu hơn.
+	if (parts.some(looksLikeEmoji)) throw new UserError("Tên bậc không được chứa emoji; hãy đặt emoji ở đầu (ví dụ \"🟡 Kim Đan\").");
+	if (INVISIBLE_CHARS.test(name))
 	{
-		throw new UserError("Tên bậc không được chứa các ký tự < > @ * _ ~ ` | \\ [ ] hoặc ký tự điều khiển.");
+		throw new UserError("Tên bậc không được chứa ký tự điều khiển, ký tự vô hình hoặc ký tự trống trông như khoảng trắng.");
 	}
-	if (graphemeList(name).some(isEmojiGrapheme)) throw new UserError("Tên bậc không được chứa emoji; hãy đặt emoji ở đầu (ví dụ \"🟡 Kim Đan\").");
+	if (ENCLOSING_MARK.test(name) || parts.some(part => markCount(part) > MARKS_PER_GRAPHEME_MAX))
+	{
+		throw new UserError(`Tên bậc không được chồng quá ${MARKS_PER_GRAPHEME_MAX} dấu lên một chữ hoặc dùng dấu bao quanh ký tự.`);
+	}
+	if (containsLink(name)) throw new UserError("Tên bậc không được chứa đường link hay lời mời vào server Discord.");
+	if (!LETTER_OR_DIGIT.test(name)) throw new UserError("Tên bậc phải có ít nhất một chữ cái hoặc chữ số.");
+	if (name.length > TIER_NAME_MAX_UTF16)
+	{
+		throw new UserError("Tên bậc quá dài: một số ký tự đặc biệt được Discord tính như 2 ký tự, hãy rút ngắn tên.");
+	}
 	return name;
 }
 
-/** Emoji của bậc (đúng một emoji Unicode), hoặc UserError nếu không hợp lệ. */
+/** Emoji của bậc (đúng một emoji Unicode chuẩn), hoặc UserError nếu không hợp lệ. */
 export function normalizeTierEmoji(raw: string): string
 {
-	const emoji = raw.trim();
-	const parts = graphemeList(emoji);
-	if (parts.length !== 1 || !isEmojiGrapheme(emoji) || emoji.length > EMOJI_MAX_UTF16)
+	const emoji = raw.normalize("NFC").trim();
+	if (emoji.length > EMOJI_MAX_UTF16 || !isRgiEmoji(emoji))
 	{
-		throw new UserError("Emoji của bậc phải là đúng một emoji Unicode (emoji riêng của server không dùng được).");
+		throw new UserError("Emoji của bậc phải là đúng một emoji Unicode chuẩn, không kèm ký tự hay dấu thừa (emoji riêng của server không dùng được).");
 	}
 	return emoji;
 }

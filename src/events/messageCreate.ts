@@ -1,4 +1,4 @@
-import { Events, Message, PermissionFlagsBits } from "discord.js";
+import { Events, Message, MessageFlags, PermissionFlagsBits } from "discord.js";
 import Event from "../classes/Event";
 import { roleIdsOf } from "../discord/members";
 import { syncTierRoles } from "../discord/roleSync";
@@ -56,8 +56,9 @@ export default class MessageCreate extends Event
 		const content = tier ? promotionText(set, message.author.id, tier, levelAfter) : levelUpText(set, message.author.id, levelAfter);
 		try
 		{
-			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level.
-			await message.channel.send({ content, allowedMentions: { users: [message.author.id] } });
+			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level. Tắt xem trước link: tên bậc do admin
+			// đặt đã bị chặn link, đây là lớp phòng thủ thêm cho tin công khai.
+			await message.channel.send({ content, allowedMentions: { users: [message.author.id] }, flags: MessageFlags.SuppressEmbeds });
 		}
 		catch (error)
 		{

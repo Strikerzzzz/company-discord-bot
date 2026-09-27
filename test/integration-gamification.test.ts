@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Message, PermissionFlagsBits, PermissionsBitField } from "discord.js";
+import { Message, MessageFlags, PermissionFlagsBits, PermissionsBitField } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
 import { buildLeaderboardCardData, buildRankCardData, rankSummaryText } from "../src/discord/cardData";
 import { renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
@@ -184,8 +184,9 @@ describe("tích hợp: bộ danh hiệu (Phase 13)", () =>
 			const sent: unknown[] = [];
 			await new MessageCreate(client).execute(fakeMessage("Báo cáo tiến độ dự án hôm nay", sent));
 			assert.deepEqual(sent, [{
-				content: `🏆 Thăng hạng! <@${USER_A}> đã leo lên hạng Bạc! 🥈 Hạng **Bạc Ròng** · Level 3`,
+				content: `🏆 Thăng hạng! <@${USER_A}> đã vượt mốc Level 3! 🥈 Hạng **Bạc Ròng** · Level 3`,
 				allowedMentions: { users: [USER_A] },
+				flags: MessageFlags.SuppressEmbeds,
 			}]);
 
 			// Hồ sơ và phần chữ /rank theo bộ mới.
