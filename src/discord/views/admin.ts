@@ -458,6 +458,9 @@ const LEGACY_TIER_KEYS: readonly string[] = ["luyen-khi", "truc-co", "kim-dan", 
 const SNOWFLAKE = /^\d{17,20}$/;
 const ROLE_LIST_MAX = 160;
 
+/** Khoá trong details của channel.set mà null nghĩa là channel dùng giá trị chung của server (PROP-030), không phải "không có". */
+const CHANNEL_FALLBACK_KEYS: ReadonlySet<string> = new Set(["xpPerMessage", "xpCooldownSeconds"]);
+
 /** Số thứ tự 1–8 của bậc theo khoá hiện tại hoặc khoá cũ; null nếu khoá lạ. */
 function tierNumber(value: string): number | null
 {
@@ -515,8 +518,9 @@ function detailLabel(key: string): string
 	return DETAIL_LABELS.get(key) ?? key;
 }
 
-function detailValue(key: string, value: unknown): string
+function detailValue(key: string, value: unknown, action: AuditAction | null): string
 {
+	if (value === null && action === "channel.set" && CHANNEL_FALLBACK_KEYS.has(key)) return "dùng giá trị chung";
 	if (value === null || value === undefined) return "không có";
 	if (typeof value === "boolean") return onOff(value);
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);
@@ -542,11 +546,14 @@ function detailValue(key: string, value: unknown): string
 	return inlineText(JSON.stringify(value), DETAIL_VALUE_MAX);
 }
 
-/** Chi tiết của một mục audit dạng "Nhãn: giá trị · ..."; null nếu không có chi tiết. */
-export function formatAuditDetails(details: Record<string, unknown> | null): string | null
+/**
+ * Chi tiết của một mục audit dạng "Nhãn: giá trị · ..."; null nếu không có chi tiết. `action` cho biết ý nghĩa của giá trị
+ * null (ví dụ channel.set: dùng giá trị chung); không truyền thì null hiển thị là "không có".
+ */
+export function formatAuditDetails(details: Record<string, unknown> | null, action: AuditAction | null = null): string | null
 {
 	if (!details) return null;
-	const parts = Object.entries(details).map(([key, value]) => `${detailLabel(key)}: ${detailValue(key, value)}`);
+	const parts = Object.entries(details).map(([key, value]) => `${detailLabel(key)}: ${detailValue(key, value, action)}`);
 	return parts.length > 0 ? truncate(parts.join(" · "), AUDIT_DETAILS_MAX) : null;
 }
 
@@ -559,7 +566,7 @@ export function formatAuditEntry(entry: AuditEntry): string
 			? `Người thực hiện: ${userMention(entry.actorId)}`
 			: `Người thực hiện: ${userMention(entry.actorId)} · Đối tượng: ${target}`,
 	];
-	const details = formatAuditDetails(entry.details);
+	const details = formatAuditDetails(entry.details, entry.action);
 	if (details !== null) lines.push(`↳ ${details}`);
 	return lines.join("\n");
 }

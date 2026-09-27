@@ -80,13 +80,15 @@ sudo nano .env                 # điền DISCORD_TOKEN, DISCORD_GUILD_IDS
 Chạy **sau khi build và điền `.env`, trước khi bật service**, và sau mỗi lần cập nhật (mục 5). Lệnh này không kết nối Discord, không gọi mạng, không sửa database và không in token. Các bước kiểm tra:
 
 1. Phiên bản Node: tối thiểu 22.14, khuyến nghị 24 LTS.
-2. Cấu hình đọc bằng đúng code của bot: có `DISCORD_TOKEN` (chỉ báo "có", không in giá trị hay độ dài), `DISCORD_GUILD_IDS` hợp lệ, đường dẫn database và backup, `LOG_LEVEL`.
+2. Cấu hình đọc bằng đúng code của bot: có `DISCORD_TOKEN` (chỉ báo "có", không in giá trị hay độ dài; token quá ngắn hoặc còn khoảng trắng/xuống dòng ở giữa là ❌), `DISCORD_GUILD_IDS` hợp lệ, đường dẫn database và backup, `LOG_LEVEL`. Giá trị sai không được in lại: lỗi `DISCORD_GUILD_IDS` chỉ nêu vị trí mục sai (ví dụ "mục thứ 2"), vì biến này có thể bị dán nhầm token.
 3. Thư mục database và thư mục backup tồn tại hoặc tạo được, và ghi được: tạo rồi xoá một file tạm. Thư mục phải tạo để thử thì được xoá lại ngay.
 4. better-sqlite3 nạp được, tức binary native đúng nền tảng.
 5. Database:
    - chưa có: cảnh báo là bot sẽ tạo khi chạy;
    - đã có: đọc schema version và so với migration mới nhất của code. Cũ hơn là ⚠️ (bot sẽ tự migrate), bằng là ✅, mới hơn là ❌ (code cũ hơn database, bot sẽ từ chối khởi động);
-   - kiểm tra hỏng (`quick_check`) và chạy thử các migration còn thiếu trên một **bản sao trong bộ nhớ**. File thật không bị mở bằng SQLite, vì kể cả khi mở read-only, SQLite vẫn tạo file `-wal`/`-shm` cạnh database;
+   - kiểm tra hỏng (`quick_check`) và chạy thử các migration còn thiếu trên một **bản sao trong thư mục tạm** (`/tmp`, với `PrivateTmp=yes` là `/tmp` riêng của lần chạy). Bản sao và mọi file phụ của nó bị xoá ngay khi kiểm tra xong. File thật không bị mở bằng SQLite, vì kể cả khi mở read-only, SQLite vẫn tạo file `-wal`/`-shm` cạnh database;
+   - thư mục tạm cần chỗ trống khoảng 1,5 lần dung lượng database (thiếu chỗ thì ⚠️ và chỉ kiểm tra header). Nếu `/tmp` của server là tmpfs (nằm trong RAM), bản sao chiếm RAM bằng dung lượng database và tính vào `MemoryMax`;
+   - bot đang chạy có thể ghi vào database đúng lúc selfcheck chép, làm bản sao bị rách. Vì vậy bản sao báo lỗi thì selfcheck chép lại và kiểm lại, tối đa 3 lần. Vẫn lỗi mà có dấu hiệu bot đang ghi (file `-wal` có dữ liệu, hoặc file database thay đổi trong lúc kiểm tra) thì chỉ ⚠️ "kết quả không tin cậy": dừng bot rồi chạy lại selfcheck, **không** khôi phục backup vì dòng này. Chỉ khi lỗi lặp lại lúc file không thay đổi mới là ❌ kèm lời khuyên khôi phục từ bản sao lưu (mục 6);
    - chạy toàn bộ migration trên một database trống trong bộ nhớ.
 6. `@napi-rs/canvas` nạp được; font trong `assets/fonts` tìm thấy và đăng ký được.
 7. Vẽ thử một thẻ rank và một bảng xếp hạng bằng dữ liệu giả, kiểm tra PNG hợp lệ, in thời gian vẽ.
@@ -137,15 +139,16 @@ echo "exit code: $?"
 - Không dùng `sudo -u discordbot npm run selfcheck` hay `sudo -u discordbot node --env-file=.env ...`: `.env` thuộc root với quyền 600 nên user `discordbot` không đọc được.
 - **Không bao giờ** đưa token lên dòng lệnh (kiểu `DISCORD_TOKEN=... node ...`): user khác trên server thấy được qua `ps`, và token nằm lại trong shell history.
 - `ProtectSystem=strict` + `ReadWritePaths`, `SystemCallFilter`, `MemoryMax`: selfcheck gặp đúng các giới hạn của bot. Vì vậy lỗi canvas do system call bị chặn, lỗi ghi ngoài `data/` hay lỗi thiếu bộ nhớ lộ ra ở đây, trước khi bật service.
-- `--wait --pipe`: chờ chạy xong và in kết quả ra terminal. Exit code của `systemd-run` là exit code của selfcheck. `--collect`: dọn unit tạm kể cả khi thất bại, nên chạy lại được ngay.
+- `--wait --pipe`: chờ chạy xong và in kết quả ra terminal. Khi selfcheck tự kết thúc, exit code của `systemd-run` là exit code của selfcheck (0, hoặc 1 nếu có ❌). `--collect`: dọn unit tạm kể cả khi thất bại, nên chạy lại được ngay.
 - Cuối output, `systemd-run` in `Finished with result: ...` và `Main processes terminated with: ...`. Nếu thấy:
   - `code=exited/status=1`: đọc các dòng ❌ phía trên;
   - `code=killed/status=SYS`: system call bị chặn và process bị giết (chỉ xảy ra khi bỏ `SystemCallErrorNumber=EPERM`);
-  - `code=killed/status=KILL` kèm cảnh báo OOM: vượt `MemoryMax`.
+  - `code=killed/status=KILL` kèm `Finished with result: oom-kill` hoặc cảnh báo OOM: vượt `MemoryMax`.
 
   Với hai trường hợp `killed`, dòng kết quả in ra cuối cùng cho biết bước đã chạy xong ngay trước khi process bị dừng. Gửi toàn bộ output cho người phụ trách.
-- Lệnh báo `status=226/NAMESPACE`: thư mục trong `ReadWritePaths` chưa tồn tại. Tạo thư mục `data/` như ở trên rồi chạy lại.
-- `sudo npm run selfcheck` (bằng root, ngoài sandbox) vẫn chạy được, nhưng không phát hiện lỗi quyền ghi hay system call bị chặn, vì root không bị các giới hạn đó.
+- Quy ước exit code của `systemd-run --wait` (dòng `echo "exit code: $?"`): process bị giết bằng signal (`Finished with result: signal`) → **255**; bị giết vì hết bộ nhớ (`oom-kill`) → **1**, trùng với exit code khi selfcheck có ❌. Vì vậy thấy exit code 1 thì xem dòng `Finished with result:` và các dòng kết quả phía trên để phân biệt: có dòng `Tổng kết:` là selfcheck tự kết thúc, không có là process bị dừng giữa chừng.
+- Lệnh kết thúc với `code=exited/status=226` (exit code 226): thư mục trong `ReadWritePaths` chưa tồn tại, nên systemd không dựng được sandbox. `systemd-run` chỉ in số 226, không có chữ `NAMESPACE`; `systemctl status` hay `journalctl` mới hiện `status=226/NAMESPACE`. Tạo thư mục `data/` như ở trên rồi chạy lại.
+- `sudo npm run selfcheck` (bằng root, ngoài sandbox) vẫn chạy được, nhưng không phát hiện lỗi quyền ghi hay system call bị chặn, vì root không bị các giới hạn đó. Chạy bằng root trên Linux, selfcheck in ⚠️ nhắc điều này.
 
 **Trên máy dev:** `npm run build && npm run selfcheck`. Lệnh này tự nạp `.env` trong thư mục dự án nếu có.
 
@@ -184,7 +187,7 @@ sudo npm run build          # luôn build lại từ đầu, không copy chồng
 sudo systemctl restart company-discord-bot
 ```
 
-- Lúc chạy selfcheck, bot bản cũ vẫn đang chạy, nên cảnh báo "Có file ...-wal chưa gộp vào database" là bình thường.
+- Lúc chạy selfcheck, bot bản cũ vẫn đang chạy, nên cảnh báo "Có file ...-wal chưa gộp vào database" là bình thường. Nếu gặp ⚠️ "kết quả kiểm tra database không tin cậy khi bot đang ghi": đó là do bot đang ghi đúng lúc selfcheck chép database, không phải database hỏng. Muốn kiểm chắc chắn thì dừng bot (`sudo systemctl stop company-discord-bot`), chạy lại selfcheck rồi mới bật lại; **không** khôi phục backup chỉ vì dòng này.
 - Migration database chạy tự động khi bot khởi động.
 - Nếu database mới hơn code (ví dụ lỡ quay về bản cũ), bot từ chối khởi động để tránh hỏng dữ liệu.
 

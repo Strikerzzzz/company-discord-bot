@@ -1,5 +1,5 @@
 import { errorText } from "./selfcheck/checks";
-import { redactSecrets, runSelfCheck } from "./selfcheck/run";
+import { oneLine, redactSecrets, runSelfCheck } from "./selfcheck/run";
 
 /**
  * Entry point của `npm run selfcheck` (DEC-034): kiểm tra môi trường trước khi bật bot. Không kết nối Discord,
@@ -13,6 +13,7 @@ async function main(): Promise<void>
 		platform: process.platform,
 		arch: process.arch,
 		cwd: process.cwd(),
+		uid: process.getuid?.(),
 		write: line => console.log(line),
 	});
 	process.exitCode = report.exitCode;
@@ -20,6 +21,6 @@ async function main(): Promise<void>
 
 main().catch((error: unknown) =>
 {
-	console.error(`❌ Selfcheck dừng giữa chừng vì lỗi không lường trước: ${redactSecrets(errorText(error), process.env)}`);
+	console.error(`❌ Selfcheck dừng giữa chừng vì lỗi không lường trước: ${oneLine(redactSecrets(errorText(error), process.env))}`);
 	process.exitCode = 1;
 });

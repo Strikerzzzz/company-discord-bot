@@ -14,7 +14,12 @@ import { LevelInfo, levelInfo, totalXpForLevel } from "../src/modules/activity/l
 import { applyTierOverrides, DEFAULT_TIER_SET, nextTier, Tier, tierForLevel, TIER_SET_KEYS, TIER_SETS, TierSet, TIERS } from "../src/modules/activity/tiers";
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const MAX_RENDER_MS = 1000;
+/**
+ * Ngưỡng để bắt vẽ chậm bất thường (ví dụ vòng lặp đo chữ hỏng), không phải đo hiệu năng chính xác: máy dev vẽ mỗi ảnh
+ * trong vài trăm ms, nhưng lúc máy bận (nhiều test chạy song song) có thể chậm gấp nhiều lần, nên ngưỡng nới rộng để test
+ * không fail ngẫu nhiên (LL-017, LL-018 về test hiệu năng).
+ */
+const MAX_RENDER_MS = 3000;
 
 function pngSize(png: Buffer): { width: number; height: number }
 {
