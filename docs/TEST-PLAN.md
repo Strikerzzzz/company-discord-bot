@@ -133,7 +133,7 @@
 **Mở bảng và chuyển trang**
 
 - [ ] A gõ `/config panel` → bảng hiện, **chỉ A thấy**, có menu chọn trang; trang **Tổng quan** khớp với `/config view` (có dòng chế độ kênh tính XP).
-- [ ] Chọn lần lượt 6 trang: Tổng quan, Kênh, Team, XP, Vote, Bảng vàng và admin → mỗi lần bảng được thay tại chỗ; menu luôn hiện đúng trang đang xem.
+- [ ] Chọn lần lượt 6 trang: Tổng quan, Kênh, Team, XP, Vote, Bảng vàng và admin → mỗi lần bảng được thay tại chỗ; chữ mờ của menu ghi đúng trang đang xem ("📍 Đang xem: …"). Chọn lại đúng trang đang xem → bảng được làm mới.
 - [ ] Mở bảng trên **mobile**: chuyển trang, mở menu chọn kênh và chọn role, mở form "✏️ Sửa số" → hiển thị đủ chữ, không vỡ khung, bấm được mọi nút.
 - [ ] Để bảng mở hơn 15 phút rồi bấm → vẫn hoạt động.
 
@@ -148,6 +148,7 @@
 - [ ] `/config channel reset kenh:#kenh-moi` → chọn lại trang Kênh trong menu: `#kenh-moi` không còn trong danh sách; C nhắn ở đó → không được XP.
 - [ ] Bấm nút "tất cả kênh" → danh sách chuyển sang "kênh đang tắt XP"; C nhắn ở `#kenh-moi` và `#chung` → được XP.
 - [ ] Menu tắt: chọn `#chi-doc` → `#chi-doc` có trong danh sách kênh đang tắt. Chuyển sang "chỉ kênh được bật" rồi về lại "tất cả kênh" → `#chi-doc` **vẫn tắt** (cấu hình riêng thắng chế độ).
+- [ ] Ở chế độ "tất cả kênh", trang Kênh có dòng nhắc số kênh **được bật riêng** (ví dụ `#chung`, `#kenh-rieng` đã bật ở trên): các kênh này vẫn tính XP nếu chuyển sang "chỉ kênh được bật".
 - [ ] Cuối phần này: server ở chế độ "tất cả kênh", `#chung` tính XP (cần cho các bước sau).
 
 **Team**
@@ -176,7 +177,8 @@
 
 - [ ] Menu kênh Bảng vàng: chọn `#bang-vang` → bot đăng bảng ở đó (như mục 5), trang ghi kênh mới. Nút "Tắt Bảng vàng" → message Bảng vàng bị xoá, trang ghi đang tắt.
 - [ ] Chọn một kênh bot thiếu Attach Files → báo "Bot thiếu quyền" kèm tên quyền, Bảng vàng không đổi. Người thao tác không gửi được tin ở kênh đã chọn (bot có đủ quyền ở đó) → báo "Bạn không có quyền".
-- [ ] Menu role admin bot: điền sẵn role admin bot hiện tại. Bỏ chọn → trang ghi role admin bot chưa đặt. Chọn lại role cũ → trang ghi lại role đó. Chọn một role danh hiệu → bị từ chối.
+- [ ] Menu role admin bot: điền sẵn role admin bot hiện tại. Bỏ chọn → trang ghi role admin bot chưa đặt. Chọn lại role cũ → trang ghi lại role đó. Chọn một role danh hiệu → bị từ chối, và bảng được vẽ lại: menu hiện lại **role admin cũ** (không giữ role danh hiệu vừa chọn), role admin bot không đổi.
+- [ ] Role hoặc kênh đã lưu bị xoá: tạo role tạm, đặt làm role tạo vote trên trang Vote, rồi xoá role đó trong Server Settings → Roles. Mở lại trang Vote → có cảnh báo "Role đã lưu không còn trong server", menu không điền sẵn, bảng vẫn dùng được. Đặt lại role tạo vote như cũ. (Tương tự với kênh Bảng vàng: trang Bảng vàng báo "Bot không còn thấy kênh này".)
 - [ ] Người không còn là admin bấm bảng cũ: B mở `/config panel`; A đổi role admin bot sang role khác mà B không có; B bấm nút hoặc chọn menu bất kỳ trên bảng đang mở → bị từ chối ("Bạn không có quyền dùng lệnh này"), không có gì thay đổi. A đặt lại role admin bot như cũ.
 - [ ] Nút "🏅 Mở bảng danh hiệu" → bảng danh hiệu (như mục 8) mở trong một **tin nhắn riêng mới**; bảng cấu hình vẫn còn và dùng tiếp được.
 
@@ -193,4 +195,4 @@
 
 **Chốt khi đưa vào dùng thật (server ezOne)**
 
-- [ ] Chuyển sang "chỉ kênh được bật", bật các kênh cần tính XP, rồi reset điểm theo DEPLOY mục 7.4 (`/admin backup` trước) → `/rank` của mọi người về 0, bảng xếp hạng trống; `/config view` giữ nguyên cấu hình; `/admin audit` có "Reset XP toàn server" và "Reset contribution toàn server".
+- [ ] Chuyển sang "chỉ kênh được bật", xem danh sách "Kênh đang tính XP" trên trang Kênh: tắt các kênh thừa (ví dụ kênh đã bật riêng lúc kiểm thử), bật các kênh cần tính XP, rồi reset điểm theo DEPLOY mục 7.4 (`/admin backup` trước) → `/rank` của mọi người về 0, bảng xếp hạng trống; `/config view` giữ nguyên cấu hình; `/admin audit` có "Reset XP toàn server" và "Reset contribution toàn server".

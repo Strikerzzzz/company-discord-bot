@@ -390,6 +390,7 @@ Quy tắc:
 - **Cấu hình riêng của kênh luôn thắng chế độ.** Kênh đã được bật hoặc tắt riêng (kể cả kênh có XP hay cooldown riêng) giữ nguyên trạng thái bật/tắt đã lưu khi đổi chế độ.
 - `/config channel reset kenh:<kênh>` xoá cấu hình riêng. Kênh đó quay về theo chế độ.
 - Bật hoặc tắt một kênh (trên bảng hay bằng `/config channel set`) thì trạng thái đó được lưu thành cấu hình riêng của kênh và giữ nguyên khi đổi chế độ. Riêng kênh **vốn đã đúng** trạng thái đó theo chế độ đang dùng thì bot không lưu gì. Ví dụ: đang ở "tất cả kênh" mà bật một kênh chưa bị tắt thì không có gì thay đổi, và nếu sau này đổi sang "chỉ kênh được bật" thì kênh đó không tính XP. Vì vậy hãy **chọn chế độ trước, rồi mới bật hoặc tắt kênh**.
+- Đổi chế độ xong, xem lại danh sách trên trang **Kênh**: kênh đã bật hay tắt riêng từ trước vẫn giữ trạng thái đó. Trang Kênh nhắc số kênh như vậy (ví dụ "3 kênh được bật riêng").
 - Tin trong thread và bài trong forum tính theo kênh cha. Bật kênh cha là bật cho mọi thread trong kênh đó.
 - Sau khi cập nhật lên bản có tính năng này, server vẫn ở chế độ "tất cả kênh". Hành vi không đổi cho tới khi admin chọn chế độ khác.
 
