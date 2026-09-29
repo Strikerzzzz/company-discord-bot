@@ -437,7 +437,8 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 // Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
 // poll.* không có target (mã vote nằm trong details), tier_role.set/clear có target là role (khoá bậc trong details.tierKey),
 // board.* có target là channel của Bảng vàng.
-type AuditTargetKind = "user" | "role" | "channel" | "none";
+/** Loại đối tượng (target_id) của một mục audit: ID người dùng, role, channel, hoặc chuỗi khác ("none"). */
+export type AuditTargetKind = "user" | "role" | "channel" | "none";
 
 const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"config.update": "none",
@@ -543,6 +544,15 @@ function roleListText(items: readonly unknown[]): string | null
 export function auditActionLabel(action: AuditAction): string
 {
 	return AUDIT_LABELS[action];
+}
+
+/**
+ * Loại đối tượng của hành động `action` trong audit log, để nơi hiển thị khác (trang web quản trị, DEC-039) đổi target_id
+ * sang tên kênh, role hay người. Cùng bảng với phần "Đối tượng" của `/admin audit`.
+ */
+export function auditTargetKind(action: AuditAction): AuditTargetKind
+{
+	return AUDIT_TARGETS[action];
 }
 
 function auditTarget(action: AuditAction, targetId: string | null): string | null
