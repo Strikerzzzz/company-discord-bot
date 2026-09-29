@@ -359,6 +359,18 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 - **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 duyệt")
 - **Nội dung:** merge `phase-15/config-panel` vào `main` (fast-forward tới `bd03308`): `/config panel`, chế độ kênh tính XP, sửa lỗi của 2 review độc lập, script cài đặt `deploy/install.sh` và `deploy/start.sh`. PROP-034, 035, 036 vẫn PROPOSED (chưa trả lời).
 
+### DEC-039 — Trang web quản trị (duyệt PROP-037, ngoại lệ luật protected số 2 và 3)
+
+- **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (chọn "Duyệt, làm trang web", "Chỉ mạng công ty/VPN", "Tài khoản Discord"; hỏi thêm "đăng nhập dùng chính cái đăng nhập discord luôn được không" → đúng là cách đã chọn)
+- **Nội dung (ngoại lệ có phạm vi, không mở rộng sang dashboard hay server khác):**
+  - Thêm trang web quản trị **chạy trong chính process của bot** (`node:http`, không thêm dependency), giữ topology 1 process + 1 SQLite. Tầng web `src/web/` ngang hàng tầng Discord, gọi đúng service như lệnh Discord.
+  - **Chỉ mạng nội bộ công ty hoặc VPN.** Server `192.168.0.206` mở một cổng cấu hình được (`WEB_PORT`), không mở ra Internet. HTTP nội bộ; HTTPS khi IT cấp chứng chỉ. Không đặt `WEB_PORT` thì web tắt.
+  - **Đăng nhập bằng tài khoản Discord** (OAuth2 authorization code, scope `identify`). Bot kiểm tra người đăng nhập có quyền admin bot trong server (Manage Server theo `member.permissions` hoặc role admin bot, giống lớp quyền 2), kiểm tra lại ở **mỗi request**. Không có mật khẩu riêng. Cần `DISCORD_CLIENT_SECRET` trong `.env` và redirect URL `<WEB_BASE_URL>/auth/callback` trên Developer Portal.
+  - Phiên đăng nhập lưu **trong bộ nhớ** (khởi động lại bot thì đăng nhập lại), nên không thêm bảng. Cookie HttpOnly, SameSite=Lax. Có chống CSRF, kiểm tra Host/Origin, security header (CSP), giới hạn tần suất ở các đường dẫn chưa đăng nhập.
+  - Network call mới chỉ tới Discord (OAuth2 token, `users/@me`), vẫn trong luật "chỉ gọi Discord API".
+  - Trang: tổng quan; kênh (toàn bộ kênh, không giới hạn 25); team; cài đặt điểm (XP, vote, contribution); quyền (role admin, role tạo vote); Bảng vàng; danh hiệu (bộ, tên bậc, role); nhật ký quản trị. Mọi thao tác ghi audit với người thao tác là tài khoản Discord đã đăng nhập.
+  - Làm ở Phase 16, branch `phase-16/web-admin`, có review bảo mật riêng trước khi merge.
+
 ---
 
 ## Đang chờ quyết định

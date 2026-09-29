@@ -46,6 +46,7 @@
 | PROP-034 | Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot | MEDIUM | PROPOSED |
 | PROP-035 | Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server | LOW | PROPOSED |
 | PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
+| PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | APPROVED |
 
 ---
 
@@ -1440,3 +1441,52 @@ LOW
 ### Trạng thái
 
 PROPOSED (2026-09-29).
+
+## PROP-037 — Trang web quản trị cho admin
+
+### Vấn đề
+
+Người phụ trách muốn "trang web để set up cho admin". Hiện mọi cấu hình nằm trong Discord (`/config panel`, `/config tier panel`, lệnh gõ tay). Giao diện Discord có giới hạn: một menu chọn tối đa 25 mục, không xem được toàn bộ danh sách kênh cùng lúc, phải mở lệnh mới thấy. Luật protected số 2 trong CLAUDE.md cấm tự thêm dashboard hay API server, nên cần người phụ trách duyệt.
+
+### Đề xuất
+
+- **Web chạy trong chính process của bot**, giữ topology 1 process Node.js + 1 file SQLite. Không có server hay dịch vụ riêng.
+- Dùng `node:http` có sẵn, HTML render phía server, không thêm dependency. Nếu cần framework thì xin duyệt dependency riêng.
+- Mở một cổng (ví dụ 8787) trên server `192.168.0.206`, chỉ truy cập được trong mạng công ty hoặc VPN, không mở ra Internet. Dùng HTTP nội bộ; HTTPS cần chứng chỉ do IT cấp.
+- **Đăng nhập bằng tài khoản Discord** (OAuth2, scope `identify`):
+  - bot lấy thông tin thành viên qua REST (không cần privileged intent) và chỉ cho vào nếu người đó có Manage Server hoặc role admin bot trong server, giống lớp quyền 2 hiện tại;
+  - phiên làm việc lưu SQLite, cookie HttpOnly, hết hạn sau vài giờ;
+  - cần thêm `DISCORD_CLIENT_SECRET` vào `.env` và redirect URL trong Developer Portal.
+- **Các trang:**
+  - tổng quan;
+  - kênh: toàn bộ kênh của server kèm ô bật/tắt, không giới hạn 25;
+  - team; XP và chống spam; vote và contribution; Bảng vàng; role admin;
+  - danh hiệu: chọn bộ, đổi tên bậc, gán, tạo hay đồng bộ role;
+  - nhật ký quản trị;
+  - có thể thêm xem bảng xếp hạng.
+- Mọi thao tác đi qua đúng service và kiểm tra như lệnh Discord. Audit ghi người thao tác. Có chống CSRF, escape HTML, Content-Security-Policy, giới hạn tần suất đăng nhập.
+- Lệnh và bảng trong Discord giữ nguyên.
+
+### Lý do
+
+Admin cấu hình bằng trình duyệt, thấy toàn bộ và thao tác nhanh, nhất là danh sách kênh dài.
+
+### Tác động
+
+- **Code:** module web mới (router, trang, đăng nhập, phiên), dùng lại service có sẵn; test cho luồng đăng nhập, phân quyền và từng form.
+- **Database:** migration 6, bảng phiên đăng nhập. Không đổi dữ liệu điểm.
+- **Security:** bề mặt tấn công mới. Máy dùng chung mở thêm một cổng; cookie đi qua HTTP trong mạng nội bộ; thêm một secret. Cần review bảo mật riêng.
+- **Infrastructure:** mở cổng trên server (có thể cần IT mở firewall nội bộ); đăng ký redirect URL trên Developer Portal. Network call mới chỉ tới Discord (OAuth2), vẫn trong phạm vi "chỉ gọi Discord API".
+- **Công sức:** một phase cỡ Phase 15 trở lên.
+
+### Rủi ro
+
+Đổi luật protected số 2 (dashboard, API server) và số 3 (thêm endpoint nhận kết nối từ ngoài vào), nên chỉ người phụ trách quyết. Nếu duyệt, ghi ngoại lệ vào DECISIONS: "web quản trị nhúng trong process bot, chỉ mạng nội bộ, đăng nhập bằng Discord".
+
+### Độ ưu tiên
+
+HIGH (người phụ trách yêu cầu)
+
+### Trạng thái
+
+APPROVED (2026-09-29, DEC-039): chỉ mạng công ty/VPN, đăng nhập bằng tài khoản Discord. Làm ở Phase 16.
