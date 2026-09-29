@@ -110,6 +110,15 @@ export function otherRoleUsage(services: TierRoleServices, guildId: string, role
 	return null;
 }
 
+/** Lý do không dùng được role làm role danh hiệu vì role đang giữ vai trò khác trong cấu hình bot; null nếu không có. */
+export function otherRoleUsageIssue(services: TierRoleServices, guildId: string, roleId: string): string | null
+{
+	const usage = otherRoleUsage(services, guildId, roleId);
+	if (usage === null) return null;
+	return `Không thể dùng ${roleMention(roleId)} làm role danh hiệu vì role này đang là ${usage}. `
+		+ "Bot tự gán role danh hiệu cho người đủ level và gỡ khỏi người khác, nên hãy tạo một role mới dành riêng cho bậc danh hiệu.";
+}
+
 function assignedMapping(services: TierRoleServices, guildId: string, tierKey: TierKey): TierRoleMapping | null
 {
 	return services.tierRoles.list(guildId).find(mapping => mapping.tierKey === tierKey) ?? null;
@@ -133,7 +142,9 @@ export interface TierRoleAssignment
 /**
  * Gán `role` cho bậc `tierKey` sau khi kiểm tra: người thao tác tự gán được role đó, role an toàn và bot quản lý được
  * (theo thông tin mới nhất của bot), role không đang giữ vai trò khác trong cấu hình bot. Lỗi là UserError; không ghi gì.
- * Dùng chung cho `/config tier set-role` và ô chọn role trong bảng điều khiển.
+ * Dùng chung cho `/config tier set-role`, ô chọn role trong bảng điều khiển và trang web. `options.createdByBot` chỉ dùng khi
+ * chuyển một role do bot tạo từ bậc khác sang (trang web), để nút tạo/đồng bộ vẫn đổi tên được role đó; mặc định là role do
+ * admin gán.
  */
 export async function assignTierRole(
 	guild: Guild,
@@ -141,6 +152,7 @@ export async function assignTierRole(
 	services: TierRoleServices,
 	tierKey: TierKey,
 	role: Role,
+	options: { createdByBot?: boolean } = {},
 ): Promise<TierRoleAssignment>
 {
 	const callerIssue = callerRoleIssue(actor, role);
@@ -151,14 +163,10 @@ export async function assignTierRole(
 	if (issue !== null) throw new UserError(issue);
 
 	// Kiểm tra vai trò khác của role sau await, liền trước bước ghi, để không có await chen giữa bước đọc và bước ghi.
-	const usage = otherRoleUsage(services, guild.id, role.id);
-	if (usage !== null)
-	{
-		throw new UserError(`Không thể dùng ${roleMention(role.id)} làm role danh hiệu vì role này đang là ${usage}. `
-			+ "Bot tự gán role danh hiệu cho người đủ level và gỡ khỏi người khác, nên hãy tạo một role mới dành riêng cho bậc danh hiệu.");
-	}
+	const usage = otherRoleUsageIssue(services, guild.id, role.id);
+	if (usage !== null) throw new UserError(usage);
 	const previous = assignedMapping(services, guild.id, tierKey);
-	services.tierRoles.set(guild.id, tierKey, role.id, actor.id);
+	services.tierRoles.set(guild.id, tierKey, role.id, actor.id, { createdByBot: options.createdByBot === true });
 	return {
 		previousRoleId: previous?.roleId ?? null,
 		previousCreatedByBot: previous !== null && previous.roleId !== role.id && previous.createdByBot,

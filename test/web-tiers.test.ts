@@ -11,8 +11,10 @@ import {
 	DUPLICATE_ROLE,
 	FORM_INVALID,
 	INVALID_TIER_SET,
+	NAME_TOO_LONG,
 	NAMES_CHANGED,
 	NAMES_SET_CHANGED,
+	NOTHING_SAVED,
 	RESET_SET_CHANGED,
 	ROLE_CHANGED,
 	SELECTED_ROLE_UNAVAILABLE,
@@ -43,6 +45,7 @@ const ROLE_EVIL = "520000000000000003";
 const ROLE_HIGH = "520000000000000004";
 const ROLE_MOD = "520000000000000005";
 const ROLE_BOT_MADE = "520000000000000006";
+const ROLE_BOT_MADE_2 = "520000000000000007";
 const ROLE_GONE = "520000000000000077";
 const EVIL_NAME = "<img src=x onerror=alert(1)>";
 /** Có Manage Server và Manage Roles, role cao nhất là ROLE_MOD (vị trí 10); không phải chủ server. */
@@ -55,8 +58,11 @@ interface TierTest
 	harness: WebHarness;
 	/** Các lần gọi API role theo thứ tự: "create:<tên>", "edit:<id>:<tên>", "delete:<id>". */
 	calls: string[];
-	/** Bot giả: quyền Manage Roles và vị trí role cao nhất (dùng cho cả members.me và fetchMe). */
-	bot: { manageRoles: boolean; highest: number };
+	/**
+	 * Bot giả: quyền Manage Roles và vị trí role cao nhất (dùng cho cả members.me và fetchMe); `fetchesLeft` là số lần fetchMe
+	 * còn thành công (hết thì fetchMe lỗi như lỗi mạng).
+	 */
+	bot: { manageRoles: boolean; highest: number; fetchesLeft: number };
 }
 
 function roleColors(primaryColor: number): object
@@ -100,7 +106,7 @@ function addTestRole(t: TierTest, spec: FakeRoleSpec): void
 function createTierTest(): TierTest
 {
 	const harness = createWebHarness();
-	const t: TierTest = { harness, calls: [], bot: { manageRoles: true, highest: 50 } };
+	const t: TierTest = { harness, calls: [], bot: { manageRoles: true, highest: 50, fetchesLeft: Infinity } };
 	const { world } = harness;
 	for (const role of world.roles.values()) equipRole(t, role);
 	for (const channel of world.channels.values()) Object.assign(channel, { permissionOverwrites: { cache: new Collection() } });
@@ -110,7 +116,14 @@ function createTierTest(): TierTest
 		permissions: new PermissionsBitField(t.bot.manageRoles ? [PermissionFlagsBits.ManageRoles] : []),
 		roles: { highest: { id: BOT_TOP_ROLE, position: t.bot.highest } },
 	});
-	Object.assign(world.guild.members, { fetchMe: (): Promise<object> => Promise.resolve(botMember()) });
+	Object.assign(world.guild.members, {
+		fetchMe: (): Promise<object> =>
+		{
+			if (t.bot.fetchesLeft <= 0) return Promise.reject(new Error("lỗi mạng giả"));
+			t.bot.fetchesLeft--;
+			return Promise.resolve(botMember());
+		},
+	});
 	Object.defineProperty(world.guild.members, "me", { get: botMember, configurable: true });
 
 	let nextId = 1;
@@ -232,6 +245,12 @@ function assertFlash(flash: Flash, kind: "ok" | "error", ...parts: string[]): vo
 function roleOf(t: TierTest, tierKey: TierKey): string | null
 {
 	return t.harness.services.tierRoles.list(GUILD).find(mapping => mapping.tierKey === tierKey)?.roleId ?? null;
+}
+
+function mappingOf(t: TierTest, tierKey: TierKey): { roleId: string; createdByBot: boolean } | null
+{
+	const mapping = t.harness.services.tierRoles.list(GUILD).find(candidate => candidate.tierKey === tierKey);
+	return mapping ? { roleId: mapping.roleId, createdByBot: mapping.createdByBot } : null;
 }
 
 function tierName(t: TierTest, tierKey: TierKey): string
@@ -410,6 +429,19 @@ describe("web: trang danh hiệu — tên bậc", () =>
 		assert.deepEqual(tierSets.overrides(GUILD, "tu-tien"), []);
 	});
 
+	test("tên dài hơn ô nhập bị từ chối ngay, trước khi phân tích tên, và không lưu bậc nào", async () =>
+	{
+		const t = createTierTest();
+		const { tierSets } = t.harness.services;
+		const auth = await login(t.harness, ADMIN_USER);
+
+		const huge = await fillAndSubmit(t, auth, "/names", { "name:bac-2": "Hợp Lệ", "name:bac-3": "a".repeat(120_000) });
+		assertFlash(huge, "error", "Bậc 3 · 🟡 Kim Đan: ", escapeHtml(NAME_TOO_LONG));
+		assertFlash(await fillAndSubmit(t, auth, "/names", { "name:bac-8": "a".repeat(73) }), "error", "Bậc 8 · ⚡ Độ Kiếp: ", escapeHtml(NAME_TOO_LONG));
+		assert.deepEqual(tierSets.overrides(GUILD, "tu-tien"), []);
+		assert.equal(auditActions(t, "tier_name.set").length, 0);
+	});
+
 	test("bảng cũ: tên vừa đổi ở nơi khác (dấu vân tay khác) hoặc bộ vừa đổi thì không lưu gì", async () =>
 	{
 		const t = createTierTest();
@@ -541,32 +573,154 @@ describe("web: trang danh hiệu — role theo bậc", () =>
 		assert.ok(auditActions(t, "tier_role.clear").every(entry => entry.actorId === ADMIN_USER));
 	});
 
-	test("role đang thuộc bậc khác: từ chối nếu bậc đó không đổi; chuyển được trong cùng lần lưu (bỏ gán xử lý trước)", async () =>
+	test("role đang thuộc bậc khác: từ chối nếu bậc đó không đổi; chuyển được trong cùng lần lưu (bậc cũ bỏ gán)", async () =>
 	{
 		const t = createTierTest();
 		t.harness.services.tierRoles.set(GUILD, "bac-1", ROLE_TIER_1, ADMIN_USER);
 		const auth = await login(t.harness, ADMIN_USER);
 
-		assertFlash(await fillAndSubmit(t, auth, "/roles", { "role:bac-2": ROLE_TIER_1 }), "error", "đang là role của Bậc 1 · 🌱 Luyện Khí");
+		assertFlash(await fillAndSubmit(t, auth, "/roles", { "role:bac-2": ROLE_TIER_1 }), "error", "đang là role của Bậc 1 · 🌱 Luyện Khí", NOTHING_SAVED);
 		assert.equal(roleOf(t, "bac-2"), null);
 
-		assertFlash(await fillAndSubmit(t, auth, "/roles", { "role:bac-1": "", "role:bac-2": ROLE_TIER_1 }), "ok", "Đã bỏ", "Đã gán");
+		const moved = await fillAndSubmit(t, auth, "/roles", { "role:bac-1": "", "role:bac-2": ROLE_TIER_1 });
+		assertFlash(moved, "ok", "Đã bỏ <span class=\"mention\">@Danh hiệu 1</span> khỏi bậc 🌱 <strong>Luyện Khí</strong> (từ Level 0) để chuyển sang bậc khác.", "Đã gán");
 		assert.equal(roleOf(t, "bac-1"), null);
 		assert.equal(roleOf(t, "bac-2"), ROLE_TIER_1);
 		assert.deepEqual(t.calls, [], "role do admin gán không bị xoá");
 	});
 
-	test("một bậc lỗi giữa chừng thì dừng và báo rõ bậc nào đã lưu xong", async () =>
+	test("chuyển role do bot tạo sang bậc khác: không xoá role, giữ cờ do bot tạo (nút ✨ vẫn đổi tên); role do bot tạo không dùng lại thì vẫn bị xoá", async () =>
 	{
 		const t = createTierTest();
-		t.harness.services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
+		const { tierRoles, audit } = t.harness.services;
+		addTestRole(t, { id: ROLE_BOT_MADE_2, name: "🟡 Kim Đan", position: 1 });
+		tierRoles.set(GUILD, "bac-1", ROLE_BOT_MADE, ADMIN_USER, { createdByBot: true });
+		tierRoles.set(GUILD, "bac-3", ROLE_BOT_MADE_2, ADMIN_USER, { createdByBot: true });
 		const auth = await login(t.harness, ADMIN_USER);
 
-		const flash = await fillAndSubmit(t, auth, "/roles", { "role:bac-1": ROLE_TIER_1, "role:bac-2": ROLE_TEAM_A, "role:bac-3": ROLE_TIER_2 });
-		assertFlash(flash, "error", "Bậc 2 · 🧱 Trúc Cơ: ", "role của một team", "Đã lưu xong trước đó: Bậc 1 · 🌱 Luyện Khí.", "Đã gán");
-		assert.equal(roleOf(t, "bac-1"), ROLE_TIER_1);
-		assert.equal(roleOf(t, "bac-2"), null);
-		assert.equal(roleOf(t, "bac-3"), null, "bậc sau bậc lỗi không được xử lý");
+		const flash = await fillAndSubmit(t, auth, "/roles", { "role:bac-1": "", "role:bac-2": ROLE_BOT_MADE, "role:bac-3": "" });
+		assertFlash(
+			flash,
+			"ok",
+			"Đã bỏ <span class=\"mention\">@🌱 Luyện Khí</span> khỏi bậc 🌱 <strong>Luyện Khí</strong> (từ Level 0) để chuyển sang bậc khác.",
+			"Đã bỏ gán và xoá role do bot tạo của bậc 🟡 <strong>Kim Đan</strong>",
+			"Đã gán <span class=\"mention\">@🌱 Luyện Khí</span> cho bậc 🧱 <strong>Trúc Cơ</strong>",
+		);
+		assert.deepEqual(t.calls, [`delete:${ROLE_BOT_MADE_2}`], "chỉ role do bot tạo không còn dùng ở bậc nào bị xoá");
+		assert.ok(t.harness.world.roles.has(ROLE_BOT_MADE), "role được chuyển vẫn còn trong server");
+		assert.equal(mappingOf(t, "bac-1"), null);
+		assert.deepEqual(mappingOf(t, "bac-2"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+		assert.equal(mappingOf(t, "bac-3"), null);
+		const clears = audit.list(GUILD, 100).filter(entry => entry.action === "tier_role.clear");
+		assert.deepEqual(clears.find(entry => entry.targetId === ROLE_BOT_MADE)?.details, { tierKey: "bac-1" });
+		assert.deepEqual(clears.find(entry => entry.targetId === ROLE_BOT_MADE_2)?.details, { tierKey: "bac-3", deletedRoleId: ROLE_BOT_MADE_2 });
+
+		t.calls.length = 0;
+		await fillAndSubmit(t, auth, "/setup", {});
+		assert.ok(t.calls.includes(`edit:${ROLE_BOT_MADE}:🧱 Trúc Cơ`), "nút ✨ đổi tên role vừa chuyển theo bậc mới");
+	});
+
+	test("hoán đổi role giữa 2 bậc, chuyển vòng 3 bậc theo cả hai chiều: thành công, giữ đúng cờ do bot tạo, không xoá role nào", async () =>
+	{
+		const t = createTierTest();
+		const { tierRoles } = t.harness.services;
+		tierRoles.set(GUILD, "bac-1", ROLE_TIER_1, ADMIN_USER);
+		tierRoles.set(GUILD, "bac-2", ROLE_BOT_MADE, ADMIN_USER, { createdByBot: true });
+		const auth = await login(t.harness, ADMIN_USER);
+
+		const swapped = await fillAndSubmit(t, auth, "/roles", { "role:bac-1": ROLE_BOT_MADE, "role:bac-2": ROLE_TIER_1 });
+		assertFlash(
+			swapped,
+			"ok",
+			"Đã gán <span class=\"mention\">@🌱 Luyện Khí</span> cho bậc 🌱 <strong>Luyện Khí</strong>",
+			"Đã gán <span class=\"mention\">@Danh hiệu 1</span> cho bậc 🧱 <strong>Trúc Cơ</strong>",
+		);
+		assert.ok(!swapped.html.includes("Role cũ"), "role cũ được chuyển sang bậc khác nên không có ghi chú role cũ");
+		assert.deepEqual(mappingOf(t, "bac-1"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+		assert.deepEqual(mappingOf(t, "bac-2"), { roleId: ROLE_TIER_1, createdByBot: false });
+
+		tierRoles.set(GUILD, "bac-3", ROLE_TIER_2, ADMIN_USER);
+		assertFlash(await fillAndSubmit(t, auth, "/roles", { "role:bac-1": ROLE_TIER_1, "role:bac-2": ROLE_TIER_2, "role:bac-3": ROLE_BOT_MADE }), "ok", "Đã gán");
+		assert.deepEqual(mappingOf(t, "bac-1"), { roleId: ROLE_TIER_1, createdByBot: false });
+		assert.deepEqual(mappingOf(t, "bac-2"), { roleId: ROLE_TIER_2, createdByBot: false });
+		assert.deepEqual(mappingOf(t, "bac-3"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+
+		assertFlash(await fillAndSubmit(t, auth, "/roles", { "role:bac-1": ROLE_BOT_MADE, "role:bac-2": ROLE_TIER_1, "role:bac-3": ROLE_TIER_2 }), "ok", "Đã gán");
+		assert.deepEqual(mappingOf(t, "bac-1"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+		assert.deepEqual(mappingOf(t, "bac-2"), { roleId: ROLE_TIER_1, createdByBot: false });
+		assert.deepEqual(mappingOf(t, "bac-3"), { roleId: ROLE_TIER_2, createdByBot: false });
+		assert.deepEqual(t.calls, []);
+	});
+
+	test("một lỗi kiểm tra ở bất kỳ bậc nào thì không ghi gì: không bỏ gán, không xoá role do bot tạo, kể cả ở các bậc trước bậc lỗi", async () =>
+	{
+		const t = createTierTest();
+		const { tierRoles, teams } = t.harness.services;
+		teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
+		tierRoles.set(GUILD, "bac-1", ROLE_TIER_1, ADMIN_USER);
+		tierRoles.set(GUILD, "bac-5", ROLE_BOT_MADE, ADMIN_USER, { createdByBot: true });
+		const before = tierRoles.list(GUILD);
+		const mod = await login(t.harness, MOD_USER);
+		const clearing = { "role:bac-1": "", "role:bac-5": "" };
+
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { ...clearing, "role:bac-8": ROLE_TEAM_A }), "error", "Bậc 8 · ⚡ Độ Kiếp: ", "role của một team", NOTHING_SAVED);
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { ...clearing, "role:bac-8": ROLE_HIGH }), "error", "Bậc 8 · ⚡ Độ Kiếp: ", "không thấp hơn role cao nhất của bạn", NOTHING_SAVED);
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { ...clearing, "role:bac-8": "529999999999999999" }), "error", escapeHtml(SELECTED_ROLE_UNAVAILABLE), NOTHING_SAVED);
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { ...clearing, "role:bac-7": ROLE_TIER_2, "role:bac-8": ROLE_TIER_2 }), "error", escapeHtml(DUPLICATE_ROLE));
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { "role:bac-5": "", "role:bac-8": ROLE_TIER_1 }), "error", "đang là role của Bậc 1 · 🌱 Luyện Khí", NOTHING_SAVED);
+		t.bot.highest = 1;
+		assertFlash(await fillAndSubmit(t, mod, "/roles", { ...clearing, "role:bac-8": ROLE_TIER_2 }), "error", "Bot không quản lý được", NOTHING_SAVED);
+
+		assert.deepEqual(tierRoles.list(GUILD), before);
+		assert.deepEqual(t.calls, [], "không xoá role do bot tạo khi có bậc lỗi");
+		assert.equal(auditActions(t, "tier_role.clear").length, 0);
+	});
+
+	test("bảng cũ: đổi role của một bậc vừa được gán ở nơi khác bị từ chối, và không ghi gì ở các bậc khác", async () =>
+	{
+		const t = createTierTest();
+		const { tierRoles } = t.harness.services;
+		tierRoles.set(GUILD, "bac-4", ROLE_BOT_MADE, ADMIN_USER, { createdByBot: true });
+		const auth = await login(t.harness, ADMIN_USER);
+		const stale = formFields(await getPage(t, auth), "/roles");
+		tierRoles.set(GUILD, "bac-6", ROLE_TIER_2, ADMIN_USER);
+
+		assertFlash(await submit(t, auth, "/roles", { ...stale, "role:bac-4": "", "role:bac-6": ROLE_TIER_1 }), "error", "Bậc 6 · ", escapeHtml(ROLE_CHANGED), NOTHING_SAVED);
+		assert.deepEqual(mappingOf(t, "bac-4"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+		assert.equal(roleOf(t, "bac-6"), ROLE_TIER_2);
+		assert.deepEqual(t.calls, []);
+	});
+
+	test("lỗi khi gọi Discord ở bước gán (sau khi kiểm tra xong): dừng, báo rõ đã lưu gì và bậc nào chưa có role; role được chuyển không bị xoá", async () =>
+	{
+		const t = createTierTest();
+		const { tierRoles } = t.harness.services;
+		tierRoles.set(GUILD, "bac-1", ROLE_BOT_MADE, ADMIN_USER, { createdByBot: true });
+		tierRoles.set(GUILD, "bac-3", ROLE_TIER_1, ADMIN_USER);
+		const auth = await login(t.harness, ADMIN_USER);
+
+		t.bot.fetchesLeft = 1;
+		const flash = await fillAndSubmit(t, auth, "/roles", { "role:bac-1": "", "role:bac-2": ROLE_BOT_MADE, "role:bac-3": ROLE_TIER_2 });
+		assertFlash(
+			flash,
+			"error",
+			"Bậc 3 · 🟡 Kim Đan: Không đọc được thông tin của bot trong server.",
+			"Bot dừng ở bậc này.",
+			"Chưa gán được role mới cho: Bậc 3 · 🟡 Kim Đan. Các bậc này hiện chưa có role",
+			"Đã lưu:",
+			"Đã bỏ <span class=\"mention\">@🌱 Luyện Khí</span> khỏi bậc 🌱 <strong>Luyện Khí</strong> (từ Level 0) để chuyển sang bậc khác.",
+			"Đã gán <span class=\"mention\">@🌱 Luyện Khí</span> cho bậc 🧱 <strong>Trúc Cơ</strong>",
+		);
+		assert.equal(mappingOf(t, "bac-1"), null);
+		assert.deepEqual(mappingOf(t, "bac-2"), { roleId: ROLE_BOT_MADE, createdByBot: true });
+		assert.equal(mappingOf(t, "bac-3"), null, "bậc lỗi đã bỏ role cũ nhưng chưa có role mới, đúng như thông báo");
+		assert.deepEqual(t.calls, []);
+
+		t.bot.fetchesLeft = 0;
+		const nothing = await fillAndSubmit(t, auth, "/roles", { "role:bac-7": ROLE_TIER_2 });
+		assertFlash(nothing, "error", "Bậc 7 · ", "Chưa gán được role mới cho: Bậc 7 · ", NOTHING_SAVED);
+		assert.ok(!nothing.html.includes("Đã lưu:"));
+		assert.equal(roleOf(t, "bac-7"), null);
 	});
 });
 

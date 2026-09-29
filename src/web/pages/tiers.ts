@@ -4,12 +4,14 @@
 import { Guild, PermissionFlagsBits, Role } from "discord.js";
 import { renameInput } from "../../discord/configOps";
 import { formatNumber, roleMention } from "../../discord/format";
+import { tierRoleSafetyIssue } from "../../discord/roleSync";
 import {
 	assignTierRole,
 	BOT_MEMBER_UNAVAILABLE,
 	callerManageRolesIssue,
 	callerRoleIssue,
 	clearTierRoleAssignment,
+	otherRoleUsageIssue,
 	syncTierSetRoles,
 	TierRoleActor,
 	tierRoleActor,
@@ -65,9 +67,12 @@ export const SET_CHANGED = `Bộ danh hiệu vừa được đổi ở nơi khá
 export const NAMES_SET_CHANGED = `Bộ danh hiệu vừa được đổi sau khi trang được tải, nên bot chưa lưu tên nào. ${LATEST_SHOWN}`;
 export const NAMES_CHANGED = `Tên bậc vừa được đổi ở nơi khác sau khi trang được tải, nên bot chưa lưu gì để không ghi đè. ${LATEST_SHOWN}`;
 export const RESET_SET_CHANGED = `Bộ danh hiệu vừa được đổi sau khi trang được tải, nên bot chưa khôi phục tên nào. ${LATEST_SHOWN}`;
-export const ROLE_CHANGED = `Role của bậc này vừa được đổi ở nơi khác sau khi trang được tải, nên bot chưa bỏ gán gì. ${LATEST_SHOWN}`;
+export const NAME_TOO_LONG = `Tên dài quá ${NAME_INPUT_MAX} ký tự. Bot chưa lưu tên nào.`;
+export const ROLE_CHANGED = `Role của bậc này vừa được đổi ở nơi khác sau khi trang được tải. ${LATEST_SHOWN}`;
 export const SELECTED_ROLE_UNAVAILABLE = "Không tìm thấy role vừa chọn trong server. Hãy tải lại trang rồi chọn lại.";
 export const DUPLICATE_ROLE = "Mỗi role chỉ gán được cho một bậc, nhưng bạn đang chọn cùng một role cho nhiều bậc. Bot chưa lưu gì.";
+/** Dòng cuối của lỗi lưu role khi bot chưa ghi gì (mọi lỗi ở giai đoạn kiểm tra: bot kiểm tra hết các bậc rồi mới ghi). */
+export const NOTHING_SAVED = "Bot chưa lưu thay đổi nào.";
 export const NO_CHANGE = "Không có gì thay đổi";
 const MANAGE_ROLES_WARNING = "⚠️ Bot chưa có quyền **Manage Roles** nên chưa gán được role. "
 	+ "Hãy cấp quyền này cho role của bot và kéo role của bot lên trên các role danh hiệu (Server Settings → Roles).";
@@ -143,20 +148,6 @@ function tierLabel(tier: Tier): string
 function unique(lines: readonly string[]): string[]
 {
 	return [...new Set(lines)];
-}
-
-/** Ghi chú sau khi gán role cho một bậc (như bảng Discord): role cũ không còn do bot quản lý, bot chưa có Manage Roles. */
-function assignmentNotes(roleId: string, assignment: TierRoleAssignment): string[]
-{
-	const notes: string[] = [];
-	const previous = assignment.previousRoleId;
-	if (previous !== null && previous !== roleId)
-	{
-		notes.push(`Role cũ ${roleMention(previous)} không còn do bot quản lý; bot không tự gỡ role đó khỏi những người đang có.`);
-		if (assignment.previousCreatedByBot) notes.push("Role cũ do bot tạo; nếu không dùng nữa, hãy xoá thủ công trong **Server Settings → Roles**.");
-	}
-	if (!assignment.botCanManageRoles) notes.push(MANAGE_ROLES_WARNING);
-	return notes;
 }
 
 // ---------- Trang (GET) ----------
@@ -258,7 +249,7 @@ function rolesSection(ctx: GuildPageContext, set: TierSet, mappings: readonly Ti
 	});
 	return html`<section class="card"><h2>🏷️ Role theo bậc</h2>${roleWarnings(ctx)}
 <p class="tr-note">${discordText(guild, TIER_ROLE_DEDICATED_NOTE)}</p><p class="tr-note">${TIER_ROLE_SYNC_NOTE}</p>
-<p class="muted">Chọn role cho từng bậc rồi bấm lưu; chọn "— Chưa gán —" để bỏ gán (role do bot tạo thì bot xoá luôn khỏi server). Bot chỉ xử lý những bậc bạn đổi.</p>
+<p class="muted">Chọn role cho từng bậc rồi bấm lưu; chọn "— Chưa gán —" để bỏ gán (role do bot tạo mà không chuyển sang bậc khác thì bot xoá luôn khỏi server). Có thể chuyển hay hoán đổi role giữa các bậc trong cùng một lần lưu. Bot chỉ xử lý những bậc bạn đổi, và kiểm tra hết các bậc đó trước khi lưu: có lỗi thì không lưu gì.</p>
 <form method="post" action="${guildUrl(ctx, ROLES_PATH)}">${csrfField(ctx)}
 <table class="table"><thead><tr><th>Bậc</th><th>Role đang gán</th><th>Đổi thành</th></tr></thead><tbody>${rows}</tbody></table>
 <div class="actions"><button class="btn btn-primary" type="submit">Lưu role</button></div></form></section>`;
@@ -309,6 +300,17 @@ function saveSet(ctx: GuildPageContext): WebResponse
 }
 
 /**
+ * Ô tên của một bậc. Dài hơn ô nhập (form bị sửa) thì từ chối ngay, trước khi phân tích emoji và tên, để một giá trị rất dài
+ * không chiếm event loop.
+ */
+function nameField(form: URLSearchParams, set: TierSet, tierKey: TierKey): string
+{
+	const value = field(form, `name:${tierKey}`);
+	if (value.length > NAME_INPUT_MAX) throw new UserError(`${tierLabel(tierByKey(tierKey, set))}: ${NAME_TOO_LONG}`);
+	return value;
+}
+
+/**
  * Lưu tên 8 bậc (như form đổi tên của bảng Discord): bộ hoặc tên của nhóm bậc nào đã đổi sau khi trang được tải thì không lưu
  * gì. Mỗi ô qua renameInput (phần trùng mặc định lưu là null); TierSetService.rename validate hết rồi mới ghi, lỗi thì không ghi gì.
  */
@@ -321,7 +323,7 @@ function saveNames(ctx: GuildPageContext): WebResponse
 	const before = tierSets.current(guild.id);
 	if (NAME_GROUPS.some(group => field(form, `fp${group}`) !== tierNamesFingerprint(before, group))) throw new UserError(NAMES_CHANGED);
 
-	const entries = TIER_KEYS.map(key => renameInput(before, key, field(form, `name:${key}`)));
+	const entries = TIER_KEYS.map(key => renameInput(before, key, nameField(form, before, key)));
 	const after = tierSets.rename(guild.id, entries, actorId);
 	const changed = after.tiers.filter(tier => tierDisplayName(tier) !== tierDisplayName(tierByKey(tier.key, before)));
 	if (changed.length === 0) return redirectWithFlash(ctx, PAGE_PATH, "ok", `${NO_CHANGE}: bạn chưa sửa tên bậc nào.`);
@@ -358,117 +360,224 @@ function resetNames(ctx: GuildPageContext): WebResponse
 
 // ---------- Role theo bậc (POST) ----------
 
+/** Role mới của một bậc trong lần lưu. */
+interface RoleTarget
+{
+	roleId: string;
+	/** Role đang là role do bot tạo của một bậc khác: chuyển sang bậc này thì giữ cờ, để nút ✨ vẫn đổi tên được role đó. */
+	createdByBot: boolean;
+}
+
+/** Một bậc admin đổi trên form (lựa chọn khác role lúc tải trang), đã qua kiểm tra. */
 interface RoleChange
 {
 	/** Bậc theo bộ đang dùng lúc nhận form (để hiển thị). */
 	tier: Tier;
-	/** Role của bậc lúc tải trang; null = chưa gán. */
-	drawnRoleId: string | null;
-	/** Role admin chọn; null = bỏ gán. */
-	roleId: string | null;
+	/** Role hiện tại của bậc, trùng role lúc tải trang (đã kiểm tra); null = chưa gán. */
+	current: TierRoleMapping | null;
+	/** Role mới; null = bỏ gán. */
+	target: RoleTarget | null;
 }
 
-function tierError(tier: Tier, message: string): UserError
+interface RolePlan
 {
-	return new UserError(`${tierLabel(tier)}: ${message}`);
+	changes: RoleChange[];
+	/** ID các role được chọn cho một bậc trong lần lưu này: role cũ của một bậc mà nằm trong đây là role được chuyển, không xoá. */
+	targetIds: ReadonlySet<string>;
+}
+
+/** Lỗi ở giai đoạn kiểm tra trước khi ghi: bot chưa lưu gì. */
+function precheckError(tier: Tier, message: string): UserError
+{
+	return new UserError(`${tierLabel(tier)}: ${message}\n${NOTHING_SAVED}`);
 }
 
 /**
- * Các bậc admin đổi (lựa chọn khác role lúc tải trang), kiểm tra hết trước khi ghi: form đúng dạng; bỏ gán thì bậc phải còn giữ
- * đúng role lúc tải trang; gán thì role phải còn trong server, người đăng nhập tự gán được (callerRoleIssue), không chọn một role
- * cho nhiều bậc, và role không đang thuộc một bậc khác mà form không đổi. Bỏ gán xếp trước để chuyển role giữa hai bậc được.
+ * Lý do không gán được `role` cho một bậc trong lần lưu này; null nếu được. `owner` là mapping đang giữ role (nếu có),
+ * `released` là role hiện tại của các bậc đổi (được gỡ trước khi gán). Chỉ đọc cache và cấu hình, không await: bot chưa có
+ * trong cache (guild.members.me) thì assignTierRole kiểm tra thứ bậc sau, theo thông tin mới nhất của bot.
  */
-function readRoleChanges(ctx: GuildPageContext, actor: TierRoleActor): RoleChange[]
+function targetIssue(ctx: GuildPageContext, actor: TierRoleActor, role: Role, owner: TierRoleMapping | null, released: ReadonlySet<string>): string | null
+{
+	const { guild } = ctx;
+	const { services } = ctx.deps;
+	const callerIssue = callerRoleIssue(actor, role);
+	if (callerIssue !== null) return callerIssue;
+	if (owner !== null && !released.has(role.id))
+	{
+		const ownerLabel = tierLabel(tierByKey(owner.tierKey, services.tierSets.current(guild.id)));
+		return `${roleMention(role.id)} đang là role của ${ownerLabel}. `
+			+ `Muốn chuyển role này sang bậc khác, hãy đổi role của ${ownerLabel} (hoặc chọn "— Chưa gán —") trong cùng lần lưu.`;
+	}
+	const me = guild.members.me;
+	return otherRoleUsageIssue(services, guild.id, role.id) ?? (me ? tierRoleSafetyIssue(role, me) : null);
+}
+
+/**
+ * Các bậc admin đổi, kiểm tra hết mọi bậc trước khi ghi (không await, lỗi thì không ghi gì): form đúng dạng; role hiện tại
+ * của bậc vẫn là role lúc tải trang (bảng cũ); role mới còn trong server, người đăng nhập tự gán được (callerRoleIssue), không
+ * chọn cho nhiều bậc, không đang thuộc bậc khác mà bậc đó không nhả trong lần lưu này, không đang là role team/admin/tạo vote,
+ * và an toàn với bot trong cache (tierRoleSafetyIssue).
+ */
+function planRoleChanges(ctx: GuildPageContext, actor: TierRoleActor): RolePlan
 {
 	const { guild } = ctx;
 	const { tierSets, tierRoles } = ctx.deps.services;
 	const form = formOf(ctx);
-	const set = tierSets.current(guild.id);
 	const mappings = tierRoles.list(guild.id);
-	const changes = set.tiers.flatMap(tier =>
+	const edits = tierSets.current(guild.id).tiers.flatMap(tier =>
 	{
 		const drawnRoleId = roleField(form, `drawnRole:${tier.key}`);
 		const roleId = roleField(form, `role:${tier.key}`);
-		return roleId === drawnRoleId ? [] : [{ tier, drawnRoleId, roleId }];
+		if (roleId === drawnRoleId) return [];
+		const current = mappings.find(mapping => mapping.tierKey === tier.key) ?? null;
+		if ((current?.roleId ?? null) !== drawnRoleId) throw precheckError(tier, ROLE_CHANGED);
+		return [{ tier, current, roleId }];
 	});
 
-	const changedTiers = new Set(changes.map(change => change.tier.key));
-	const targets = new Set<string>();
-	for (const { tier, drawnRoleId, roleId } of changes)
+	const released = new Set(edits.flatMap(edit => (edit.current === null ? [] : [edit.current.roleId])));
+	const targetIds = new Set<string>();
+	const changes = edits.map(({ tier, current, roleId }): RoleChange =>
 	{
-		if (roleId === null)
-		{
-			if (assignedRole(mappings, tier.key) !== drawnRoleId) throw tierError(tier, ROLE_CHANGED);
-			continue;
-		}
+		if (roleId === null) return { tier, current, target: null };
+		if (targetIds.has(roleId)) throw new UserError(DUPLICATE_ROLE);
+		targetIds.add(roleId);
 		const role = guild.roles.cache.get(roleId);
-		if (!role) throw tierError(tier, SELECTED_ROLE_UNAVAILABLE);
-		const callerIssue = callerRoleIssue(actor, role);
-		if (callerIssue !== null) throw tierError(tier, callerIssue);
-		if (targets.has(roleId)) throw new UserError(DUPLICATE_ROLE);
-		targets.add(roleId);
-		const owner = mappings.find(mapping => mapping.roleId === roleId && mapping.tierKey !== tier.key);
-		if (owner && !changedTiers.has(owner.tierKey))
-		{
-			throw tierError(tier, `${roleMention(roleId)} đang là role của ${tierLabel(tierByKey(owner.tierKey, set))}. `
-				+ "Hãy bỏ gán ở bậc đó trước (có thể đổi luôn trong cùng lần lưu).");
-		}
-	}
-	return [...changes.filter(change => change.roleId === null), ...changes.filter(change => change.roleId !== null)];
+		if (!role) throw precheckError(tier, SELECTED_ROLE_UNAVAILABLE);
+		const owner = mappings.find(mapping => mapping.roleId === roleId) ?? null;
+		const issue = targetIssue(ctx, actor, role, owner, released);
+		if (issue !== null) throw precheckError(tier, issue);
+		return { tier, current, target: { roleId, createdByBot: owner?.createdByBot ?? false } };
+	});
+	return { changes, targetIds };
 }
 
-/** Gán hoặc bỏ gán role của một bậc bằng đúng hàm của bảng Discord; trả về các dòng báo lại cho admin. */
-async function applyRoleChange(ctx: GuildPageContext, actor: TierRoleActor, change: RoleChange): Promise<string[]>
+/** Bậc bỏ gán role do bot tạo mà role không được chuyển sang bậc nào trong lần lưu: bot xoá role khỏi server (bước 2). */
+function deletesRole(change: RoleChange, targetIds: ReadonlySet<string>): boolean
+{
+	const { current } = change;
+	return change.target === null && current !== null && current.createdByBot && !targetIds.has(current.roleId);
+}
+
+/**
+ * Bước 1 (không await, liền sau bước kiểm tra): gỡ role hiện tại của mọi bậc đổi, trừ các bậc của bước 2. Role được chuyển
+ * sang bậc khác chỉ được gỡ khỏi bậc cũ, không bị xoá. Trả về các dòng báo lại cho bậc bỏ gán (bậc đổi role báo ở bước 3).
+ */
+function releaseRoles(ctx: GuildPageContext, actor: TierRoleActor, plan: RolePlan): string[]
+{
+	const lines: string[] = [];
+	for (const change of plan.changes)
+	{
+		const { tier, current } = change;
+		if (current === null || deletesRole(change, plan.targetIds)) continue;
+		ctx.deps.services.tierRoles.clear(ctx.guild.id, tier.key, actor.id);
+		if (change.target !== null) continue;
+		lines.push(plan.targetIds.has(current.roleId)
+			? `Đã bỏ ${roleMention(current.roleId)} khỏi bậc ${tierTitle(tier)} để chuyển sang bậc khác.`
+			: tierRoleClearedText({ status: "cleared", roleId: current.roleId, deletion: { kind: "none" } }, tier));
+	}
+	return lines;
+}
+
+/**
+ * Bước 2: bỏ gán role do bot tạo không còn dùng ở bậc nào, bằng đúng hàm của bảng Discord (xoá role khỏi server nếu đủ điều
+ * kiện rồi gỡ ngay, để audit "tier_role.clear" ghi được `deletedRoleId`).
+ */
+async function clearUnusedBotRole(ctx: GuildPageContext, actor: TierRoleActor, tier: Tier): Promise<string[]>
+{
+	const outcome = await clearTierRoleAssignment(ctx.guild, actor, ctx.deps.services, tier.key);
+	return [tierRoleClearedText(outcome, tier)];
+}
+
+/**
+ * Ghi chú sau khi gán role mới cho một bậc (như bảng Discord): role cũ không còn do bot quản lý (trừ khi được chuyển sang
+ * bậc khác), bot chưa có Manage Roles.
+ */
+function assignmentNotes(previous: TierRoleMapping | null, targetIds: ReadonlySet<string>, assignment: TierRoleAssignment): string[]
+{
+	const notes: string[] = [];
+	if (previous !== null && !targetIds.has(previous.roleId))
+	{
+		notes.push(`Role cũ ${roleMention(previous.roleId)} không còn do bot quản lý; bot không tự gỡ role đó khỏi những người đang có.`);
+		if (previous.createdByBot) notes.push("Role cũ do bot tạo; nếu không dùng nữa, hãy xoá thủ công trong **Server Settings → Roles**.");
+	}
+	if (!assignment.botCanManageRoles) notes.push(MANAGE_ROLES_WARNING);
+	return notes;
+}
+
+/** Bước 3: gán role mới cho một bậc bằng đúng hàm của bảng Discord (kiểm tra lại quyền, thứ bậc theo thông tin mới nhất của bot). */
+async function assignRole(ctx: GuildPageContext, actor: TierRoleActor, plan: RolePlan, change: RoleChange, target: RoleTarget): Promise<string[]>
 {
 	const { guild } = ctx;
-	const { services } = ctx.deps;
-	const { tier } = change;
-	if (change.roleId === null)
-	{
-		if (assignedRole(services.tierRoles.list(guild.id), tier.key) !== change.drawnRoleId) throw new UserError(ROLE_CHANGED);
-		const outcome = await clearTierRoleAssignment(guild, actor, services, tier.key);
-		return [tierRoleClearedText(outcome, tier)];
-	}
-	const role = guild.roles.cache.get(change.roleId);
+	const role = guild.roles.cache.get(target.roleId);
 	if (!role) throw new UserError(SELECTED_ROLE_UNAVAILABLE);
-	const assignment = await assignTierRole(guild, actor, services, tier.key, role);
-	return [`Đã gán ${roleMention(role.id)} cho bậc ${tierTitle(tier)}.`, ...assignmentNotes(role.id, assignment)];
+	const assignment = await assignTierRole(guild, actor, ctx.deps.services, change.tier.key, role, { createdByBot: target.createdByBot });
+	return [`Đã gán ${roleMention(role.id)} cho bậc ${tierTitle(change.tier)}.`, ...assignmentNotes(change.current, plan.targetIds, assignment)];
 }
 
-/** Lỗi ở một bậc sau khi đã lưu xong vài bậc: báo bậc lỗi, các bậc đã xong và ghi chú của chúng. */
-function stoppedAt(tier: Tier, error: unknown, done: readonly Tier[], notes: readonly string[]): UserError
+/** Một bước ghi có gọi Discord (bước 2 hoặc 3). */
+interface RoleStep
+{
+	tier: Tier;
+	/** Bước gán role mới: bot dừng ở bước này hoặc trước đó thì bậc chưa có role. */
+	assigns: boolean;
+	run: () => Promise<string[]>;
+}
+
+function assignStep(ctx: GuildPageContext, actor: TierRoleActor, plan: RolePlan, change: RoleChange, target: RoleTarget): RoleStep
+{
+	return { tier: change.tier, assigns: true, run: () => assignRole(ctx, actor, plan, change, target) };
+}
+
+/**
+ * Lỗi ở một bước gọi Discord, sau khi đã kiểm tra xong và đã gỡ role cũ của các bậc đổi: báo bậc lỗi, các bậc chưa gán được
+ * role mới (hiện chưa có role) và những gì đã lưu.
+ */
+function stoppedAt(tier: Tier, error: unknown, unassigned: readonly Tier[], saved: readonly string[]): UserError
 {
 	if (!(error instanceof UserError)) logger.error(`Lỗi khi lưu role danh hiệu trên web (${tier.key}):`, error);
 	const message = error instanceof UserError ? error.message : UNEXPECTED_ERROR;
-	const progress = done.length === 0
-		? "Bot dừng ở bậc này; chưa lưu thay đổi nào."
-		: `Bot dừng ở bậc này. Đã lưu xong trước đó: ${done.map(tierLabel).join(", ")}.`;
-	return new UserError(unique([`${tierLabel(tier)}: ${message}`, progress, ...notes]).join("\n"));
+	const lines = [`${tierLabel(tier)}: ${message}`, "Bot dừng ở bậc này."];
+	if (unassigned.length > 0)
+	{
+		lines.push(`Chưa gán được role mới cho: ${unassigned.map(tierLabel).join(", ")}. Các bậc này hiện chưa có role; hãy chọn lại role cho chúng.`);
+	}
+	lines.push(...(saved.length === 0 ? [NOTHING_SAVED] : ["Đã lưu:", ...saved]));
+	return new UserError(unique(lines).join("\n"));
 }
 
-/** Lưu role theo bậc: tuần tự từng bậc đã đổi; một bậc lỗi thì dừng và báo rõ bậc nào đã xong. */
+/**
+ * Lưu role theo bậc. Kiểm tra hết mọi bậc trước (planRoleChanges), có lỗi thì không ghi gì; rồi ghi theo thứ tự: (1) gỡ role
+ * hiện tại của mọi bậc đổi, (2) bỏ gán và xoá role do bot tạo không còn dùng ở bậc nào, (3) gán role mới. Nhờ vậy hoán đổi
+ * hay chuyển vòng role giữa các bậc đều được, và role do bot tạo được chuyển sang bậc khác không bị xoá. Bước 2 và 3 gọi
+ * Discord nên vẫn có thể lỗi: khi đó bot dừng và báo rõ những gì đã lưu, bậc nào chưa gán được role mới.
+ */
 async function saveRoles(ctx: GuildPageContext): Promise<WebResponse>
 {
 	const actor = tierRoleActor(ctx.guild, ctx.member);
-	const changes = readRoleChanges(ctx, actor);
-	if (changes.length === 0) return redirectWithFlash(ctx, PAGE_PATH, "ok", `${NO_CHANGE}: bạn chưa đổi role của bậc nào.`);
+	const plan = planRoleChanges(ctx, actor);
+	if (plan.changes.length === 0) return redirectWithFlash(ctx, PAGE_PATH, "ok", `${NO_CHANGE}: bạn chưa đổi role của bậc nào.`);
 
-	const done: Tier[] = [];
-	const notes: string[] = [];
-	for (const change of changes)
+	const saved = releaseRoles(ctx, actor, plan);
+	const steps: RoleStep[] = [
+		...plan.changes
+			.filter(change => deletesRole(change, plan.targetIds))
+			.map(change => ({ tier: change.tier, assigns: false, run: () => clearUnusedBotRole(ctx, actor, change.tier) })),
+		...plan.changes.flatMap(change => (change.target === null ? [] : [assignStep(ctx, actor, plan, change, change.target)])),
+	];
+	for (const [index, step] of steps.entries())
 	{
 		try
 		{
-			notes.push(...await applyRoleChange(ctx, actor, change));
+			saved.push(...await step.run());
 		}
 		catch (error)
 		{
-			if (!(error instanceof UserError) && done.length === 0) throw error;
-			throw stoppedAt(change.tier, error, done, notes);
+			const unassigned = steps.slice(index).filter(pending => pending.assigns).map(pending => pending.tier);
+			throw stoppedAt(step.tier, error, unassigned, saved);
 		}
-		done.push(change.tier);
 	}
-	return redirectWithFlash(ctx, PAGE_PATH, "ok", unique(notes).join("\n"));
+	return redirectWithFlash(ctx, PAGE_PATH, "ok", unique(saved).join("\n"));
 }
 
 /** Tạo/đồng bộ role theo bộ đang dùng (như nút ✨ của bảng Discord); kiểm tra quyền người đăng nhập trước. */
