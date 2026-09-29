@@ -1380,7 +1380,7 @@ Người chỉ là admin nhờ role admin bot (không có Manage Server) có th�
 
 ### Đề xuất
 
-Khi người thao tác không có Manage Server (theo `member.permissions`, LL-019) và giá trị mới làm họ mất quyền admin bot, tức role mới là null hoặc là role họ không có: từ chối, kèm giải thích và cách làm đúng (nhờ người có Manage Server). Có thể thay bằng một bước xác nhận (nút "Tôi hiểu, vẫn đổi"). Áp dụng cho cả bảng lẫn lệnh gõ.
+Khi người thao tác không có Manage Server (theo `member.permissions`, LL-019) và giá trị mới làm họ mất quyền admin bot, tức role mới là null hoặc là role họ không có: từ chối, kèm giải thích và cách làm đúng (nhờ người có Manage Server). Có thể thay bằng một bước xác nhận (nút "Tôi hiểu, vẫn đổi"). Áp dụng cho cả bảng lẫn lệnh gõ, và cho **trang Quyền của web quản trị** (Phase 16). Trang này hiện chỉ cảnh báo. Review bảo mật Phase 16 còn nêu một điểm liên quan: trên web, role admin mới có hiệu lực ngay, không có bước Integrations như lệnh Discord.
 
 ### Tác động
 
