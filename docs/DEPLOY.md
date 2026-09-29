@@ -222,24 +222,75 @@ Sau khi khôi phục, **kiểm tra kênh Bảng vàng** (mục 7.2):
 - xoá tay các message bảng xếp hạng thừa. Không chắc message nào bot đang dùng thì xoá hết message bảng xếp hạng trong kênh, rồi chạy lại `/config board kenh:<kênh>` để bot đăng một message mới và quản lý message đó;
 - nếu kênh Bảng vàng trong bản sao lưu khác kênh đang muốn dùng, cũng chạy lại `/config board kenh:<kênh>`, rồi xoá tay message thừa ở kênh cũ.
 
+Cấu hình cũng quay về như lúc sao lưu. Kiểm tra lại bằng `/config view` hoặc trang **Tổng quan** của `/config panel`, nhất là **chế độ kênh tính XP** (mục 7.3). Bản sao lưu làm trước khi có tính năng này được bot tự nâng cấp khi khởi động, với chế độ "tất cả kênh". Nếu server đang dùng "chỉ kênh được bật" thì phải chọn lại chế độ và bật lại kênh.
+
 Nên diễn tập khôi phục một lần trước khi đưa vào dùng chính thức.
 
 ## 7. Cấu hình ban đầu trong Discord
 
-Người có quyền **Manage Server** chạy các lệnh sau (mọi thay đổi đều được ghi audit log):
+Người có quyền **Manage Server** (hoặc role admin bot, xem bước 5) cấu hình bot ngay trong Discord. Mọi thay đổi đều được ghi audit log, xem bằng `/admin audit`.
 
-1. `/config team add` cho từng role team (Backend, Frontend, QA, ...).
-2. `/config channel set` để tắt XP ở channel bot, announcements, ...
-3. `/config xp` nếu muốn chỉnh XP mỗi tin, cooldown, độ dài tối thiểu hoặc khoảng chống trùng.
-4. `/config admin-role` nếu muốn một role khác (không có Manage Server) cũng có quyền admin bot. **Cần làm thêm một bước:**
-   - vào Server Settings → Integrations → chọn bot;
-   - cho phép role đó dùng lệnh `/admin` và `/config`.
+### Bảng cấu hình `/config panel`
 
-   Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
-5. `/config poll` để đặt XP mặc định khi vote, role được tạo vote và `gioi-han-xp-ngay`: XP tối đa một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028).
-6. Bộ danh hiệu và role danh hiệu (tuỳ chọn; role cần quyền Manage Roles, DEC-031, DEC-033): `/config tier panel`, xem mục 7.1.
-7. Bảng vàng (tuỳ chọn, DEC-030), xem mục 7.2.
-8. Kiểm tra lại bằng `/config view`.
+Cách dễ nhất là gõ `/config panel`. Bot trả lời bằng một bảng **chỉ bạn thấy**. Bạn bấm nút và chọn trong menu, không cần nhớ tên option.
+
+- Không có trang web hay đường link nào. Bảng nằm ngay trong Discord và chỉ mở được bằng lệnh `/config panel`. Dự án không làm dashboard web.
+- Menu ở đầu bảng dùng để chuyển trang. Bảng có 6 trang:
+
+| Trang | Hiện gì | Làm được gì |
+| --- | --- | --- |
+| **Tổng quan** | Tóm tắt mọi cấu hình (giống `/config view`) | Chỉ xem |
+| **Kênh** | Chế độ kênh tính XP (mục 7.3). Danh sách kênh **đang tính XP** (chế độ "chỉ kênh được bật") hoặc kênh **đang tắt XP** (chế độ "tất cả kênh") | 2 nút chọn chế độ. Menu "➕ Bật tính XP cho kênh…" và "➖ Tắt tính XP cho kênh…", mỗi lần chọn tối đa 25 kênh |
+| **Team** | Danh sách team | Menu "➕ Thêm team…" và "➖ Bỏ team…", chọn nhiều role một lần |
+| **XP** | XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng, thông báo lên level | Nút "✏️ Sửa số" mở form 4 ô. Nút bật hoặc tắt thông báo lên level |
+| **Vote** | XP mặc định khi vote, giới hạn XP vote mỗi ngày (0 = không giới hạn), điểm mỗi lượt ghi nhận contribution, role được tạo vote | Nút "✏️ Sửa số" mở form 3 ô. Menu chọn role được tạo vote |
+| **Bảng vàng và admin** | Kênh Bảng vàng, role admin bot | Menu chọn kênh Bảng vàng, nút "Tắt Bảng vàng". Menu chọn role admin bot. Nút "🏅 Mở bảng danh hiệu" |
+
+Cách bảng hoạt động:
+
+- Sau mỗi thao tác, bảng được cập nhật ngay tại chỗ, kèm một dòng báo kết quả ở đầu bảng.
+- Mọi thao tác trên bảng được kiểm tra quyền giống lệnh gõ tay và được ghi audit log. Các lệnh gõ tay vẫn dùng được như cũ.
+- Form "✏️ Sửa số" điền sẵn giá trị hiện tại. Bot **chỉ lưu ô bạn sửa**. Ô để nguyên không được ghi, nên không đè lên thay đổi mà admin khác vừa làm trong lúc bạn mở form.
+- Mỗi ô trong form phải là số nguyên trong khoảng ghi dưới ô. Nhập sai thì bot từ chối và nêu tên ô.
+- Menu chọn role (role tạo vote, role admin bot) điền sẵn role hiện tại. Bỏ chọn nghĩa là xoá role đó. Nếu role vừa bị đổi ở nơi khác sau khi bảng được vẽ, bot không xoá gì mà vẽ lại bảng theo dữ liệu mới. Bạn kiểm tra rồi làm lại.
+- Menu chọn kênh không có thread và category. Tin trong thread và bài trong forum tính theo kênh cha. Muốn bật cả một category thì chọn từng kênh trong đó.
+- XP hoặc cooldown riêng của từng kênh không có trên bảng. Dùng `/config channel set` như cũ.
+- Bảng báo "đã cũ hoặc không hợp lệ" thì mở lại bằng `/config panel`.
+
+### Các bước cấu hình ban đầu
+
+Mỗi bước ghi trang tương ứng trên `/config panel` và lệnh gõ tay thay thế.
+
+1. **Chọn kênh tính XP.** Chọn chế độ, rồi bật hoặc tắt từng kênh (mục 7.3). Ví dụ với chế độ "tất cả kênh": tắt XP ở kênh bot, kênh thông báo.
+   - Trên bảng: trang **Kênh**.
+   - Lệnh gõ tay: `/config channel mode`, `/config channel set kenh:<kênh> bat-xp:True|False`, `/config channel list`.
+2. **Thêm team** cho từng role team (Backend, Frontend, QA, ...).
+   - Trên bảng: trang **Team**, menu "➕ Thêm team…".
+   - Lệnh gõ tay: `/config team add role:<role>` (mỗi lần một role), `/config team remove`, `/config team list`.
+3. **Chỉnh XP và chống spam** nếu muốn đổi XP mỗi tin, cooldown, độ dài tối thiểu, khoảng chống trùng, hoặc tắt thông báo lên level.
+   - Trên bảng: trang **XP**.
+   - Lệnh gõ tay: `/config xp`.
+4. **Chỉnh vote và contribution**: XP mặc định khi vote; giới hạn XP một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028); điểm mỗi lượt ghi nhận contribution; role được tạo vote (không đặt thì chỉ admin tạo được vote).
+   - Trên bảng: trang **Vote**.
+   - Lệnh gõ tay: `/config poll` (có option `gioi-han-xp-ngay`, `role-tao-vote`), `/config contribution`.
+5. **Role admin bot**, nếu muốn một role khác (không có Manage Server) cũng có quyền admin bot.
+   - Trên bảng: trang **Bảng vàng và admin**, menu chọn role admin bot.
+   - Lệnh gõ tay: `/config admin-role`.
+   - **Cần làm thêm một bước**, dù đặt bằng bảng hay bằng lệnh:
+     - vào Server Settings → Integrations → chọn bot;
+     - cho phép role đó dùng lệnh `/admin` và `/config`.
+
+     Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
+6. **Bảng vàng** (tuỳ chọn, DEC-030), xem mục 7.2.
+   - Trên bảng: trang **Bảng vàng và admin**.
+   - Lệnh gõ tay: `/config board`.
+7. **Bộ danh hiệu và role danh hiệu** (tuỳ chọn; role cần quyền Manage Roles, DEC-031, DEC-033), xem mục 7.1.
+   - Trên bảng: trang **Bảng vàng và admin**, nút "🏅 Mở bảng danh hiệu".
+   - Lệnh gõ tay: `/config tier panel`.
+8. **Kiểm tra lại.**
+   - Trên bảng: trang **Tổng quan**.
+   - Lệnh gõ tay: `/config view`.
+9. Nếu mọi người đã chat thử trước khi chốt cấu hình và bạn muốn tính điểm lại từ 0: xem mục 7.4.
 
 Nên tắt quyền **Use Application Commands** của thành viên ở các kênh chỉ đọc (ví dụ #thong-bao). Bot cũng đã tự chặn việc đăng contribution hay vote vào kênh mà người đó không có quyền gửi tin.
 
@@ -259,7 +310,7 @@ Mỗi bộ có giọng văn riêng cho thông báo lên level, thông báo lên 
 
 #### Bảng điều khiển `/config tier panel`
 
-Cách dễ nhất là chạy `/config tier panel`. Bảng chỉ admin dùng được và bot trả lời riêng cho người gọi. Bảng gồm:
+Cách dễ nhất là chạy `/config tier panel`, hoặc bấm "🏅 Mở bảng danh hiệu" trên trang **Bảng vàng và admin** của `/config panel` (bảng danh hiệu mở trong một tin nhắn riêng mới). Bảng chỉ admin dùng được và bot trả lời riêng cho người gọi. Bảng gồm:
 
 - menu **chọn bộ danh hiệu**;
 - 8 ô **chọn role**, mỗi bậc một ô, điền sẵn role đang gán; chọn role là gán ngay, xoá lựa chọn là bỏ gán;
@@ -322,8 +373,64 @@ Lưu ý:
 Bảng vàng là một message bảng xếp hạng dạng ảnh bot giữ trong một kênh và tự cập nhật định kỳ.
 
 1. Tạo kênh riêng (ví dụ `#bang-vang`), nên để thành viên chỉ đọc: chặn Send Messages của @everyone, cho phép bot **View Channel, Send Messages, Attach Files** ở kênh đó, và cho phép người sẽ chạy `/config board` (ví dụ role quản lý) gửi tin ở kênh đó.
-2. Bật: `/config board kenh:#bang-vang`. Bot kiểm tra quyền, đăng bảng ngay và xoá message bảng cũ nếu trước đó đặt ở kênh khác. Người chạy lệnh cũng phải **xem được và gửi được tin** ở kênh đó; bot từ chối nếu không.
-3. Tắt: `/config board tat:True` (bot xoá message bảng). Message bảng lỡ bị xoá tay: chạy lại lệnh bật với cùng kênh để bot đăng lại.
+2. Bật: `/config board kenh:#bang-vang`, hoặc chọn kênh ở menu Bảng vàng trên trang **Bảng vàng và admin** của `/config panel`. Bot kiểm tra quyền, đăng bảng ngay và xoá message bảng cũ nếu trước đó đặt ở kênh khác. Người thao tác (gõ lệnh hay dùng bảng) cũng phải **xem được và gửi được tin** ở kênh đó; bot từ chối nếu không.
+3. Tắt: `/config board tat:True`, hoặc nút "Tắt Bảng vàng" trên bảng (bot xoá message bảng). Message bảng lỡ bị xoá tay: bật lại với cùng kênh để bot đăng lại.
+
+### 7.3. Chế độ kênh tính XP (DEC-037)
+
+Mỗi server chọn một trong hai chế độ. Chế độ quyết định kênh **chưa có cấu hình riêng** có tính XP hay không.
+
+| Chế độ | Kênh chưa có cấu hình riêng | Nên dùng khi |
+| --- | --- | --- |
+| **Tất cả kênh (trừ kênh đã tắt)**, là mặc định | Tính XP | Hầu hết kênh là kênh trò chuyện, chỉ cần loại ra vài kênh (kênh bot, kênh thông báo, kênh spam) |
+| **Chỉ kênh được bật** | **Không** tính XP, kể cả kênh tạo mới sau này | Chỉ muốn tính XP ở một số kênh chọn lọc. Server hay tạo kênh mới (kênh dự án, kênh tạm) và không muốn kênh mới tự động được tính |
+
+Quy tắc:
+
+- **Cấu hình riêng của kênh luôn thắng chế độ.** Kênh đã được bật hoặc tắt riêng (kể cả kênh có XP hay cooldown riêng) giữ nguyên trạng thái bật/tắt đã lưu khi đổi chế độ.
+- `/config channel reset kenh:<kênh>` xoá cấu hình riêng. Kênh đó quay về theo chế độ.
+- Trên bảng, bật hoặc tắt một kênh về đúng mặc định của chế độ đang dùng thì bot không lưu cấu hình riêng cho kênh đó (có sẵn thì xoá, trừ khi kênh có XP hay cooldown riêng). Ví dụ: đang ở "tất cả kênh" mà bật một kênh chưa bị tắt thì không có gì thay đổi. Vì vậy hãy **chọn chế độ trước, rồi mới bật hoặc tắt kênh**. Nếu sau đó đổi chế độ, các kênh này theo chế độ mới.
+- Tin trong thread và bài trong forum tính theo kênh cha. Bật kênh cha là bật cho mọi thread trong kênh đó.
+- Sau khi cập nhật lên bản có tính năng này, server vẫn ở chế độ "tất cả kênh". Hành vi không đổi cho tới khi admin chọn chế độ khác.
+
+Cách đổi và xem:
+
+- Đổi chế độ:
+  - trên bảng: trang **Kênh** của `/config panel`, bấm nút chế độ muốn dùng;
+  - lệnh gõ tay: `/config channel mode che-do:<Tất cả kênh (trừ kênh đã tắt) | Chỉ kênh được bật (kênh mới không tính XP)>`.
+- Bật hoặc tắt kênh:
+  - trên bảng: menu "➕ Bật tính XP cho kênh…" hoặc "➖ Tắt tính XP cho kênh…", tối đa 25 kênh mỗi lần (nhiều hơn thì chọn thêm lần nữa);
+  - lệnh gõ tay: `/config channel set kenh:<kênh> bat-xp:True|False`, mỗi lần một kênh.
+- Xem: trang **Kênh**; hoặc `/config channel list` (cuối danh sách ghi chế độ đang dùng); hoặc dòng "Kênh tính XP" trong `/config view`.
+
+> ⚠️ Chuyển sang **"chỉ kênh được bật"** mà **chưa bật kênh nào** thì **không ai được XP** từ tin nhắn. Chuyển chế độ xong, hãy bật ngay các kênh cần tính XP. Bot cũng nhắc điều này khi đổi chế độ.
+
+Ví dụ chuyển server sang "chỉ kênh được bật":
+
+1. `/config panel` → trang **Kênh** → bấm nút "chỉ kênh được bật".
+2. Mở menu "➕ Bật tính XP cho kênh…", chọn các kênh trò chuyện cần tính XP.
+3. Xem lại danh sách kênh đang tính XP trên trang **Kênh**.
+4. Nếu muốn điểm tính lại từ 0 theo cấu hình mới: làm tiếp mục 7.4.
+
+### 7.4. Bắt đầu lại từ đầu (xoá điểm)
+
+Dùng khi đã chạy thử một thời gian và muốn mọi người bắt đầu lại từ 0, ví dụ sau khi đổi chế độ kênh.
+
+1. Chốt cấu hình trước (chế độ kênh, kênh tính XP, team), để điểm mới được tính đúng ngay từ đầu.
+2. Sao lưu ngay bằng `/admin backup`. Không có lệnh hoàn tác reset; lỡ reset nhầm thì chỉ khôi phục được bằng bản sao lưu (mục 6).
+3. Reset Activity XP: `/admin xp reset-all xac-nhan:XAC NHAN`.
+4. Reset Contribution Score: `/admin contribution reset-all xac-nhan:XAC NHAN`.
+
+Phải gõ đúng `XAC NHAN` (chữ hoa, không dấu). Gõ sai thì bot từ chối và không reset gì. Hai hệ thống điểm độc lập với nhau: muốn xoá cả hai thì chạy cả hai lệnh.
+
+Sau khi reset:
+
+- XP, level, chuỗi ngày hoạt động và điểm contribution của mọi người về 0. Bảng xếp hạng (cả cá nhân và team) trống cho tới khi có người được điểm mới. Bảng vàng cập nhật trong khoảng 10 phút.
+- **Cấu hình không mất.** Chế độ kênh, kênh bật/tắt, team, XP, vote, role admin, Bảng vàng, bộ danh hiệu và role danh hiệu giữ nguyên.
+- **Dữ liệu không bị xoá.** Bot chỉ đánh dấu các biến động điểm cũ là đã huỷ (void, DEC-027). Lịch sử vẫn nằm trong database, và audit log ghi lại ai reset, lúc nào.
+- Role danh hiệu của từng người tự cập nhật khi người đó nhắn tin được XP.
+- Bài contribution và vote cũ vẫn còn. Lượt 👍 có trước khi reset đã bị huỷ và không bấm lại được cho bài đó. Người đã tham gia một vote đang mở không được XP thêm lần nữa từ vote đó.
+- Huy hiệu tính theo số vote đã tham gia và số contribution đã gửi vẫn còn, vì bot không xoá vote hay contribution.
 
 ## 8. Xử lý sự cố
 
@@ -333,21 +440,26 @@ Bảng vàng là một message bảng xếp hạng dạng ảnh bot giữ trong 
 | `TokenInvalid` | Token sai hoặc đã bị reset |
 | `Used disallowed intents` | Chưa bật Message Content Intent trên Developer Portal |
 | Không thấy slash command | Sai `DISCORD_GUILD_IDS`, hoặc bot được mời thiếu scope `applications.commands` |
-| Role admin bot không thấy `/admin` | Chưa cho phép role đó trong Server Settings → Integrations (mục 7.4) |
-| Không cộng XP | Channel đang tắt XP (`/config channel list`), tin quá ngắn/trùng, đang cooldown, hoặc bot không xem được channel |
+| Role admin bot không thấy `/admin` | Chưa cho phép role đó trong Server Settings → Integrations (mục 7, bước 5) |
+| Không ai được XP, hoặc kênh mới tạo không tính XP | Server đang ở chế độ **"chỉ kênh được bật"** (dòng "Kênh tính XP" trong `/config view`). Ở chế độ này, kênh chưa được bật riêng, kể cả kênh mới, không tính XP. Bật kênh trên trang **Kênh** của `/config panel` hoặc bằng `/config channel set kenh:<kênh> bat-xp:True`; hoặc chuyển về "tất cả kênh" (mục 7.3) |
+| Không cộng XP | Kênh không tính XP: kênh bị tắt riêng, hoặc server ở chế độ "chỉ kênh được bật" mà kênh chưa được bật (với thread hay bài forum thì xem kênh cha). Kiểm tra bằng `/config channel list` hoặc trang **Kênh** của `/config panel`. Nguyên nhân khác: tin quá ngắn hoặc trùng, đang cooldown, bot không xem được kênh |
+| Bảng `/config panel` báo "đã cũ hoặc không hợp lệ" | Thường do bảng được mở từ trước khi cập nhật bot. Mở lại bằng `/config panel` |
+| Bỏ chọn role tạo vote hoặc role admin trên `/config panel` mà role không bị xoá | Role vừa bị đổi ở nơi khác (bảng khác hoặc lệnh gõ tay) sau khi bảng được vẽ. Bảng đã được vẽ lại theo dữ liệu mới; kiểm tra rồi làm lại |
+| Form "✏️ Sửa số" trên `/config panel` bị từ chối | Có ô không phải số nguyên hoặc nằm ngoài khoảng cho phép (ghi dưới mỗi ô). Sửa theo tên ô trong thông báo lỗi rồi lưu lại |
+| Thao tác trên `/config panel` bị báo "Bạn không có quyền dùng lệnh này" | Người bấm không còn là admin bot (ví dụ vừa bị đổi role admin), dù bảng đã mở từ trước. Mỗi thao tác được kiểm tra quyền lại như lệnh gõ tay |
 | Không gửi được thông báo lên level | Bot thiếu quyền Send Messages ở channel đó (bot bỏ qua và không báo lỗi) |
 | Message vote hoặc contribution cũ không cập nhật | Message nằm trong thread đã archive hoặc đã bị xoá; Discord không cho sửa. Dữ liệu vẫn đúng (xem bằng `/poll results`, `/contribution view`) |
-| Ảnh `/rank`, `/leaderboard` hoặc Bảng vàng không hiện | Bot thiếu quyền **Attach Files** ở kênh đó (mục 2.4); kiểm tra cả quyền riêng của kênh |
-| `/config board` báo thiếu quyền | "Bot thiếu quyền": cấp cho bot View Channel, Send Messages, Attach Files ở kênh Bảng vàng. "Bạn không có quyền": người chạy lệnh phải xem được và gửi được tin ở kênh đó (mục 7.2) |
+| Ảnh `/rank`, `/leaderboard` hoặc Bảng vàng không hiện | Bot thiếu quyền **Attach Files** ở kênh đó (mục 2, bước 4); kiểm tra cả quyền riêng của kênh |
+| `/config board` (hoặc menu Bảng vàng trên `/config panel`) báo thiếu quyền | "Bot thiếu quyền": cấp cho bot View Channel, Send Messages, Attach Files ở kênh Bảng vàng. "Bạn không có quyền": người thao tác phải xem được và gửi được tin ở kênh đó (mục 7.2) |
 | Bảng vàng không còn message hoặc không cập nhật | Message bị xoá tay hoặc bot mất quyền ở kênh; cấp lại quyền rồi chạy lại `/config board kenh:<kênh>` |
 | Ảnh có chữ cái thay cho avatar | Server không tải được avatar từ `cdn.discordapp.com` (firewall, mạng chậm); ảnh vẫn dùng được |
 | Role danh hiệu không đổi | Bot thiếu **Manage Roles**, hoặc role của bot nằm dưới role danh hiệu (kéo role của bot lên ngay trên), hoặc role danh hiệu đã bị cấp quyền quản trị/kiểm duyệt ở server hay ở phân quyền riêng của một kênh (bot từ chối gán). Role chỉ cập nhật khi thành viên nhắn tin được XP; sau một lần lỗi, bot chờ 10 phút mới thử lại với người đó. Log của bot có cảnh báo kèm ID role |
 | Nút tạo/đồng bộ role (hoặc `/config tier setup-roles`) báo bỏ qua một số bậc | Role đã gán của bậc đó nằm trên role của bot, có quyền quản trị/kiểm duyệt, đang bật "Allow anyone to @mention this role", hoặc Discord báo lỗi (thiếu quyền, server đã đủ số role tối đa). Kéo role của bot lên trên, gỡ quyền nguy hiểm, tắt @mention, xoá bớt role không dùng hoặc bỏ gán role đó rồi bấm lại (mục 7.1) |
 | Tên role không khớp danh hiệu sau khi đổi bộ hoặc đổi tên bậc | Role do bot tạo: bấm lại nút **tạo/đồng bộ role** trên `/config tier panel`. Role do admin tự gán: bot giữ nguyên tên, hãy đổi tên thủ công trong Server Settings → Roles (mục 7.1) |
 | Tên thành viên không mang màu danh hiệu | Một role có màu khác của người đó (ví dụ role team) nằm trên role danh hiệu. Kéo các role danh hiệu lên trên, vẫn dưới role của bot (mục 7.1) |
-| Chọn/bỏ role hay lưu form trên bảng điều khiển bị báo "vừa được đổi" | Bảng đã cũ: bộ, tên bậc hoặc role của bậc vừa bị đổi ở nơi khác. Bảng đã được vẽ lại theo dữ liệu mới; kiểm tra rồi làm lại |
+| Chọn/bỏ role hay lưu form trên bảng điều khiển danh hiệu (`/config tier panel`) bị báo "vừa được đổi" | Bảng đã cũ: bộ, tên bậc hoặc role của bậc vừa bị đổi ở nơi khác. Bảng đã được vẽ lại theo dữ liệu mới; kiểm tra rồi làm lại |
 | Đổi tên bậc bị từ chối | Tên quá 32 ký tự, chứa ký tự định dạng hoặc mention (danh sách ở mục 7.1), chứa link hay lời mời vào server, chứa emoji ở giữa tên, hoặc dùng emoji riêng của server |
 | `/config tier set-role` hoặc ô chọn role trên bảng điều khiển từ chối role | Đọc lý do trong phản hồi: @everyone, role do integration quản lý, role đang là role admin bot/role tạo vote/role team, người gán thiếu Manage Roles hoặc role không thấp hơn role cao nhất của người gán, role có quyền nguy hiểm (kể cả ở phân quyền riêng của kênh), hoặc role không thấp hơn role của bot (mục 7.1) |
-| `/config admin-role`, `/config poll role-tao-vote` hoặc `/config team add` báo role đang là role danh hiệu | Role danh hiệu do bot tự thêm/gỡ theo level, không dùng được vào việc khác. Chọn role khác, hoặc bỏ gán bằng `/config tier panel` hay `/config tier clear-role` trước |
+| `/config admin-role`, `/config poll role-tao-vote`, `/config team add` (hoặc menu tương ứng trên `/config panel`) báo role đang là role danh hiệu | Role danh hiệu do bot tự thêm/gỡ theo level, không dùng được vào việc khác. Chọn role khác, hoặc bỏ gán bằng `/config tier panel` hay `/config tier clear-role` trước |
 | Người vote báo không được cộng XP | Đã chạm giới hạn XP từ vote trong ngày (`/config poll gioi-han-xp-ngay`); bot có ghi rõ trong phản hồi riêng |
 | Bot không khởi động sau khi quay về bản cũ | Database mới hơn code; dùng lại bản code mới |

@@ -2,7 +2,7 @@
 
 Discord bot nội bộ cho gamification và ghi nhận đóng góp, với **hai hệ thống điểm độc lập**:
 
-- **Activity XP**: tin nhắn hợp lệ → XP → Level → bảng xếp hạng (cá nhân và team). Có chống spam/farm: cooldown, bỏ tin quá ngắn hoặc trùng lặp, cấu hình theo từng channel.
+- **Activity XP**: tin nhắn hợp lệ → XP → Level → bảng xếp hạng (cá nhân và team). Có chống spam/farm: cooldown, bỏ tin quá ngắn hoặc trùng lặp, cấu hình theo từng channel. Mỗi server chọn **chế độ kênh tính XP**: tất cả kênh (trừ kênh đã tắt, mặc định), hoặc chỉ kênh được bật (kênh chưa bật, kể cả kênh tạo mới sau này, không tính XP).
 - **Contribution Score**: nhân viên gửi đóng góp (ý tưởng, giải pháp, tài liệu, ...), đồng nghiệp bấm 👍 để ghi nhận → điểm → bảng xếp hạng (cá nhân và team).
 
 Ngoài ra bot có **vote / bầu cử / lấy ý kiến**:
@@ -18,7 +18,9 @@ Ngoài ra bot có **vote / bầu cử / lấy ý kiến**:
 - **Thẻ rank và bảng xếp hạng dạng ảnh**: bảng tổng, tuần này, tháng này; có nút chuyển loại điểm, phạm vi, kỳ và trang.
 - **Bảng vàng**: một message bảng xếp hạng dạng ảnh bot giữ trong kênh do admin chọn và tự cập nhật định kỳ.
 
-Team được xác định bằng Discord Role. Mọi quản trị thực hiện bằng slash command và được ghi audit log.
+**Cấu hình bằng giao diện ngay trong Discord**: `/config panel` mở một bảng riêng cho admin (chỉ người mở thấy), có 6 trang (tổng quan, kênh tính XP, team, XP, vote, Bảng vàng và admin). Admin bấm nút, chọn kênh hay role trong menu, sửa số bằng form, không cần nhớ tên lệnh. Bảng không phải trang web: không có link, không có dashboard. Các lệnh gõ tay vẫn dùng được.
+
+Team được xác định bằng Discord Role. Mọi quản trị thực hiện trong Discord (bảng cấu hình hoặc slash command) và được ghi audit log.
 
 Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Database của bot hoàn toàn độc lập.
 
@@ -43,13 +45,17 @@ Cần quyền **Manage Server** hoặc role admin do bot cấu hình.
 | `/admin xp view · give · remove · reset · reset-all` | Xem, cộng, trừ, reset XP (role danh hiệu của người đó được cập nhật theo XP mới) |
 | `/admin contribution adjust · remove · reset · reset-all` | Điều chỉnh điểm, gỡ contribution, reset |
 | `/admin stats` · `audit` · `backup` | Thống kê, nhật ký quản trị, sao lưu ngay |
-| `/config view · xp · channel · team · admin-role · contribution` | Cấu hình XP, cooldown, channel, team, quyền, điểm contribution |
+| `/config panel` | Bảng cấu hình chung (trả lời riêng), 6 trang: tổng quan; kênh tính XP (chế độ, bật/tắt nhiều kênh một lần); team; XP và chống spam; vote và contribution; Bảng vàng và role admin. Có nút mở bảng danh hiệu |
+| `/config view · xp · team · admin-role · contribution` | Xem toàn bộ cấu hình; cấu hình XP, cooldown, team, quyền, điểm contribution |
+| `/config channel mode · set · reset · list` | Chế độ kênh tính XP (tất cả kênh trừ kênh đã tắt, hoặc chỉ kênh được bật); bật/tắt XP, XP và cooldown riêng của một channel; xoá cấu hình riêng (channel quay về theo chế độ); xem danh sách |
 | `/config poll` | XP mặc định khi vote, giới hạn XP từ vote mỗi ngày (`gioi-han-xp-ngay`), role được tạo vote |
 | `/config tier panel` | Bảng điều khiển danh hiệu (trả lời riêng): menu chọn bộ, ô chọn role cho 8 bậc, nút đổi tên bậc, tạo/đồng bộ role, khôi phục tên mặc định |
 | `/config tier style · rename · reset-names` | Chọn bộ danh hiệu; đổi tên và emoji một bậc; khôi phục tên mặc định của bộ đang dùng |
 | `/config tier setup-roles` | Bot tạo role (không có quyền gì) cho bậc chưa có role và đổi tên/màu role do bot tạo theo bộ đang dùng; role do admin tự gán giữ nguyên tên (người thao tác cần Manage Roles) |
 | `/config tier set-role · clear-role · list` | Gán, bỏ, xem role Discord của từng bậc (dùng role mới tạo riêng, không cho @mention; người gán cần Manage Roles; bỏ role do bot tạo thì bot xoá role đó) |
 | `/config board kenh` · `tat` | Đặt kênh hoặc tắt Bảng vàng |
+
+Reset toàn server (`reset-all`, phải nhập `XAC NHAN` để xác nhận) chỉ đánh dấu huỷ điểm cũ: không xoá dữ liệu, không đổi cấu hình (xem [docs/DEPLOY.md](docs/DEPLOY.md) mục 7.4).
 
 ## Phát triển
 
@@ -88,7 +94,7 @@ Các con số nghiệp vụ (XP mỗi tin, cooldown, điểm mỗi lượt ghi n
 
 ## Triển khai
 
-Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, bộ danh hiệu và role danh hiệu, Bảng vàng, xử lý sự cố.
+Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, cấu hình ban đầu bằng `/config panel`, chế độ kênh tính XP, bắt đầu lại từ đầu (reset điểm, giữ cấu hình), bộ danh hiệu và role danh hiệu, Bảng vàng, xử lý sự cố. Checklist chạy thật trên Discord: [docs/TEST-PLAN.md](docs/TEST-PLAN.md).
 
 Quyền của bot: View Channels, Send Messages, Send Messages in Threads, Embed Links, **Attach Files** (ảnh thẻ, Bảng vàng) và **Manage Roles** (gán, tạo, đổi tên và xoá role danh hiệu do bot tạo; role của bot phải nằm trên các role này; muốn thấy màu danh hiệu thì kéo role danh hiệu lên trên role có màu khác, vẫn dưới role của bot). Không dùng Administrator. Font Be Vietnam Pro (SIL OFL 1.1) nằm sẵn trong `assets/fonts/`.
 
