@@ -601,7 +601,11 @@ describe("bảng cấu hình: chuyển trang, chế độ kênh, bật/tắt XP 
 		const on = await dispatch(harness, { kind: "channel", id: id({ type: "channels", enabled: true }), values: [CHANNEL_GENERAL, CHANNEL_BOT] });
 		assertPanel(harness, on[0], "channels", `Đã bật XP cho <#${CHANNEL_GENERAL}>.\nVốn đã bật XP: <#${CHANNEL_BOT}>.\n`
 			+ "-# Server đang dùng chế độ **tất cả kênh (trừ kênh đã tắt)**: kênh không bị tắt riêng vốn đã tính XP, chỉ cần bật lại kênh đã tắt.");
-		assert.deepEqual(guildConfig.listChannels(GUILD), [], "bật lại kênh ở chế độ tất cả kênh thì xoá cấu hình riêng");
+		assert.deepEqual(
+			guildConfig.listChannels(GUILD),
+			[{ channelId: CHANNEL_GENERAL, xpEnabled: true, xpPerMessage: null, xpCooldownSeconds: null }],
+			"bật lại kênh được lưu thành cấu hình riêng (giữ khi đổi chế độ); kênh vốn đã bật thì không ghi gì",
+		);
 	});
 
 	test("kênh sai loại (category, thread) hoặc không có trong dữ liệu Discord gửi kèm: từ chối, không ghi kênh nào", async () =>
@@ -711,7 +715,7 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 		assert.deepEqual(toJson(poll[0].payload), toJson(buildPollSettingsModal(guildConfig.getSettings(GUILD))));
 	});
 
-	test("lưu form XP: chỉ ghi ô đã sửa, giữ giá trị người khác vừa đổi ở ô không sửa; đọc được \"1.000\"", async () =>
+	test("lưu form XP: chỉ ghi ô đã sửa, giữ giá trị người khác vừa đổi ở ô không sửa; đọc được \"1 000\" (khoảng trắng)", async () =>
 	{
 		const harness = createHarness();
 		const { guildConfig } = harness.context.deps;
@@ -721,7 +725,7 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 		const calls = await dispatch(harness, {
 			kind: "modal",
 			id: id({ type: "xpSave", drawn }),
-			fields: xpFields({ xpPerMessage: "1.000", xpCooldownSeconds: "60", minMessageLength: " 5 ", duplicateWindowSeconds: "300" }),
+			fields: xpFields({ xpPerMessage: "1 000", xpCooldownSeconds: "60", minMessageLength: " 5 ", duplicateWindowSeconds: "300" }),
 		});
 		assert.deepEqual(methods(calls), ["update"]);
 		const settings = guildConfig.getSettings(GUILD);
@@ -746,9 +750,9 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 		const drawn: XpFormValues = { xpPerMessage: 10, xpCooldownSeconds: 60, minMessageLength: 5, duplicateWindowSeconds: 300 };
 		const save = id({ type: "xpSave", drawn });
 		const cases: [Record<keyof XpFormValues, string>, string][] = [
-			[{ xpPerMessage: "20", xpCooldownSeconds: "90000", minMessageLength: "5", duplicateWindowSeconds: "300" }, "Cooldown (giây) phải là số nguyên từ 0 đến 86400 (bạn nhập \"90000\")."],
-			[{ xpPerMessage: "20", xpCooldownSeconds: "60", minMessageLength: "5", duplicateWindowSeconds: "abc" }, "Khoảng chống trùng (giây) phải là số nguyên từ 0 đến 86400 (bạn nhập \"abc\")."],
-			[{ xpPerMessage: "-1", xpCooldownSeconds: "60", minMessageLength: "5", duplicateWindowSeconds: "300" }, "XP mỗi tin nhắn phải là số nguyên từ 0 đến 1000 (bạn nhập \"-1\")."],
+			[{ xpPerMessage: "20", xpCooldownSeconds: "90000", minMessageLength: "5", duplicateWindowSeconds: "300" }, "Cooldown (giây) phải là số nguyên từ 0 đến 86400, chỉ gồm chữ số (bạn nhập \"90000\")."],
+			[{ xpPerMessage: "20", xpCooldownSeconds: "60", minMessageLength: "5", duplicateWindowSeconds: "abc" }, "Khoảng chống trùng (giây) phải là số nguyên từ 0 đến 86400, chỉ gồm chữ số (bạn nhập \"abc\")."],
+			[{ xpPerMessage: "-1", xpCooldownSeconds: "60", minMessageLength: "5", duplicateWindowSeconds: "300" }, "XP mỗi tin nhắn phải là số nguyên từ 0 đến 1000, chỉ gồm chữ số (bạn nhập \"-1\")."],
 		];
 		for (const [fields, message] of cases) await refused(harness, { kind: "modal", id: save, fields: xpFields(fields) }, message);
 		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).xpPerMessage, 10);

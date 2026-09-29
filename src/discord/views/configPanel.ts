@@ -32,7 +32,7 @@ import {
 import { MAX_TEAMS } from "../../modules/team/TeamService";
 import { UserError } from "../../shared/errors";
 import { channelMention, COLORS, fitLines, formatNumber, roleMention, truncate } from "../format";
-import { describeChannelSettings, settingLine, xpChannelModeLabel } from "./admin";
+import { describeChannelSettings, inlineText, settingLine, xpChannelModeLabel } from "./admin";
 
 // ---------- Hợp đồng chung (nền móng Phase 15): namespace, trang, thao tác, customId ----------
 
@@ -223,7 +223,7 @@ export function parseFormNumber(raw: string, key: NumericSettingKey): number
 	if (!Number.isInteger(value) || value < limit.min || value > limit.max)
 	{
 		throw new UserError(`${limit.label} phải là số nguyên từ ${limit.min} đến ${limit.max}, chỉ gồm chữ số `
-			+ `(bạn nhập "${raw.trim().slice(0, 20)}").`);
+			+ `(bạn nhập "${inlineText(raw, 20)}").`);
 	}
 	return value;
 }
