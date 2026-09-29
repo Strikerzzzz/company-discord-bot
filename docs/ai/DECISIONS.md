@@ -354,6 +354,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Mặc định vẫn là `all`, để không đổi hành vi của server đang chạy khi cập nhật. Server ezOne sẽ chuyển sang `selected` sau khi cập nhật, và reset toàn bộ điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`.
   - Schema: migration 5 thêm cột `guild_settings.xp_channel_mode` (`'all'` hoặc `'selected'`, mặc định `'all'`). Backup cũ khôi phục vào code mới thì tự migrate; code cũ gặp DB mới thì từ chối chạy, như mọi migration.
 
+### DEC-038 — Duyệt Phase 15
+
+- **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 duyệt")
+- **Nội dung:** merge `phase-15/config-panel` vào `main` (fast-forward tới `bd03308`): `/config panel`, chế độ kênh tính XP, sửa lỗi của 2 review độc lập, script cài đặt `deploy/install.sh` và `deploy/start.sh`. PROP-034, 035, 036 vẫn PROPOSED (chưa trả lời).
+
 ---
 
 ## Đang chờ quyết định

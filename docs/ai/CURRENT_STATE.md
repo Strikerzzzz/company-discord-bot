@@ -10,7 +10,7 @@
 - Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, bản `38238e8`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
 - Việc đang làm: cấu hình ban đầu trong Discord (DEPLOY mục 7) và kiểm theo `docs/TEST-PLAN.md` trên server thật.
 - Bot **chưa có quyền Manage Roles**: người mời bot không có quyền này. Role danh hiệu chờ chủ server bật quyền cho role của bot.
-- **Phase 15 (DEC-037) đang làm** trên branch `phase-15/config-panel`, chưa merge vào `main`:
+- **Phase 15 (DEC-037) đã merge vào `main`** (DEC-038). Đang cập nhật lên server:
   - `/config panel`: bảng cấu hình 6 trang (PROP-033);
   - chế độ kênh "chỉ kênh được bật" (migration 5, `/config channel mode`).
   - Tiến độ:

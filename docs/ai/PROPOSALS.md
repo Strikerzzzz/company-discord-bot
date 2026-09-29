@@ -42,7 +42,7 @@
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | IMPLEMENTED |
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
 | PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | REJECTED |
-| PROP-033 | Bảng điều khiển cấu hình chung `/config panel` | MEDIUM | APPROVED |
+| PROP-033 | Bảng điều khiển cấu hình chung `/config panel` | MEDIUM | IMPLEMENTED |
 | PROP-034 | Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot | MEDIUM | PROPOSED |
 | PROP-035 | Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server | LOW | PROPOSED |
 | PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
@@ -1369,7 +1369,7 @@ Giới hạn của Discord: một menu chọn tối đa 25 mục, một message 
 
 ### Trạng thái
 
-APPROVED (2026-09-29, DEC-037), kèm chế độ "chỉ kênh được bật". Đang làm ở Phase 15.
+IMPLEMENTED (2026-09-29, DEC-037, merge theo DEC-038), kèm chế độ "chỉ kênh được bật".
 
 ## PROP-034 — Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot
 
