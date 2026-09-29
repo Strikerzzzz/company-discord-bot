@@ -24,6 +24,7 @@
 | 12 | Gamification và giao diện ảnh | **Đã merge vào `main`** (DEC-032) | DEC-028…032 |
 | 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **Đã merge vào `main`** (DEC-034) | DEC-033 |
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
+| 15 | Bảng cấu hình chung, chế độ kênh tính XP | **ĐANG LÀM** trên `phase-15/config-panel` | DEC-037 |
 
 ## Chi tiết
 
@@ -139,3 +140,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-27 | DEC-034: merge Phase 13 vào `main`; thêm Phase 14 (hoàn tất trước khi chạy thật) |
 | 2026-09-27 | DEC-035: merge Phase 14 vào `main`; còn Phase 11 (chạy thật trên server) |
 | 2026-09-29 | DEC-036: Phase 11 đã cài và chạy thật trên server `192.168.0.206` |
+| 2026-09-29 | DEC-037: thêm Phase 15 (`/config panel`, chế độ kênh "chỉ kênh được bật") |
