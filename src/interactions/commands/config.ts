@@ -1,8 +1,10 @@
 import {
 	AnySelectMenuInteraction,
 	ButtonInteraction,
+	ChannelSelectMenuInteraction,
 	ChatInputCommandInteraction,
 	Guild,
+	GuildBasedChannel,
 	GuildMember,
 	MessageComponentInteraction,
 	MessageFlags,
@@ -41,8 +43,27 @@ import {
 	ephemeral,
 	ephemeralEmbed,
 	settingLine,
+	xpChannelModeLabel,
 } from "../../discord/views/admin";
-import { BOARD_CHANNEL_TYPES, XP_CHANNEL_TYPES } from "../../discord/views/configPanel";
+import {
+	BOARD_CHANNEL_TYPES,
+	buildPollSettingsModal,
+	buildXpSettingsModal,
+	CONFIG_PANEL_NAMESPACE,
+	ConfigPanelAction,
+	ConfigPanelData,
+	ConfigPanelPage,
+	configPanelReply,
+	configPanelUpdate,
+	INVALID_CONFIG_PANEL,
+	isConfigPanelPage,
+	pageOfAction,
+	parseConfigPanelId,
+	parseFormNumber,
+	POLL_FORM_KEYS,
+	XP_CHANNEL_TYPES,
+	XP_FORM_KEYS,
+} from "../../discord/views/configPanel";
 import {
 	buildTierRenameModal,
 	buildTierRoleListEmbed,
@@ -76,6 +97,7 @@ import {
 } from "../../modules/activity/tiers";
 import { parseTierDisplayName, TierRenameInput } from "../../modules/gamification/TierSetService";
 import { TierRoleMapping } from "../../modules/gamification/types";
+import { BulkChannelResult } from "../../modules/guild-config/GuildConfigService";
 import {
 	ChannelSettings,
 	GuildSettings,
@@ -83,7 +105,9 @@ import {
 	NumericSettingKey,
 	SETTING_LIMITS,
 	XP_CHANNEL_MODES,
+	XpChannelMode,
 } from "../../modules/guild-config/types";
+import { MAX_TEAMS } from "../../modules/team/TeamService";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
@@ -97,6 +121,17 @@ const NO_CHANGE_MESSAGE = "Hãy chọn ít nhất một giá trị để thay đ
 const ADMIN_ROLE_INTEGRATION_HINT = "⚠️ Lưu ý: `/admin` và `/config` mặc định chỉ dành cho người có quyền Manage Server; "
 	+ "Discord chặn những người khác trước khi lệnh tới bot. Để role này dùng được, vào **Server Settings → Integrations → chọn bot** "
 	+ "rồi cho phép role này dùng `/admin` và `/config`.";
+
+const ADMIN_ROLE_CLEARED = "Đã xoá role admin bot. Chỉ người có quyền Manage Server dùng được lệnh admin.";
+
+/** Phản hồi sau khi đặt role admin bot (lệnh `/config admin-role` và bảng cấu hình). */
+function adminRoleSetText(roleId: string): string
+{
+	return [
+		`Đã đặt ${roleMention(roleId)} làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.`,
+		ADMIN_ROLE_INTEGRATION_HINT,
+	].join("\n");
+}
 
 type PermissionList = readonly (readonly [bigint, string])[];
 
@@ -153,6 +188,45 @@ export const RESET_SET_CHANGED = "Bộ danh hiệu vừa được đổi sau khi
 	+ "Bảng đã được cập nhật; hãy kiểm tra rồi bấm lại nếu vẫn muốn.";
 export const PANEL_ROLE_CHANGED = "Role của bậc này vừa được đổi ở nơi khác sau khi bảng được vẽ, nên bot chưa bỏ gán gì. "
 	+ "Bảng đã được cập nhật; hãy kiểm tra rồi thao tác lại.";
+
+// ---------- Bảng cấu hình chung `/config panel` (PROP-033, DEC-037) ----------
+
+export const CONFIG_ROLE_CHANGED = "Role này vừa được đổi ở nơi khác sau khi bảng được vẽ, nên bot chưa xoá gì. "
+	+ "Bảng đã được cập nhật; hãy kiểm tra rồi thao tác lại.";
+export const SELECT_AT_LEAST_ONE_ROLE = "Hãy chọn ít nhất một role.";
+export const SELECTED_CHANNEL_UNAVAILABLE = "Không tìm thấy kênh vừa chọn trong server. Vui lòng thử lại.";
+export const FORM_UNCHANGED = "Không có gì thay đổi: bạn chưa sửa ô nào trong form.";
+
+/** Component của bảng cấu hình trả lời bằng cách sửa chính bảng (update hoặc deferUpdate + editReply). */
+type PanelComponentInteraction = ButtonInteraction | AnySelectMenuInteraction;
+
+/** Role cấu hình được từ ô chọn role (cho phép bỏ chọn) của bảng cấu hình. */
+type PanelRoleKey = "pollCreatorRoleId" | "adminRoleId";
+
+interface PanelRoleSetting
+{
+	/** Việc của role, dùng trong thông báo lỗi ("làm role tạo vote"), giống lệnh gõ tương ứng. */
+	purpose: string;
+	setText: (roleId: string) => string;
+	clearedText: string;
+	/** Bỏ chọn khi role vốn chưa đặt: không ghi gì. */
+	unsetText: string;
+}
+
+const PANEL_ROLE_SETTINGS: Readonly<Record<PanelRoleKey, PanelRoleSetting>> = {
+	pollCreatorRoleId: {
+		purpose: "làm role tạo vote",
+		setText: roleId => `Đã cập nhật cấu hình vote:\n${settingLine("pollCreatorRoleId", roleId)}`,
+		clearedText: `Đã cập nhật cấu hình vote:\n${settingLine("pollCreatorRoleId", null)}`,
+		unsetText: `Không có gì thay đổi:\n${settingLine("pollCreatorRoleId", null)}`,
+	},
+	adminRoleId: {
+		purpose: "làm role admin bot",
+		setText: adminRoleSetText,
+		clearedText: ADMIN_ROLE_CLEARED,
+		unsetText: `Không có gì thay đổi:\n${settingLine("adminRoleId", null)}`,
+	},
+};
 
 /** Thao tác với message Bảng vàng (tầng Discord, src/discord/liveBoard.ts). */
 export interface LiveBoardActions
@@ -324,9 +398,9 @@ function requireCachedGuild(interaction: ChatInputCommandInteraction): ChatInput
 	return interaction;
 }
 
-function botMemberOf(interaction: ChatInputCommandInteraction<"cached">): GuildMember
+function botMemberOf(guild: Guild): GuildMember
 {
-	const me = interaction.guild.members.me;
+	const me = guild.members.me;
 	if (!me) throw new UserError(BOT_MEMBER_UNAVAILABLE);
 	return me;
 }
@@ -335,6 +409,106 @@ function botMemberOf(interaction: ChatInputCommandInteraction<"cached">): GuildM
 function missingPermissions(permissions: Readonly<PermissionsBitField>, list: PermissionList): string[]
 {
 	return list.filter(([flag]) => !permissions.has(flag)).map(([, name]) => `**${name}**`);
+}
+
+/** Phần của kênh cần để tính quyền theo kênh (kênh từ option của lệnh gõ, hoặc từ cache của server). */
+interface PermissionChannel
+{
+	id: string;
+	permissionsFor(member: GuildMember): Readonly<PermissionsBitField>;
+}
+
+/**
+ * Kiểm tra trước khi đặt Bảng vàng ở `channel`, dùng chung cho `/config board` và bảng cấu hình: người gọi phải tự xem và
+ * gửi được tin ở kênh đó (không mượn bot đăng vào kênh mình không được gửi, LL-013), bot phải đủ quyền đăng ảnh (DEC-030).
+ */
+function assertBoardChannelAccess(channel: PermissionChannel, caller: GuildMember, bot: GuildMember): void
+{
+	const callerMissing = missingPermissions(channel.permissionsFor(caller), BOARD_CALLER_PERMISSIONS);
+	if (callerMissing.length > 0)
+	{
+		throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể đặt Bảng vàng ở kênh đó.`);
+	}
+	const missing = missingPermissions(channel.permissionsFor(bot), BOARD_PERMISSIONS);
+	if (missing.length > 0)
+	{
+		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
+	}
+}
+
+type BoardChannel = Extract<GuildBasedChannel, { type: (typeof BOARD_CHANNEL_TYPES)[number] }>;
+
+function isBoardChannel(channel: GuildBasedChannel): channel is BoardChannel
+{
+	return BOARD_CHANNEL_TYPES.some(type => type === channel.type);
+}
+
+/** customId thuộc bảng cấu hình chung (namespace `cfgui`); còn lại là bảng danh hiệu (`tierui`). */
+function isConfigPanelCustomId(customId: string): boolean
+{
+	return customId.split(":", 1)[0] === CONFIG_PANEL_NAMESPACE;
+}
+
+/** Role đã chọn trong menu chọn role, theo dữ liệu Discord gửi kèm hoặc cache của server; UserError nếu không có. */
+function selectedRole(interaction: RoleSelectMenuInteraction, roleId: string): { id: string; managed: boolean }
+{
+	const role = interaction.roles.get(roleId) ?? interaction.guild?.roles.cache.get(roleId);
+	if (!role) throw new UserError(SELECTED_ROLE_UNAVAILABLE);
+	return role;
+}
+
+/**
+ * Kênh đã chọn trong menu chọn kênh bật/tắt XP. Discord đã lọc loại kênh theo menu, nhưng bot vẫn kiểm tra lại (không tin
+ * dữ liệu từ client): kênh phải có trong dữ liệu Discord gửi kèm và thuộc XP_CHANNEL_TYPES.
+ */
+function selectedXpChannel(interaction: ChannelSelectMenuInteraction, channelId: string): string
+{
+	const channel = interaction.channels.get(channelId);
+	if (!channel) throw new UserError(SELECTED_CHANNEL_UNAVAILABLE);
+	if (!XP_CHANNEL_TYPES.some(type => type === channel.type))
+	{
+		throw new UserError(`Không bật/tắt XP được cho ${channelMention(channel.id)}: chỉ dùng được kênh chữ, kênh thông báo, forum, media, `
+			+ "kênh voice hoặc stage (tin trong thread theo kênh cha).");
+	}
+	return channel.id;
+}
+
+function mentionList(ids: readonly string[], mention: (id: string) => string): string
+{
+	return ids.map(mention).join(", ");
+}
+
+/**
+ * Kết quả bật/tắt XP nhiều kênh trên bảng: kênh đã đổi, kênh vốn đúng trạng thái; nhắc khi chế độ kênh (DEC-037) vốn đã cho
+ * các kênh đó trạng thái này (bật kênh ở chế độ tất cả kênh, tắt kênh ở chế độ chỉ kênh được bật).
+ */
+function channelsToggledText(enabled: boolean, mode: XpChannelMode, result: BulkChannelResult): string
+{
+	const verb = enabled ? "bật" : "tắt";
+	const lines: string[] = [];
+	if (result.changed.length > 0) lines.push(`Đã ${verb} XP cho ${mentionList(result.changed, channelMention)}.`);
+	if (result.unchanged.length > 0) lines.push(`Vốn đã ${verb} XP: ${mentionList(result.unchanged, channelMention)}.`);
+	if (result.unchanged.length > 0 && enabled === (mode === "all"))
+	{
+		lines.push(enabled
+			? `-# Server đang dùng chế độ **${xpChannelModeLabel(mode)}**: kênh không bị tắt riêng vốn đã tính XP, chỉ cần bật lại kênh đã tắt.`
+			: `-# Server đang dùng chế độ **${xpChannelModeLabel(mode)}**: kênh chưa được bật riêng vốn không tính XP, chỉ cần tắt kênh đã bật.`);
+	}
+	return lines.join("\n");
+}
+
+/** Kết quả thêm hoặc bỏ nhiều team trên bảng: role đã đổi và role vốn đúng trạng thái (cùng ý với `/config team add|remove`). */
+function teamsChangedText(add: boolean, changed: readonly string[], unchanged: readonly string[]): string
+{
+	const lines: string[] = [];
+	if (changed.length > 0)
+	{
+		lines.push(add
+			? `Đã thêm ${mentionList(changed, roleMention)} làm team. Điểm team chỉ tính từ các lượt kiếm điểm kể từ bây giờ.`
+			: `Đã bỏ ${mentionList(changed, roleMention)} khỏi danh sách team. Điểm lịch sử vẫn được giữ.`);
+	}
+	if (unchanged.length > 0) lines.push(add ? `Vốn đã là team: ${mentionList(unchanged, roleMention)}.` : `Vốn không phải team: ${mentionList(unchanged, roleMention)}.`);
+	return lines.join("\n");
 }
 
 function tierKeyOf(interaction: ChatInputCommandInteraction): TierKey
@@ -407,7 +581,7 @@ export default class ConfigCmd extends Command
 {
 	override adminOnly = true;
 
-	override buttonIds = [TIER_PANEL_NAMESPACE];
+	override buttonIds = [TIER_PANEL_NAMESPACE, CONFIG_PANEL_NAMESPACE];
 
 	/** Điểm inject để test thay bằng hàm giả; mặc định là các hàm thật của tầng Discord. */
 	liveBoardActions: LiveBoardActions = { refresh: refreshLiveBoard, remove: deleteLiveBoardMessage };
@@ -419,6 +593,9 @@ export default class ConfigCmd extends Command
 		.addSubcommand(sub => sub
 			.setName("view")
 			.setDescription("Xem toàn bộ cấu hình hiện tại"))
+		.addSubcommand(sub => sub
+			.setName("panel")
+			.setDescription("Mở bảng cấu hình trực quan: kênh tính XP, team, XP, vote, Bảng vàng, role admin"))
 		.addSubcommand(xpSubcommand)
 		.addSubcommandGroup(group => group
 			.setName("channel")
@@ -473,6 +650,7 @@ export default class ConfigCmd extends Command
 		else if (group === "team") await this.executeTeam(context, subcommand);
 		else if (group === "tier") await this.executeTier(context, subcommand);
 		else if (subcommand === "view") await this.view(context);
+		else if (subcommand === "panel") await interaction.reply(configPanelReply("home", this.configPanelData(context.guildId)));
 		else if (subcommand === "xp") await this.updateXp(context);
 		else if (subcommand === "admin-role") await this.updateAdminRole(context);
 		else if (subcommand === "poll") await this.updatePoll(context);
@@ -481,9 +659,17 @@ export default class ConfigCmd extends Command
 		else throw new Error(`Subcommand không hợp lệ: /config ${group ?? ""} ${subcommand}`);
 	}
 
-	/** Nút của bảng điều khiển danh hiệu: tạo/đồng bộ role, mở form đổi tên, khôi phục tên mặc định. */
+	/**
+	 * Nút của bảng cấu hình chung (`cfgui`, xem configPanelButton) hoặc của bảng điều khiển danh hiệu (`tierui`): tạo/đồng bộ
+	 * role, mở form đổi tên, khôi phục tên mặc định.
+	 */
 	override async executeButton(interaction: ButtonInteraction): Promise<void>
 	{
+		if (isConfigPanelCustomId(interaction.customId))
+		{
+			await this.configPanelButton(interaction, parseConfigPanelId(interaction.customId));
+			return;
+		}
 		const action = parseTierPanelId(interaction.customId);
 		const guildId = requireGuildId(interaction);
 		switch (action.type)
@@ -502,18 +688,34 @@ export default class ConfigCmd extends Command
 		}
 	}
 
-	/** Menu chọn của bảng điều khiển: chọn bộ (StringSelect) hoặc gán role cho một bậc (RoleSelect). */
+	/**
+	 * Menu chọn của bảng cấu hình chung (`cfgui`, xem configPanelSelect) hoặc của bảng điều khiển danh hiệu (`tierui`): chọn bộ
+	 * (StringSelect) hoặc gán role cho một bậc (RoleSelect).
+	 */
 	override async executeSelectMenu(interaction: AnySelectMenuInteraction): Promise<void>
 	{
+		if (isConfigPanelCustomId(interaction.customId))
+		{
+			await this.configPanelSelect(interaction, parseConfigPanelId(interaction.customId));
+			return;
+		}
 		const action = parseTierPanelId(interaction.customId);
 		if (action.type === "set" && interaction.isStringSelectMenu()) await this.panelSelectSet(interaction);
 		else if (action.type === "role" && interaction.isRoleSelectMenu()) await this.panelAssignRole(interaction, action.tierKey, action.drawnRoleId);
 		else throw new UserError(INVALID_PANEL_ACTION);
 	}
 
-	/** Form đổi tên bậc, mở từ nút của bảng điều khiển (nên cập nhật được chính bảng đó). */
+	/**
+	 * Form mở từ nút của một bảng (nên cập nhật được chính bảng đó): form số của bảng cấu hình chung (`cfgui`, xem
+	 * configPanelModal) hoặc form đổi tên bậc của bảng điều khiển danh hiệu (`tierui`).
+	 */
 	override async executeModal(interaction: ModalSubmitInteraction): Promise<void>
 	{
+		if (isConfigPanelCustomId(interaction.customId))
+		{
+			await this.configPanelModal(interaction, parseConfigPanelId(interaction.customId));
+			return;
+		}
 		const action = parseTierPanelId(interaction.customId);
 		if (action.type !== "names" || !interaction.isFromMessage()) throw new UserError(INVALID_PANEL_ACTION);
 		await this.panelRename(interaction, action.group, action.setKey, action.fingerprint);
@@ -661,20 +863,23 @@ export default class ConfigCmd extends Command
 			: `${channelMention(channel.id)} vốn không có cấu hình riêng.`));
 	}
 
-	/** Đổi chế độ kênh tính XP (DEC-037); chế độ không đổi thì chỉ báo lại, không ghi audit. */
-	private async setChannelMode(context: ConfigContext): Promise<void>
+	private async setChannelMode({ interaction, guildId, actorId }: ConfigContext): Promise<void>
 	{
-		const { interaction, guildId } = context;
 		const mode = interaction.options.getString("che-do", true);
 		if (!isXpChannelMode(mode)) throw new UserError("Chế độ kênh tính XP không hợp lệ.");
+		await interaction.reply(ephemeral(this.applyChannelMode(guildId, mode, actorId)));
+	}
+
+	/**
+	 * Đổi chế độ kênh tính XP (DEC-037), dùng chung cho `/config channel mode` và bảng cấu hình; trả về phản hồi. Chế độ
+	 * không đổi thì chỉ báo lại, không ghi audit.
+	 */
+	private applyChannelMode(guildId: string, mode: XpChannelMode, actorId: string): string
+	{
 		const { guildConfig } = this.services;
-		if (guildConfig.getSettings(guildId).xpChannelMode === mode)
-		{
-			await interaction.reply(ephemeral(`Server đang dùng chế độ này rồi: ${settingLine("xpChannelMode", mode)}`));
-			return;
-		}
-		this.updateSettings(context, { xpChannelMode: mode });
-		await interaction.reply(ephemeral(channelModeChangedText(mode, guildConfig.listChannels(guildId))));
+		if (guildConfig.getSettings(guildId).xpChannelMode === mode) return `Server đang dùng chế độ này rồi: ${settingLine("xpChannelMode", mode)}`;
+		guildConfig.updateSettings(guildId, { xpChannelMode: mode }, actorId);
+		return channelModeChangedText(mode, guildConfig.listChannels(guildId));
 	}
 
 	private async listChannels({ interaction, guildId }: ConfigContext): Promise<void>
@@ -686,8 +891,7 @@ export default class ConfigCmd extends Command
 	private async addTeam({ interaction, guildId, actorId }: ConfigContext): Promise<void>
 	{
 		const role = interaction.options.getRole("role", true);
-		assertAssignableRole(role, guildId, "làm team");
-		this.assertNotTierRole(guildId, role.id, "làm team");
+		this.assertUsableRole(guildId, role, "làm team");
 		const added = this.services.teams.add(guildId, role.id, actorId);
 		await interaction.reply(ephemeral(added
 			? `Đã thêm ${roleMention(role.id)} làm team. Điểm team chỉ tính từ các lượt kiếm điểm kể từ bây giờ.`
@@ -708,17 +912,13 @@ export default class ConfigCmd extends Command
 		const role = context.interaction.options.getRole("role");
 		if (role)
 		{
-			assertAssignableRole(role, context.guildId, "làm role admin bot");
-			this.assertNotTierRole(context.guildId, role.id, "làm role admin bot");
+			this.assertUsableRole(context.guildId, role, PANEL_ROLE_SETTINGS.adminRoleId.purpose);
 			this.updateSettings(context, { adminRoleId: role.id });
-			await context.interaction.reply(ephemeral([
-				`Đã đặt ${roleMention(role.id)} làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.`,
-				ADMIN_ROLE_INTEGRATION_HINT,
-			].join("\n")));
+			await context.interaction.reply(ephemeral(adminRoleSetText(role.id)));
 			return;
 		}
 		this.updateSettings(context, { adminRoleId: null });
-		await context.interaction.reply(ephemeral("Đã xoá role admin bot. Chỉ người có quyền Manage Server dùng được lệnh admin."));
+		await context.interaction.reply(ephemeral(ADMIN_ROLE_CLEARED));
 	}
 
 	private async updatePoll(context: ConfigContext): Promise<void>
@@ -734,8 +934,7 @@ export default class ConfigCmd extends Command
 		if (role && clearRole) throw new UserError("Không thể vừa đặt vừa xoá role tạo vote.");
 		if (role)
 		{
-			assertAssignableRole(role, context.guildId, "làm role tạo vote");
-			this.assertNotTierRole(context.guildId, role.id, "làm role tạo vote");
+			this.assertUsableRole(context.guildId, role, PANEL_ROLE_SETTINGS.pollCreatorRoleId.purpose);
 			patch.pollCreatorRoleId = role.id;
 		}
 		if (clearRole) patch.pollCreatorRoleId = null;
@@ -752,6 +951,16 @@ export default class ConfigCmd extends Command
 		await context.interaction.reply(ephemeral(
 			`Đã cập nhật cấu hình contribution:\n${settingLine("contributionVotePoints", next.contributionVotePoints)}`,
 		));
+	}
+
+	/**
+	 * Role dùng được vào một việc của bot (team, role admin bot, role tạo vote): không phải @everyone hay role do integration
+	 * quản lý, không phải role danh hiệu. Dùng chung cho lệnh gõ và bảng cấu hình.
+	 */
+	private assertUsableRole(guildId: string, role: { id: string; managed: boolean }, purpose: string): void
+	{
+		assertAssignableRole(role, guildId, purpose);
+		this.assertNotTierRole(guildId, role.id, purpose);
 	}
 
 	/** Role danh hiệu không được dùng vào việc khác: bot tự thêm và gỡ role danh hiệu theo level của từng người (DEC-031). */
@@ -1019,50 +1228,302 @@ export default class ConfigCmd extends Command
 	{
 		const interaction = requireCachedGuild(base);
 		const channel = interaction.options.getChannel("kenh", true, BOARD_CHANNEL_TYPES);
-		const callerMissing = missingPermissions(channel.permissionsFor(interaction.member), BOARD_CALLER_PERMISSIONS);
-		if (callerMissing.length > 0)
-		{
-			throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể đặt Bảng vàng ở kênh đó.`);
-		}
-		const missing = missingPermissions(channel.permissionsFor(botMemberOf(interaction)), BOARD_PERMISSIONS);
-		if (missing.length > 0)
-		{
-			throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
-		}
+		assertBoardChannelAccess(channel, interaction.member, botMemberOf(interaction.guild));
 
 		// Xoá message cũ, vẽ và đăng bảng mới có thể mất vài giây: defer trước để không quá hạn 3 giây của interaction.
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		const { previous } = this.services.liveBoards.setChannel(guildId, channel.id, actorId);
-		if (previous?.messageId) await this.liveBoardActions.remove(this.client, previous);
-		const posted = await this.liveBoardActions.refresh(this.client, guildId, { force: true });
-
-		const lines = [`Đã đặt Bảng vàng ở ${channelMention(channel.id)}. Bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.`];
-		if (!posted)
-		{
-			lines.push("⚠️ Chưa đăng được bảng xếp hạng lên kênh này (xem log của bot). Bot sẽ thử lại ở lần cập nhật định kỳ tiếp theo.");
-		}
-		await interaction.editReply(lines.join("\n"));
+		await interaction.editReply(await this.moveLiveBoard(guildId, channel.id, actorId));
 	}
 
 	private async disableLiveBoard({ interaction, guildId, actorId }: ConfigContext): Promise<void>
 	{
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		const previous = this.services.liveBoards.disable(guildId, actorId);
-		if (!previous)
+		await interaction.editReply(await this.turnOffLiveBoard(guildId, actorId));
+	}
+
+	/**
+	 * Lưu kênh Bảng vàng (đã qua assertBoardChannelAccess), xoá message bảng cũ nếu có, rồi đăng bảng ở kênh mới ngay; trả về
+	 * phản hồi. Dùng chung cho `/config board` và bảng cấu hình; gọi sau khi đã defer vì có thể mất vài giây.
+	 */
+	private async moveLiveBoard(guildId: string, channelId: string, actorId: string): Promise<string>
+	{
+		const { previous } = this.services.liveBoards.setChannel(guildId, channelId, actorId);
+		if (previous?.messageId) await this.liveBoardActions.remove(this.client, previous);
+		const posted = await this.liveBoardActions.refresh(this.client, guildId, { force: true });
+
+		const lines = [`Đã đặt Bảng vàng ở ${channelMention(channelId)}. Bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.`];
+		if (!posted)
 		{
-			await interaction.editReply("Bảng vàng vốn đang tắt.");
-			return;
+			lines.push("⚠️ Chưa đăng được bảng xếp hạng lên kênh này (xem log của bot). Bot sẽ thử lại ở lần cập nhật định kỳ tiếp theo.");
 		}
+		return lines.join("\n");
+	}
+
+	/** Tắt Bảng vàng và xoá message bảng xếp hạng cũ nếu có; trả về phản hồi. Dùng chung cho `/config board tat` và bảng cấu hình. */
+	private async turnOffLiveBoard(guildId: string, actorId: string): Promise<string>
+	{
+		const previous = this.services.liveBoards.disable(guildId, actorId);
+		if (!previous) return "Bảng vàng vốn đang tắt.";
 
 		const channel = channelMention(previous.channelId);
-		if (!previous.messageId)
-		{
-			await interaction.editReply(`Đã tắt Bảng vàng ở ${channel}.`);
-			return;
-		}
+		if (!previous.messageId) return `Đã tắt Bảng vàng ở ${channel}.`;
 		const deleted = await this.liveBoardActions.remove(this.client, previous);
-		await interaction.editReply(deleted
+		return deleted
 			? `Đã tắt Bảng vàng và xoá message bảng xếp hạng ở ${channel}.`
-			: `Đã tắt Bảng vàng. Không xoá được message bảng xếp hạng cũ ở ${channel} (có thể đã bị xoá); nếu còn, bạn có thể tự xoá.`);
+			: `Đã tắt Bảng vàng. Không xoá được message bảng xếp hạng cũ ở ${channel} (có thể đã bị xoá); nếu còn, bạn có thể tự xoá.`;
+	}
+
+	// ---------- Bảng cấu hình chung `/config panel` (PROP-033, DEC-037) ----------
+
+	/** Dữ liệu dựng bảng cấu hình, đọc từ service ngay trước khi vẽ; `notice` là kết quả thao tác vừa làm. */
+	private configPanelData(guildId: string, notice: string | null = null): ConfigPanelData
+	{
+		const { guildConfig, teams, liveBoards, tierSets, tierRoles } = this.services;
+		return {
+			settings: guildConfig.getSettings(guildId),
+			channels: guildConfig.listChannels(guildId),
+			teams: teams.list(guildId),
+			boardChannelId: liveBoards.get(guildId)?.channelId ?? null,
+			tierSet: tierSets.current(guildId),
+			tierRoleCount: tierRoles.list(guildId).length,
+			notice,
+		};
+	}
+
+	/** Thay bảng hiện có bằng trang `page`, kèm kết quả thao tác (`notice`). */
+	private async updateConfigPanel(interaction: PanelComponentInteraction, page: ConfigPanelPage, notice: string | null = null): Promise<void>
+	{
+		await interaction.update(configPanelUpdate(page, this.configPanelData(requireGuildId(interaction), notice)));
+	}
+
+	/** Nút của bảng cấu hình: đổi chế độ kênh, bật/tắt thông báo lên level, mở form, tắt Bảng vàng, mở bảng danh hiệu. */
+	private async configPanelButton(interaction: ButtonInteraction, action: ConfigPanelAction): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const actorId = interaction.user.id;
+		const page = pageOfAction(action);
+		switch (action.type)
+		{
+		case "mode":
+			await this.updateConfigPanel(interaction, page, this.applyChannelMode(guildId, action.mode, actorId));
+			break;
+		case "announce":
+		{
+			const patch: Partial<GuildSettings> = { levelUpAnnouncements: action.enabled };
+			this.services.guildConfig.updateSettings(guildId, patch, actorId);
+			await this.updateConfigPanel(interaction, page, `Đã cập nhật cấu hình Activity XP:\n${describeSettingsPatch(patch).join("\n")}`);
+			break;
+		}
+		case "xpForm":
+			await interaction.showModal(buildXpSettingsModal(this.services.guildConfig.getSettings(guildId)));
+			break;
+		case "pollForm":
+			await interaction.showModal(buildPollSettingsModal(this.services.guildConfig.getSettings(guildId)));
+			break;
+		case "boardOff":
+			await this.deferredConfigPanelAction(interaction, page, () => this.turnOffLiveBoard(guildId, actorId));
+			break;
+		case "tierPanel":
+			await interaction.reply(tierPanelReply(this.panelData(guildId, interaction.guild)));
+			break;
+		default:
+			throw new UserError(INVALID_CONFIG_PANEL);
+		}
+	}
+
+	/** Menu chọn của bảng cấu hình; loại menu phải khớp thao tác trong customId, không thì báo bảng đã cũ. */
+	private async configPanelSelect(interaction: AnySelectMenuInteraction, action: ConfigPanelAction): Promise<void>
+	{
+		const page = pageOfAction(action);
+		if (action.type === "nav" && interaction.isStringSelectMenu()) await this.panelNavigate(interaction);
+		else if (action.type === "channels" && interaction.isChannelSelectMenu()) await this.panelToggleChannels(interaction, action.enabled, page);
+		else if (action.type === "board" && interaction.isChannelSelectMenu()) await this.panelSetBoard(interaction, page);
+		else if (action.type === "teams" && interaction.isRoleSelectMenu()) await this.panelTeams(interaction, action.add, page);
+		else if (action.type === "pollRole" && interaction.isRoleSelectMenu()) await this.panelSettingRole(interaction, "pollCreatorRoleId", action.drawnRoleId, page);
+		else if (action.type === "adminRole" && interaction.isRoleSelectMenu()) await this.panelSettingRole(interaction, "adminRoleId", action.drawnRoleId, page);
+		else throw new UserError(INVALID_CONFIG_PANEL);
+	}
+
+	/** Form số của bảng cấu hình; phải mở từ nút của bảng (để cập nhật được chính bảng đó). */
+	private async configPanelModal(interaction: ModalSubmitInteraction, action: ConfigPanelAction): Promise<void>
+	{
+		if (!interaction.isFromMessage()) throw new UserError(INVALID_CONFIG_PANEL);
+		const page = pageOfAction(action);
+		if (action.type === "xpSave") await this.panelSaveForm(interaction, XP_FORM_KEYS, action.drawn, "Activity XP", page);
+		else if (action.type === "pollSave") await this.panelSaveForm(interaction, POLL_FORM_KEYS, action.drawn, "vote và contribution", page);
+		else throw new UserError(INVALID_CONFIG_PANEL);
+	}
+
+	/** Chuyển trang; giá trị menu phải là một trang hợp lệ (không tin dữ liệu từ client). */
+	private async panelNavigate(interaction: StringSelectMenuInteraction): Promise<void>
+	{
+		const page = interaction.values[0];
+		if (!isConfigPanelPage(page)) throw new UserError(INVALID_CONFIG_PANEL);
+		await this.updateConfigPanel(interaction, page);
+	}
+
+	/** Bật hoặc tắt XP cho các kênh đã chọn (tối đa 25, GuildConfigService.setChannelsXpEnabled); mỗi kênh đổi trạng thái có một dòng audit. */
+	private async panelToggleChannels(interaction: ChannelSelectMenuInteraction, enabled: boolean, page: ConfigPanelPage): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const channelIds = interaction.values.map(channelId => selectedXpChannel(interaction, channelId));
+		const { guildConfig } = this.services;
+		const result = guildConfig.setChannelsXpEnabled(guildId, channelIds, enabled, interaction.user.id);
+		await this.updateConfigPanel(interaction, page, channelsToggledText(enabled, guildConfig.getSettings(guildId).xpChannelMode, result));
+	}
+
+	/**
+	 * Thêm hoặc bỏ nhiều role team. Thêm: mọi role qua cùng kiểm tra với `/config team add`, và tổng số team sau khi thêm không
+	 * vượt MAX_TEAMS; kiểm tra hết trước khi ghi, nên lỗi thì không thêm role nào.
+	 */
+	private async panelTeams(interaction: RoleSelectMenuInteraction, add: boolean, page: ConfigPanelPage): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const actorId = interaction.user.id;
+		if (interaction.values.length === 0) throw new UserError(SELECT_AT_LEAST_ONE_ROLE);
+		const roles = [...new Set(interaction.values)].map(roleId => selectedRole(interaction, roleId));
+		const { teams } = this.services;
+		const changed: string[] = [];
+		const unchanged: string[] = [];
+		if (add)
+		{
+			for (const role of roles) this.assertUsableRole(guildId, role, "làm team");
+			const current = teams.list(guildId);
+			const fresh = roles.filter(role => !current.includes(role.id)).length;
+			if (current.length + fresh > MAX_TEAMS)
+			{
+				throw new UserError(`Chỉ được cấu hình tối đa ${MAX_TEAMS} team: server đang có ${current.length} team, `
+					+ `thêm ${fresh} role mới sẽ vượt giới hạn. Bot chưa thêm role nào.`);
+			}
+		}
+		for (const role of roles)
+		{
+			const done = add ? teams.add(guildId, role.id, actorId) : teams.remove(guildId, role.id, actorId);
+			if (done) changed.push(role.id);
+			else unchanged.push(role.id);
+		}
+		await this.updateConfigPanel(interaction, page, teamsChangedText(add, changed, unchanged));
+	}
+
+	/**
+	 * Lưu form số (XP, hoặc vote và contribution): validate mọi ô trước khi ghi; chỉ ghi ô có giá trị khác lúc mở form (`drawn`),
+	 * để không đè thay đổi của người khác trong lúc form đang mở.
+	 */
+	private async panelSaveForm(
+		interaction: ModalMessageModalSubmitInteraction,
+		keys: readonly NumericSettingKey[],
+		drawn: Readonly<Partial<Record<NumericSettingKey, number>>>,
+		label: string,
+		page: ConfigPanelPage,
+	): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const values = keys.map(key => ({ key, value: parseFormNumber(interaction.fields.getTextInputValue(key), key) }));
+		const patch: Partial<GuildSettings> = {};
+		for (const { key, value } of values)
+		{
+			if (value !== drawn[key]) patch[key] = value;
+		}
+		const changed = Object.keys(patch).length > 0;
+		if (changed) this.services.guildConfig.updateSettings(guildId, patch, interaction.user.id);
+		const notice = changed ? `Đã cập nhật cấu hình ${label}:\n${describeSettingsPatch(patch).join("\n")}` : FORM_UNCHANGED;
+		await interaction.update(configPanelUpdate(page, this.configPanelData(guildId, notice)));
+	}
+
+	/**
+	 * Ô chọn role tạo vote hoặc role admin bot: chọn role là đặt ngay (cùng kiểm tra với `/config poll role-tao-vote` và
+	 * `/config admin-role`); bỏ chọn là xoá, chỉ khi role hiện tại vẫn là role lúc vẽ bảng (`drawnRoleId`), để bảng cũ không
+	 * xoá role vừa được người khác đặt. Bảng cũ thì vẽ lại bảng rồi báo lỗi riêng.
+	 */
+	private async panelSettingRole(interaction: RoleSelectMenuInteraction, key: PanelRoleKey, drawnRoleId: string | null, page: ConfigPanelPage): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		const setting = PANEL_ROLE_SETTINGS[key];
+		const { guildConfig } = this.services;
+		const patch: Partial<GuildSettings> = {};
+		const roleId = interaction.values[0];
+		let notice: string;
+		if (roleId === undefined)
+		{
+			const current = guildConfig.getSettings(guildId)[key];
+			if (current !== drawnRoleId)
+			{
+				await this.updateConfigPanel(interaction, page);
+				throw new UserError(CONFIG_ROLE_CHANGED);
+			}
+			if (current === null)
+			{
+				await this.updateConfigPanel(interaction, page, setting.unsetText);
+				return;
+			}
+			patch[key] = null;
+			notice = setting.clearedText;
+		}
+		else
+		{
+			const role = selectedRole(interaction, roleId);
+			this.assertUsableRole(guildId, role, setting.purpose);
+			patch[key] = role.id;
+			notice = setting.setText(role.id);
+		}
+		guildConfig.updateSettings(guildId, patch, interaction.user.id);
+		await this.updateConfigPanel(interaction, page, notice);
+	}
+
+	/**
+	 * Đặt kênh Bảng vàng từ bảng: kênh lấy đầy đủ từ cache của server (để tính quyền), cùng kiểm tra với `/config board`.
+	 * Lỗi kiểm tra được báo ngay (trước defer); đăng bảng mất vài giây nên phần còn lại chạy sau deferUpdate.
+	 */
+	private async panelSetBoard(interaction: ChannelSelectMenuInteraction, page: ConfigPanelPage): Promise<void>
+	{
+		if (!interaction.inCachedGuild()) throw new UserError(GUILD_UNAVAILABLE);
+		const { guild, guildId } = interaction;
+		const channelId = interaction.values[0];
+		const channel = channelId === undefined ? undefined : guild.channels.cache.get(channelId);
+		if (!channel) throw new UserError(SELECTED_CHANNEL_UNAVAILABLE);
+		if (!isBoardChannel(channel))
+		{
+			throw new UserError(`Bảng vàng chỉ đặt được ở kênh chữ hoặc kênh thông báo; ${channelMention(channel.id)} không phải loại kênh này.`);
+		}
+		assertBoardChannelAccess(channel, interaction.member, botMemberOf(guild));
+		await this.deferredConfigPanelAction(interaction, page, () => this.moveLiveBoard(guildId, channel.id, interaction.user.id));
+	}
+
+	/**
+	 * Thao tác của bảng mất vài giây (đăng hoặc xoá message Bảng vàng): deferUpdate, chạy `run`, rồi vẽ lại bảng kèm kết quả.
+	 * Lỗi của thao tác được ném lại sau khi vẽ lại bảng để dispatcher báo riêng (như panelAssignRole).
+	 */
+	private async deferredConfigPanelAction(interaction: PanelComponentInteraction, page: ConfigPanelPage, run: () => Promise<string>): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		await interaction.deferUpdate();
+		let notice: string | null = null;
+		let failure: { error: unknown } | null = null;
+		try
+		{
+			notice = await run();
+		}
+		catch (error)
+		{
+			failure = { error };
+		}
+		await this.redrawConfigPanel(interaction, guildId, page, notice);
+		if (failure !== null) throw failure.error;
+	}
+
+	/**
+	 * Vẽ lại bảng cấu hình sau deferUpdate. Lỗi (tin nhắn riêng đã bị đóng, Unknown Message, Discord lỗi 5xx) chỉ ghi cảnh báo,
+	 * để không che kết quả hay lỗi gốc của thao tác chính.
+	 */
+	private async redrawConfigPanel(interaction: MessageComponentInteraction, guildId: string, page: ConfigPanelPage, notice: string | null): Promise<void>
+	{
+		try
+		{
+			await interaction.editReply(configPanelUpdate(page, this.configPanelData(guildId, notice)));
+		}
+		catch (error)
+		{
+			logger.warn(`Không vẽ lại được bảng cấu hình ở server "${guildId}":`, error);
+		}
 	}
 }
