@@ -29,7 +29,7 @@ src/
 │                             (không gọi mạng, không mở DB thật bằng SQLite: đọc header và chạy thử trên bản sao trong thư mục tạm, LL-020)
 ├── config.ts                 Đọc và validate biến môi trường (DEC-015); loadWebConfig (WEB_*, DISCORD_CLIENT_SECRET; null = web tắt)
 ├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
-├── shared/                   clock (inject được), errors (UserError), logger (che token), time (ngày/tuần/tháng giờ Việt Nam)
+├── shared/                   clock (inject được), errors (UserError), logger (che token và secret đã đăng ký), time (ngày/tuần/tháng giờ Việt Nam)
 ├── db/
 │   ├── connection.ts         openDatabase(): 1 connection, WAL, foreign_keys, busy_timeout
 │   ├── migrations.ts         Migration nhúng trong code, version lưu ở PRAGMA user_version (append-only)
@@ -235,36 +235,40 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
   → readRequest: chỉ GET/POST (khác → 405); POST chỉ nhận application/x-www-form-urlencoded (khác → 415),
                  body ≤ MAX_FORM_BYTES 256 KB (quá → 413); các lỗi này trả lời kèm Connection: close
   → createWebHandler.handle (bộ xử lý thuần, test gọi thẳng; mọi response thêm SECURITY_HEADERS; lỗi lạ → trang 500 + log)
-      1. GET /healthz                  → "ok" (không kiểm Host, không cần đăng nhập)
+      1. GET hoặc HEAD /healthz        → "ok" (không kiểm Host, không cần đăng nhập); HEAD khác → 405 kèm Allow
       2. Host ≠ host của WEB_BASE_URL   → 421 "Sai địa chỉ truy cập" (chống DNS rebinding)
       3. GET /static/app.css           → BASE_CSS + css của các PageModule
-      4. đọc phiên từ cookie `sid`
-      5. route chung: GET / (trang đăng nhập, hoặc chuyển tới guild đầu tiên) · GET /auth/login · GET /auth/callback ·
-                      POST /auth/logout (còn phiên thì cần CSRF)
+      4. đọc phiên từ cookie `ezbot_sid` (`__Host-ezbot_sid` khi https)
+      5. route chung: GET / (trang đăng nhập, hoặc chuyển tới guild đầu tiên mà người đó là admin; không còn ở đâu → huỷ phiên)
+                      · GET /auth/login · GET /auth/callback · POST /auth/logout (Origin khác → 403 kể cả khi chưa có phiên;
+                      còn phiên thì cần CSRF)
       6. /g/<guildId><subpath>:
            chưa có phiên                         → GET: 303 về "/"; POST: 403
+           GET: RateLimiter theo user (600 lần/phút) → 429
            guild không thuộc DISCORD_GUILD_IDS hoặc không có trong cache → 404
            lấy lại member qua REST (guild.members.fetch({ force: true }), không dùng cache)
-             → isAdmin (Manage Server theo member.permissions hoặc role admin bot; cùng hàm với lớp quyền 2) → không đạt: 403
+             Discord báo 404 (không còn trong server) → coi là không phải admin; lỗi khác (Discord lỗi, mạng) → 503, giữ phiên
+             → isAdmin (Manage Server theo member.permissions hoặc role admin bot; cùng hàm với lớp quyền 2) → không đạt: 403 và huỷ phiên
            POST: RateLimiter theo user (120 lần/phút) → 429
                  token `_csrf` khớp phiên (safeEqual) và Origin (nếu trình duyệt gửi) = WEB_BASE_URL → không đạt: 403
            tìm GuildRoute theo method + subpath     → không có: 404
            handler trang (GuildPageContext: req, deps, session, guild, member, actorId) → service / configOps
-             UserError: POST → flash lỗi + 303 về GET cùng trang; GET → trang lỗi 400. Lỗi khác: log + thông báo chung
+             UserError: POST → flash lỗi + 303 về GET cùng trang (hoặc trang cha gần nhất có GET: /board/off → /board);
+             GET → trang lỗi 400. Lỗi khác: log + thông báo chung
 ```
 
 **Đăng nhập** (OAuth2 authorization code, scope `identify`, `src/web/oauth.ts`):
-- `GET /auth/login`: giới hạn tần suất theo IP (30 lần/phút) → state ngẫu nhiên vào cookie `oauth_state` (Path=/auth, 10 phút) → 303 tới `discord.com/oauth2/authorize` với `redirect_uri=<WEB_BASE_URL>/auth/callback`, `prompt=none` (người đã cho phép từ trước thì Discord không hỏi lại).
+- `GET /auth/login`: giới hạn tần suất theo IP (30 lần/phút) → state ngẫu nhiên vào cookie `ezbot_oauth_state` (Path=/auth, 10 phút; https: `__Host-`, Path=/) → 303 tới `discord.com/oauth2/authorize` với `redirect_uri=<WEB_BASE_URL>/auth/callback`, `prompt=none` (người đã cho phép từ trước thì Discord không hỏi lại).
 - `GET /auth/callback`:
   - giới hạn tần suất theo IP; có `error` (người dùng huỷ) → về trang đăng nhập;
   - so `state` với cookie (safeEqual), `code` đúng định dạng;
   - `DiscordOAuth.identify`: POST `oauth2/token` (Basic auth bằng Application ID và `DISCORD_CLIENT_SECRET`), rồi GET `users/@me`, timeout 10 giây. **Access token bị bỏ ngay**, không lưu;
-  - tìm guild đầu tiên trong `DISCORD_GUILD_IDS` mà người này là admin (member lấy qua REST). Không có → về trang đăng nhập với mã `noadmin`. Có → tạo phiên, đặt cookie `sid`, 303 tới `/g/<guildId>`.
-- Trang đăng nhập chỉ hiện thông báo theo mã cố định (`?loi=denied|expired|failed|noadmin|busy|starting|out`), không phản chiếu chữ từ URL.
+  - tìm guild đầu tiên trong `DISCORD_GUILD_IDS` mà người này là admin (member lấy qua REST). Không có → về trang đăng nhập với mã `noadmin`; Discord lỗi → mã `discord`. Có → tạo phiên, đặt cookie phiên, 303 tới `/g/<guildId>`.
+- Trang đăng nhập chỉ hiện thông báo theo mã cố định (`?loi=denied|expired|failed|noadmin|busy|starting|discord|gone|out`, tra bằng `Object.hasOwn`), không phản chiếu chữ từ URL.
 - Application ID lấy từ client sau khi login (`client.application.id`), nên không cần biến môi trường riêng.
 
 **Phiên và form:**
-- `SessionStore` trong bộ nhớ process. Cookie chỉ chứa token ngẫu nhiên 32 byte; map lưu theo SHA-256 của token. Hạn 8 giờ tuyệt đối, không gia hạn; tối đa 500 phiên (vượt thì bỏ phiên cũ nhất). Khởi động lại bot là mất mọi phiên. Đăng xuất chỉ huỷ phiên hiện tại.
+- `SessionStore` trong bộ nhớ process. Cookie chỉ chứa token ngẫu nhiên 32 byte; map lưu theo SHA-256 của token. Hạn 8 giờ tuyệt đối, không gia hạn; tối đa 500 phiên (vượt thì bỏ phiên cũ nhất) và 5 phiên mỗi người (vượt thì bỏ phiên cũ nhất của chính người đó). Khởi động lại bot là mất mọi phiên. Đăng xuất chỉ huỷ phiên hiện tại.
 - Mỗi phiên có một token CSRF; mọi form POST có `csrfField(ctx)`.
 - Mẫu POST → xử lý → `redirectWithFlash` (303) → GET. Flash lưu trong phiên, hiện một lần.
 - Form mang giá trị lúc vẽ trong input ẩn và chỉ ghi phần admin thật sự đổi, như customId mang trạng thái của `/config panel` (mục 3.5), để hai tab hay hai admin không đè nhau.
@@ -273,14 +277,16 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
 **Mô hình bảo mật:**
 - Chỉ mạng nội bộ hoặc VPN: ràng buộc về hạ tầng (không mở cổng ra Internet, `docs/DEPLOY.md` mục 7.5), code không tự chặn theo IP.
 - Xác thực bằng Discord (OAuth2 `identify`). Phân quyền bằng đúng `isAdmin` của lớp quyền 2, kiểm tra lại ở **mỗi request** với member lấy mới từ Discord. Không có mật khẩu; không lưu access token hay refresh token.
-- Cookie `sid` và `oauth_state`: HttpOnly, SameSite=Lax (để cookie state đi theo khi Discord chuyển hướng về callback), thêm `Secure` khi `WEB_BASE_URL` là https.
-- CSRF: token theo phiên và kiểm Origin cho mọi POST, kể cả đăng xuất.
+- Cookie `ezbot_sid` và `ezbot_oauth_state`: HttpOnly, SameSite=Lax (để cookie state đi theo khi Discord chuyển hướng về callback); khi `WEB_BASE_URL` là https thì thêm `Secure` và tiền tố `__Host-`. Tên có tiền tố riêng vì server dùng chung, mà trình duyệt gửi cookie theo host chứ không theo cổng: dịch vụ khác trên cùng máy vẫn nhận được cookie (rủi ro còn lại, DEPLOY 7.5 khuyên dùng tên miền nội bộ riêng cho bot).
+- CSRF: token theo phiên cho mọi POST; Origin (nếu trình duyệt gửi) phải là WEB_BASE_URL cho mọi POST, kể cả đăng xuất khi chưa có phiên.
 - Kiểm tra Host (421) chống DNS rebinding; `/healthz` là ngoại lệ duy nhất.
 - `SECURITY_HEADERS` cho mọi response: CSP `default-src 'none'; style-src 'self'; img-src 'self' https://cdn.discordapp.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-store`.
-- Escape: mọi HTML dựng bằng template `html` (tự escape giá trị chèn vào). Chữ kiểu Discord từ service hay `UserError` đi qua `discordText`: escape trước, rồi mới đổi mention và markdown.
-- Giới hạn tần suất: `/auth/login` và `/auth/callback` 30 lần/phút mỗi IP; POST trang guild 120 lần/phút mỗi người. Body form ≤ 256 KB; có timeout request.
-- Secret: `DISCORD_CLIENT_SECRET` chỉ đọc từ env qua `config.ts`, không bao giờ đưa vào log hay thông báo lỗi. Logger không có mẫu che riêng cho secret này, nên code không được log nó. Selfcheck chỉ báo "có".
-- HTTP nội bộ: cookie đi không mã hoá trong mạng công ty (rủi ro đã nêu ở PROP-037, chấp nhận ở DEC-039). HTTPS cần chứng chỉ do IT cấp; `startWebServer` hiện chỉ phục vụ HTTP, cách gắn chứng chỉ cần duyệt riêng.
+- Escape: mọi HTML dựng bằng template `html` (tự escape giá trị chèn vào). Chữ kiểu Discord từ service hay `UserError` đi qua `discordText`: bỏ ký tự điều khiển, escape, thay mention bằng chỗ đánh dấu, xử lý markdown, rồi mới điền tên (tên có `**` hay backtick không làm lồng thẻ sai).
+- Riêng tư: tên kênh mà người đăng nhập không có View Channel được giấu (`PRIVATE_CHANNEL_LABEL`, như "No access" của Discord) ở flash, tổng quan, nhật ký, Bảng vàng; trang kênh ẩn và không cho sửa các kênh đó.
+- Giới hạn tần suất: `/auth/login` và `/auth/callback` 30 lần/phút mỗi IP (IPv6 gộp theo /64, không đọc X-Forwarded-For); GET trang guild 600 và POST 120 lần/phút mỗi người. Map đầy thì bỏ khoá cũ nhất. Body form ≤ 256 KB; có timeout request.
+- Secret: `DISCORD_CLIENT_SECRET` chỉ đọc từ env qua `config.ts`, không bao giờ đưa vào log hay thông báo lỗi. `index.ts` đăng ký token và Client Secret với `registerSecret` của logger, nên nếu lỡ xuất hiện trong log thì bị che theo giá trị. Selfcheck chỉ báo "có".
+- HTTP nội bộ: cookie đi không mã hoá trong mạng công ty (rủi ro đã nêu ở PROP-037, chấp nhận ở DEC-039). HTTPS cần chứng chỉ do IT cấp; `startWebServer` hiện chỉ phục vụ HTTP, gắn chứng chỉ là thay đổi code cần duyệt riêng (chỉ đổi `WEB_BASE_URL` sang https sẽ làm hỏng đăng nhập vì cookie `Secure`).
+- Quyền đổi role admin bot trên web giống lớp quyền 2 (DEC-039): người chỉ có role admin bot đổi được role đó, và thành viên role mới thành admin web ngay (không có bước Integrations như lệnh Discord). Đã chấp nhận vì PROP-032 bị từ chối; trang Quyền cảnh báo tự khoá quyền.
 - Không thêm quyền bot hay intent: lấy member qua REST không cần Server Members Intent.
 
 **Dùng chung với `/config`: `src/discord/configOps.ts`**
@@ -351,7 +357,7 @@ Quy tắc:
 - `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level/đột phá mới ping người được nhắc.
 - Bảng `/config panel` không thêm quyền bot hay intent. Bề mặt mới là component namespace `cfgui`: dispatcher kiểm tra admin (lớp 2) cho mọi component, customId được đọc bằng regex chặt, ô số kiểm tra theo `SETTING_LIMITS`, role/kênh chọn trong menu đi qua cùng kiểm tra với lệnh gõ tay.
 - Trang web quản trị (DEC-039, mục 3.7): tắt mặc định. Khi bật, bề mặt mới là một cổng HTTP trong mạng nội bộ. Không thêm quyền bot hay intent. Có đăng nhập Discord (`identify`), kiểm tra admin ở mỗi request, CSRF, kiểm tra Host/Origin, CSP, giới hạn tần suất, escape mọi dữ liệu hiển thị.
-- Secret (`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`) chỉ lấy từ env; logger che token; Client Secret không bao giờ được log; `build/` không chứa file cấu hình.
+- Secret (`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`) chỉ lấy từ env; logger che token và secret đã đăng ký (`registerSecret`); `build/` không chứa file cấu hình.
 - `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
 
 ## 6. Giao tiếp ra bên ngoài

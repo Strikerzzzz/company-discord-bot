@@ -568,13 +568,20 @@ Cách trang hoạt động:
 
 - **Không mở cổng ra Internet.** Chỉ dùng trong mạng nội bộ hoặc VPN.
 - **HTTP nội bộ:** dữ liệu và cookie đăng nhập đi **không mã hoá** trong mạng công ty. Không dùng trang này qua Wi-Fi khách hay mạng công cộng (ngoài VPN).
-- **HTTPS:** cần IT cấp chứng chỉ. Bot hiện chỉ phục vụ HTTP và không tự dùng chứng chỉ, nên cách gắn chứng chỉ phải bàn và duyệt riêng. Khi đã có HTTPS, đặt `WEB_BASE_URL` bắt đầu bằng `https://` (và đăng ký lại redirect): bot tự thêm cờ `Secure` cho cookie.
-- **Phiên đăng nhập 8 giờ**, tính từ lúc đăng nhập, không tự gia hạn. Hết hạn thì đăng nhập lại.
+- **HTTPS: hiện chưa có.** Bot chỉ phục vụ HTTP, không tự dùng chứng chỉ. **Đừng chỉ đổi `WEB_BASE_URL` sang `https://`**: bot sẽ đặt cookie `Secure` trong khi trang vẫn chạy HTTP, và đăng nhập sẽ hỏng. Muốn có HTTPS (IT cấp chứng chỉ) thì cần một thay đổi code được duyệt riêng; khi đó bot tự dùng cookie `__Host-` và cờ `Secure`.
+- **Máy dùng chung với dịch vụ khác:** trình duyệt gửi cookie theo **địa chỉ máy**, không phân biệt cổng. Mọi trang khác mở bằng `http://192.168.0.206:<cổng khác>` cũng nhận được cookie đăng nhập của trang này. Cookie của bot có tên riêng (`ezbot_sid`) để không đụng app khác, nhưng không chống được một dịch vụ khác trên cùng máy cố tình đọc cookie. Vì vậy:
+  - nếu IT tạo được một tên miền nội bộ **chỉ bot dùng** (ví dụ `bot-admin.<tên miền nội bộ>`), hãy đặt `WEB_BASE_URL` theo tên đó; cookie khi đó chỉ gắn với tên này;
+  - dùng xong thì bấm **Đăng xuất**.
+- **Địa chỉ lắng nghe:** `WEB_HOST` mặc định `0.0.0.0` (mọi card mạng). Trên máy dùng chung, nên đặt đúng IP mạng nội bộ của server (ví dụ `WEB_HOST=192.168.0.206`) và để firewall chỉ mở cổng cho dải mạng nội bộ. Kiểm tra địa chỉ truy cập (Host) chỉ chống tấn công qua trình duyệt, không phải là kiểm soát ai được kết nối.
+- **Phiên đăng nhập 8 giờ**, tính từ lúc đăng nhập, không tự gia hạn. Hết hạn thì đăng nhập lại. Mỗi người tối đa 5 phiên (5 trình duyệt hay máy); đăng nhập thêm thì phiên cũ nhất của chính người đó bị bỏ.
 - Phiên lưu **trong bộ nhớ** của bot. Bot khởi động lại (cập nhật phiên bản, sửa `.env`, restart) thì mọi người phải đăng nhập lại. Muốn đăng xuất tất cả mọi người ngay thì khởi động lại bot.
-- Đăng xuất chỉ huỷ phiên của trình duyệt đó. Trình duyệt khác vẫn đăng nhập tới khi hết hạn.
+- Đăng xuất chỉ huỷ phiên của trình duyệt đó. Trình duyệt khác vẫn đăng nhập tới khi hết hạn. Người **mất quyền admin** thì phiên bị huỷ ngay ở lần mở trang kế tiếp.
+- Web **giấu tên các kênh riêng tư** mà chính người đăng nhập không xem được trong Discord (như "No access" của Discord), và không cho sửa các kênh đó.
+- **Role admin bot:** người chỉ có role admin bot (không có Manage Server) đổi được role admin bot sang role khác ngay trên web, và thành viên của role mới thành admin ngay, không cần bước Integrations như lệnh Discord. Đây là quy tắc đã chốt: web làm giống lớp quyền 2 (DEC-039), và PROP-032 (chỉ người có Manage Server đổi được) đã bị từ chối. Hãy cân nhắc khi chọn role.
 - Bot không lưu mật khẩu hay access token Discord: token chỉ dùng một lần để biết bạn là ai rồi bỏ.
-- Có chống giả mạo form (CSRF), kiểm tra địa chỉ truy cập, chặn script và nhúng trang (CSP), giới hạn tần suất đăng nhập (30 lần mỗi phút cho mỗi IP) và lưu (120 lần mỗi phút cho mỗi người).
-- `DISCORD_CLIENT_SECRET` chỉ nằm trong `.env`. Selfcheck chỉ báo "có", lỗi cấu hình chỉ nêu tên biến. Log ghi Discord user ID của mỗi lần đăng nhập thành công hay bị từ chối.
+- Có chống giả mạo form (CSRF, kể cả đăng xuất), kiểm tra địa chỉ truy cập, chặn script và nhúng trang (CSP), giới hạn tần suất đăng nhập (30 lần mỗi phút cho mỗi IP), mở trang (600 lần mỗi phút) và lưu (120 lần mỗi phút cho mỗi người).
+- Discord lỗi hay mạng chậm lúc bot kiểm tra quyền thì trang báo "Tạm thời không kiểm tra được quyền" (lỗi 503), không huỷ phiên; thử lại sau ít phút.
+- `DISCORD_CLIENT_SECRET` chỉ nằm trong `.env`, và log che giá trị này nếu nó vô tình xuất hiện. Selfcheck chỉ báo "có", lỗi cấu hình chỉ nêu tên biến. Log ghi Discord user ID của mỗi lần đăng nhập thành công hay bị từ chối.
 
 #### Tắt trang web
 
