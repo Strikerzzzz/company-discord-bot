@@ -7,6 +7,8 @@ import { Clock } from "../shared/clock";
 export const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 /** Số phiên tối đa giữ cùng lúc; vượt thì bỏ phiên cũ nhất. */
 const MAX_SESSIONS = 500;
+/** Số phiên tối đa của một người (nhiều trình duyệt, máy); vượt thì bỏ phiên cũ nhất của chính người đó. */
+export const MAX_SESSIONS_PER_USER = 5;
 
 export type FlashKind = "ok" | "error";
 
@@ -51,6 +53,8 @@ export class SessionStore
 	create(userId: string, displayName: string): { token: string; session: WebSession }
 	{
 		this.sweep();
+		const own = [...this.sessions].filter(([, session]) => session.userId === userId).map(([key]) => key);
+		for (const key of own.slice(0, Math.max(0, own.length - MAX_SESSIONS_PER_USER + 1))) this.sessions.delete(key);
 		while (this.sessions.size >= MAX_SESSIONS)
 		{
 			const oldest = this.sessions.keys().next().value;

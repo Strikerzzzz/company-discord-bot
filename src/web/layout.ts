@@ -75,7 +75,7 @@ export function renderPage(ctx: GuildPageContext, page: PageSpec, status = 200):
 <div class="who"><span>${guild.name}${switcher}</span><span>👤 ${session.displayName}</span>
 <form method="post" action="/auth/logout">${csrfField(ctx)}<button class="btn btn-link" type="submit">Đăng xuất</button></form></div></header>
 <div class="shell"><nav class="sidebar"><div class="guild">${guild.name}</div>${nav}</nav>
-<main>${flash ? html`<div class="flash ${flash.kind}">${discordText(guild, flash.text)}</div>` : ""}
+<main>${flash ? html`<div class="flash ${flash.kind}">${discordText(guild, flash.text, ctx.member)}</div>` : ""}
 <h1>${page.title}</h1>${page.lead ? html`<p class="lead">${page.lead}</p>` : ""}
 ${page.body}</main></div>
 </body></html>`, status);

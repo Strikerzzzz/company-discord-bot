@@ -1,21 +1,26 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
+import { ChannelType } from "discord.js";
 import { UserError } from "../src/shared/errors";
-import { discordText } from "../src/web/format";
+import { channelLabel, discordText, PRIVATE_CHANNEL_LABEL } from "../src/web/format";
 import { escapeHtml, html, joinHtml, raw } from "../src/web/html";
+import { RateLimiter, rateLimitKey } from "../src/web/http";
 import { csrfField, redirectWithFlash, renderPage } from "../src/web/layout";
-import { SESSION_TTL_MS } from "../src/web/session";
+import { MAX_SESSIONS_PER_USER, SESSION_TTL_MS } from "../src/web/session";
 import { SESSION_COOKIE, startWebServer, STATE_COOKIE } from "../src/web/server";
 import type { PageModule } from "../src/web/types";
 import { GUILD } from "./helpers";
 import {
+	addChannel,
+	addRole,
 	ADMIN_USER,
 	APP_ID,
 	BASE_URL,
 	call,
 	CHANNEL_CHAT,
 	createWebHarness,
+	HOST,
 	login,
 	PLAIN_USER,
 	ROLE_ADMIN_BOT,
@@ -247,6 +252,119 @@ describe("web: phân quyền và form", () =>
 		assert.equal(refused.headers.Location, `/g/${GUILD}/thu`);
 		assert.ok((await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies })).body.includes("Không xoá được."));
 		assert.equal((await call(harness, `/g/${GUILD}/khac/con`, { form: withCsrf(auth), cookies: auth.cookies })).headers.Location, `/g/${GUILD}`);
+	});
+});
+
+describe("web: sửa lỗi review bảo mật Phase 16", () =>
+{
+	test("cookie có tiền tố riêng của bot (server dùng chung, trình duyệt gửi cookie theo host chứ không theo cổng)", async () =>
+	{
+		assert.equal(SESSION_COOKIE, "ezbot_sid");
+		assert.equal(STATE_COOKIE, "ezbot_oauth_state");
+		const harness = createWebHarness([TEST_PAGE]);
+		const auth = await login(harness, ADMIN_USER);
+		assert.ok(auth.cookies[SESSION_COOKIE]);
+	});
+
+	test("đăng xuất: trang lạ (Origin khác) không ép đăng xuất được, kể cả khi request không mang phiên", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		const forged = await call(harness, "/auth/logout", { form: {}, headers: { origin: "http://evil.example" } });
+		assert.equal(forged.status, 403);
+		assert.equal(setCookieValue(forged, SESSION_COOKIE), undefined, "không gửi lệnh xoá cookie");
+	});
+
+	test("mất quyền admin: phiên bị huỷ ngay (cookie cũ không dùng lại được); về trang chính thì báo đã huỷ", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		const auth = await login(harness, ROLE_ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: null }, ADMIN_USER);
+		const denied = await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies });
+		assert.equal(denied.status, 403);
+		assert.equal(setCookieValue(denied, SESSION_COOKIE), "");
+		assert.equal(harness.handler.sessions.get(auth.cookies[SESSION_COOKIE]), null);
+	});
+
+	test("Discord lỗi khi lấy thông tin thành viên: báo 503 tạm thời, không báo nhầm là không có quyền, không huỷ phiên", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		const auth = await login(harness, ADMIN_USER);
+		harness.world.discordDown = true;
+		const page = await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies });
+		assert.equal(page.status, 503);
+		assert.ok(harness.handler.sessions.get(auth.cookies[SESSION_COOKIE]));
+
+		const start = await call(harness, "/auth/login");
+		const state = setCookieValue(start, STATE_COOKIE) ?? "";
+		const done = await call(harness, `/auth/callback?code=code${ADMIN_USER}&state=${state}`, { cookies: { [STATE_COOKIE]: state } });
+		assert.equal(done.headers.Location, "/?loi=discord");
+	});
+
+	test("trang chính khi đã đăng nhập: chuyển tới server mà người đó là admin; không còn là admin ở đâu thì huỷ phiên", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		const auth = await login(harness, ADMIN_USER);
+		assert.equal((await call(harness, "/", { cookies: auth.cookies })).headers.Location, `/g/${GUILD}`);
+		harness.world.members.delete(ADMIN_USER);
+		const gone = await call(harness, "/", { cookies: auth.cookies });
+		assert.equal(gone.headers.Location, "/?loi=gone");
+		assert.equal(setCookieValue(gone, SESSION_COOKIE), "");
+	});
+
+	test("mã lý do lạ như __proto__ không hiện hộp thông báo rỗng", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		for (const reason of ["__proto__", "constructor", "toString"])
+		{
+			assert.ok(!(await call(harness, `/?loi=${reason}`)).body.includes("class=\"flash"), reason);
+		}
+	});
+
+	test("HEAD /healthz trả 200; phương thức khác GET/POST trả 405 kèm header Allow", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		const head = await harness.handler.handle({ method: "HEAD", path: "/healthz", query: new URLSearchParams(), headers: {}, cookies: new Map(), form: null, ip: "" });
+		assert.equal(head.status, 200);
+		const other = await harness.handler.handle({ method: "HEAD", path: "/", query: new URLSearchParams(), headers: { host: HOST }, cookies: new Map(), form: null, ip: "" });
+		assert.equal(other.status, 405);
+		assert.equal(other.headers.Allow, "GET, POST");
+	});
+
+	test("mỗi người tối đa 5 phiên: đăng nhập thêm chỉ bỏ phiên cũ nhất của chính người đó, không đá phiên người khác", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		const other = await login(harness, ROLE_ADMIN_USER);
+		const first = await login(harness, ADMIN_USER);
+		for (let index = 0; index < MAX_SESSIONS_PER_USER; index++) await login(harness, ADMIN_USER);
+		assert.equal(harness.handler.sessions.get(first.cookies[SESSION_COOKIE]), null, "phiên cũ nhất của chính người đó bị bỏ");
+		assert.ok(harness.handler.sessions.get(other.cookies[SESSION_COOKIE]), "phiên của người khác còn nguyên");
+	});
+
+	test("giới hạn tần suất: map đầy thì bỏ khoá cũ nhất (không chặn nhầm khoá mới); IPv6 gộp theo /64", () =>
+	{
+		const limiter = new RateLimiter(1, 60_000, 3);
+		for (const key of ["a", "b", "c", "d"]) assert.equal(limiter.allow(key, 0), true, key);
+		assert.equal(limiter.allow("d", 1), false);
+		assert.equal(rateLimitKey("::ffff:10.0.0.5"), "ip:10.0.0.5");
+		assert.equal(rateLimitKey("10.0.0.5"), "ip:10.0.0.5");
+		assert.equal(rateLimitKey("2001:db8:1:2:aaaa::1"), rateLimitKey("2001:0db8:0001:0002:bbbb:cccc:dddd:eeee"));
+		assert.notEqual(rateLimitKey("2001:db8:1:2::1"), rateLimitKey("2001:db8:1:3::1"));
+	});
+
+	test("chữ Discord: tên role hay kênh chứa ** hoặc dấu backtick không làm lồng thẻ sai; kênh người xem không thấy bị giấu tên", async () =>
+	{
+		const harness = createWebHarness([TEST_PAGE]);
+		addRole(harness.world, { id: "510000000000000099", name: "a**b`c" });
+		const out = discordText(harness.world.guild, "Role <@&510000000000000099> **đậm** và `mã`").html;
+		assert.equal(out, "Role <span class=\"mention\">@a**b`c</span> <strong>đậm</strong> và <code>mã</code>");
+
+		addChannel(harness.world, { id: "410000000000000099", name: "nhan-su-mat", type: ChannelType.GuildText, permissionsByMember: { [PLAIN_USER]: [] } });
+		const viewer = await harness.world.guild.members.fetch({ user: PLAIN_USER });
+		assert.equal(channelLabel(harness.world.guild, "410000000000000099", viewer), PRIVATE_CHANNEL_LABEL);
+		assert.equal(channelLabel(harness.world.guild, "410000000000000099"), "#nhan-su-mat");
+		assert.ok(!discordText(harness.world.guild, "Kênh <#410000000000000099>", viewer).html.includes("nhan-su-mat"));
 	});
 });
 

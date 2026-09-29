@@ -35,7 +35,7 @@ const ROLE_KEYS = ["adminRoleId", "pollCreatorRoleId"] as const;
 /** Danh sách dòng kiểu Discord ("• Nhãn: **giá trị**", mention) thành <ul>; bỏ dấu "• " đầu dòng. */
 function lines(ctx: GuildPageContext, texts: readonly string[]): RawHtml
 {
-	return html`<ul class="ov-list">${texts.map(text => html`<li>${discordText(ctx.guild, text.replace(/^• /u, ""))}</li>`)}</ul>`;
+	return html`<ul class="ov-list">${texts.map(text => html`<li>${discordText(ctx.guild, text.replace(/^• /u, ""), ctx.member)}</li>`)}</ul>`;
 }
 
 function settingTexts(settings: GuildSettings, keys: readonly (keyof GuildSettings)[]): string[]
@@ -109,8 +109,8 @@ function statsRow(ctx: GuildPageContext): RawHtml
 
 function auditRow(ctx: GuildPageContext, entry: AuditEntry): RawHtml
 {
-	const target = auditTargetLabel(ctx.guild, entry.action, entry.targetId);
-	const details = auditDetailsHtml(ctx.guild, entry.action, entry.details);
+	const target = auditTargetLabel(ctx.guild, entry.action, entry.targetId, ctx.member);
+	const details = auditDetailsHtml(ctx.guild, entry.action, entry.details, ctx.member);
 	return html`<tr>
 <td class="ov-time">${VN_TIME.format(entry.createdAt)}</td>
 <td>${userLabel(ctx.guild, entry.actorId)}</td>

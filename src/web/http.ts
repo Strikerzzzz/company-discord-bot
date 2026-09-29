@@ -107,6 +107,22 @@ export function safeEqual(a: string, b: string): boolean
 	return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/**
+ * Khoá giới hạn tần suất theo IP: IPv4 (kể cả dạng IPv6-mapped `::ffff:a.b.c.d`) giữ nguyên; IPv6 gộp theo /64, để một máy
+ * không lách giới hạn bằng cách xoay địa chỉ trong dải của mình.
+ */
+export function rateLimitKey(ip: string): string
+{
+	const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/iu.exec(ip);
+	if (mapped?.[1]) return `ip:${mapped[1]}`;
+	if (!ip.includes(":")) return `ip:${ip}`;
+	const [head = "", tail = ""] = ip.toLowerCase().split("::");
+	const left = head.length > 0 ? head.split(":") : [];
+	const right = tail.length > 0 ? tail.split(":") : [];
+	const groups = ip.includes("::") ? [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
+	return `ip6:${groups.slice(0, 4).map(group => group.replace(/^0+(?=.)/u, "")).join(":")}`;
+}
+
 /** Giới hạn tần suất đơn giản theo khoá (IP, phiên): tối đa `limit` lần trong mỗi cửa sổ `windowMs`. */
 export class RateLimiter
 {
@@ -115,14 +131,20 @@ export class RateLimiter
 	constructor(private readonly limit: number, private readonly windowMs: number, private readonly maxKeys = 10_000)
 	{}
 
-	/** true nếu còn được phép (và tính thêm một lần). */
+	/** true nếu còn được phép (và tính thêm một lần). Map đầy thì bỏ khoá cũ nhất, không chặn nhầm khoá mới. */
 	allow(key: string, now: number): boolean
 	{
 		const entry = this.hits.get(key);
 		if (!entry || entry.resetAt <= now)
 		{
 			if (this.hits.size >= this.maxKeys) this.sweep(now);
-			if (this.hits.size >= this.maxKeys) return false;
+			while (this.hits.size >= this.maxKeys)
+			{
+				const oldest = this.hits.keys().next().value;
+				if (oldest === undefined) break;
+				this.hits.delete(oldest);
+			}
+			this.hits.delete(key);
 			this.hits.set(key, { count: 1, resetAt: now + this.windowMs });
 			return true;
 		}

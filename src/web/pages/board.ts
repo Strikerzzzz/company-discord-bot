@@ -1,12 +1,12 @@
 // Trang "Bảng vàng" của web quản trị (DEC-030, DEC-039): đặt kênh hoặc tắt Bảng vàng. Cùng quy tắc với `/config board` và
 // trang Bảng vàng của `/config panel` (panelSetBoard): kênh lấy từ cache của server và phải đúng loại, người thao tác và bot
 // phải đủ quyền ở kênh (assertBoardChannelAccess), rồi dùng chung moveLiveBoard / turnOffLiveBoard.
-import { CategoryChannel, ChannelType, Guild } from "discord.js";
+import { CategoryChannel, ChannelType, Guild, GuildMember } from "discord.js";
 import { assertBoardChannelAccess, BoardChannel, botMemberOf, isBoardChannel, moveLiveBoard, turnOffLiveBoard } from "../../discord/configOps";
 import { channelMention } from "../../discord/format";
 import { LiveBoard } from "../../modules/live-board/LiveBoardService";
 import { UserError } from "../../shared/errors";
-import { channelLabel } from "../format";
+import { canViewChannel, channelLabel } from "../format";
 import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
@@ -38,13 +38,13 @@ function byPosition(a: { rawPosition: number; id: string }, b: { rawPosition: nu
 }
 
 /** Kênh đặt được Bảng vàng, nhóm theo category và sắp theo vị trí như danh sách kênh của Discord. */
-function boardChannelGroups(guild: Guild): ChannelGroup[]
+function boardChannelGroups(guild: Guild, viewer: GuildMember): ChannelGroup[]
 {
 	const loose: BoardChannel[] = [];
 	const byCategory = new Map<string, ChannelGroup & { category: CategoryChannel }>();
 	for (const channel of guild.channels.cache.values())
 	{
-		if (!isBoardChannel(channel)) continue;
+		if (!isBoardChannel(channel) || !canViewChannel(guild, channel.id, viewer)) continue;
 		const parent = channel.parentId === null ? undefined : guild.channels.cache.get(channel.parentId);
 		if (parent?.type !== ChannelType.GuildCategory)
 		{
@@ -61,9 +61,9 @@ function boardChannelGroups(guild: Guild): ChannelGroup[]
 	return groups;
 }
 
-function channelOptions(guild: Guild, selectedId: string | null): { options: RawHtml; count: number }
+function channelOptions(guild: Guild, viewer: GuildMember, selectedId: string | null): { options: RawHtml; count: number }
 {
-	const groups = boardChannelGroups(guild);
+	const groups = boardChannelGroups(guild, viewer);
 	const option = (channel: BoardChannel): RawHtml =>
 		html`<option value="${channel.id}"${channel.id === selectedId ? html` selected` : ""}>${channelLabel(guild, channel.id)}</option>`;
 	const hasSelected = groups.some(group => group.channels.some(channel => channel.id === selectedId));
@@ -74,7 +74,7 @@ ${groups.map(group => group.category === null
 	return { options, count: groups.reduce((total, group) => total + group.channels.length, 0) };
 }
 
-function statusCard(guild: Guild, board: LiveBoard | null): RawHtml
+function statusCard(guild: Guild, viewer: GuildMember, board: LiveBoard | null): RawHtml
 {
 	if (board === null)
 	{
@@ -82,7 +82,7 @@ function statusCard(guild: Guild, board: LiveBoard | null): RawHtml
 	}
 	const missing = !guild.channels.cache.has(board.channelId);
 	return html`<section class="card"><h2>Trạng thái</h2>
-<p><span class="badge ok">Đang bật</span> ở <strong>${channelLabel(guild, board.channelId)}</strong>. Bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.</p>
+<p><span class="badge ok">Đang bật</span> ở <strong>${channelLabel(guild, board.channelId, viewer)}</strong>. Bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.</p>
 ${missing ? html`<div class="warn-box">⚠️ Bot không còn thấy kênh này (đã bị xoá hoặc bot mất quyền xem). Hãy chọn kênh khác hoặc tắt Bảng vàng.</div>` : ""}
 ${!missing && board.messageId === null ? html`<p class="muted">Chưa có message bảng xếp hạng ở kênh này; bot sẽ đăng ở lần cập nhật định kỳ tiếp theo.</p>` : ""}
 </section>`;
@@ -92,12 +92,12 @@ function renderBoard(ctx: GuildPageContext): WebResponse
 {
 	const board = ctx.deps.services.liveBoards.get(ctx.guild.id);
 	const current = board?.channelId ?? null;
-	const { options, count } = channelOptions(ctx.guild, current);
+	const { options, count } = channelOptions(ctx.guild, ctx.member, current);
 	const offForm = board === null ? "" : html`<section class="card"><h2>Tắt Bảng vàng</h2>
 <form method="post" action="${guildUrl(ctx, OFF_PATH)}" class="actions">${csrfField(ctx)}
 <button class="btn btn-danger" type="submit">Tắt Bảng vàng</button>
 <span class="muted">Bot ngừng cập nhật và xoá message bảng xếp hạng ở kênh hiện tại.</span></form></section>`;
-	const body = html`${statusCard(ctx.guild, board)}
+	const body = html`${statusCard(ctx.guild, ctx.member, board)}
 <section class="card"><h2>${board === null ? "Bật Bảng vàng" : "Đổi kênh"}</h2>
 <form method="post" action="${guildUrl(ctx, PATH)}">${csrfField(ctx)}
 <div class="field bd-field"><label for="bd-channel">Kênh Bảng vàng</label>

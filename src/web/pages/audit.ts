@@ -1,6 +1,6 @@
 // Trang "Nhật ký quản trị" của web quản trị (DEC-039): các thao tác quản trị mới nhất (AuditService.list), như `/admin audit`
 // nhưng hiện tên kênh, role, người thay cho mention, và thời gian theo giờ Việt Nam.
-import { Guild } from "discord.js";
+import { Guild, GuildMember } from "discord.js";
 import { auditActionLabel, auditTargetKind } from "../../discord/views/admin";
 import { AuditEntry } from "../../modules/audit/AuditService";
 import { auditDetailsHtml, channelLabel, roleLabel, userLabel } from "../format";
@@ -33,7 +33,7 @@ function userCell(guild: Guild, userId: string): RawHtml
 }
 
 /** Đối tượng của mục audit bằng tên (kênh, role, người); ID khác hiện nguyên văn; không có thì gạch ngang. */
-function targetCell(guild: Guild, entry: AuditEntry): RawHtml
+function targetCell(guild: Guild, entry: AuditEntry, viewer: GuildMember): RawHtml
 {
 	const { targetId } = entry;
 	if (targetId === null) return html`<span class="muted">—</span>`;
@@ -41,19 +41,19 @@ function targetCell(guild: Guild, entry: AuditEntry): RawHtml
 	{
 	case "user": return userCell(guild, targetId);
 	case "role": return html`${roleLabel(guild, targetId)}`;
-	case "channel": return html`${channelLabel(guild, targetId)}`;
+	case "channel": return html`${channelLabel(guild, targetId, viewer)}`;
 	case "none": return html`${targetId}`;
 	}
 }
 
-function entryRow(guild: Guild, entry: AuditEntry): RawHtml
+function entryRow(guild: Guild, entry: AuditEntry, viewer: GuildMember): RawHtml
 {
-	const details = auditDetailsHtml(guild, entry.action, entry.details);
+	const details = auditDetailsHtml(guild, entry.action, entry.details, viewer);
 	return html`<tr>
 <td class="au-time">${TIME_FORMAT.format(entry.createdAt)}</td>
 <td>${userCell(guild, entry.actorId)}</td>
 <td>${auditActionLabel(entry.action)}</td>
-<td>${targetCell(guild, entry)}</td>
+<td>${targetCell(guild, entry, viewer)}</td>
 <td class="au-details">${details ?? html`<span class="muted">—</span>`}</td>
 </tr>`;
 }
@@ -69,7 +69,7 @@ function renderAudit(ctx: GuildPageContext): WebResponse
 		? html`<p class="muted">${NO_AUDIT_ENTRIES}.</p>`
 		: html`<div class="au-wrap"><table class="table au-table">
 <thead><tr><th>Thời gian</th><th>Người thao tác</th><th>Hành động</th><th>Đối tượng</th><th>Chi tiết</th></tr></thead>
-<tbody>${entries.map(entry => entryRow(ctx.guild, entry))}</tbody>
+<tbody>${entries.map(entry => entryRow(ctx.guild, entry, ctx.member))}</tbody>
 </table></div>`;
 	const body = html`<section class="card">
 <p class="au-limits">Hiện ${entries.length} mục mới nhất · Số mục:${limitLinks}</p>

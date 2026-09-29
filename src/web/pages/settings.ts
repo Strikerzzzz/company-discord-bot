@@ -43,7 +43,7 @@ const XP_GROUP: FieldGroup = {
 		{ key: "minMessageLength", label: "Độ dài tin tối thiểu (ký tự)", hint: "Tin ngắn hơn số ký tự này không được XP." },
 		{ key: "duplicateWindowSeconds", label: "Khoảng chống trùng (giây)", hint: "Tin trùng tin trước đó của cùng người trong khoảng này không được XP." },
 	],
-	note: "XP hoặc cooldown riêng của từng kênh chỉnh bằng lệnh /config channel set; kênh có giá trị riêng thì dùng giá trị riêng đó.",
+	note: "XP hoặc cooldown riêng của từng kênh chỉnh ở trang Kênh tính XP (hoặc lệnh /config channel set); kênh có giá trị riêng thì dùng giá trị riêng đó.",
 };
 
 const POLL_GROUP: FieldGroup = {

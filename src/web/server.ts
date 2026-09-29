@@ -11,6 +11,7 @@ import {
 	MAX_FORM_BYTES,
 	parseCookies,
 	RateLimiter,
+	rateLimitKey,
 	redirect,
 	safeEqual,
 	SECURITY_HEADERS,
@@ -25,8 +26,12 @@ import { PAGE_MODULES } from "./pages";
 import { randomToken, SESSION_TTL_MS, SessionStore, WebSession } from "./session";
 import { GuildPageContext, GuildRoute, PageModule, WebDeps } from "./types";
 
-export const SESSION_COOKIE = "sid";
-export const STATE_COOKIE = "oauth_state";
+/**
+ * Tên cookie có tiền tố riêng của bot: server dùng chung với dịch vụ khác, mà trình duyệt gửi cookie theo host chứ không theo
+ * cổng, nên tên chung như "sid" dễ bị app khác đọc nhầm hoặc ghi đè (review bảo mật Phase 16). Với HTTPS thêm tiền tố `__Host-`.
+ */
+export const SESSION_COOKIE = "ezbot_sid";
+export const STATE_COOKIE = "ezbot_oauth_state";
 const STATE_TTL_SECONDS = 600;
 /** `/g/<guildId>` và phần đường dẫn con (chỉ chữ thường, số, gạch ngang). */
 const GUILD_PATH = /^\/g\/(\d{17,20})((?:\/[a-z0-9-]+)*)$/u;
@@ -41,8 +46,21 @@ const LOGIN_MESSAGES: Readonly<Record<string, string>> = {
 	noadmin: "Tài khoản Discord này không có quyền admin bot ở server nào bot đang phục vụ (cần Manage Server hoặc role admin bot).",
 	busy: "Bạn thao tác quá nhanh. Hãy đợi một phút rồi thử lại.",
 	starting: "Bot đang khởi động, chưa đăng nhập được. Hãy thử lại sau ít giây.",
+	discord: "Không kiểm tra được quyền với Discord (Discord đang lỗi hoặc mạng chậm). Hãy thử lại sau ít phút.",
+	gone: "Tài khoản của bạn không còn quyền admin bot ở server nào; phiên đăng nhập đã bị huỷ.",
 	out: "Bạn đã đăng xuất.",
 };
+
+const DISCORD_UNAVAILABLE = "Không kiểm tra được quyền với Discord (Discord đang lỗi hoặc mạng chậm). Hãy thử lại sau ít phút.";
+
+/** Discord không trả lời được khi lấy thông tin thành viên (khác với "không phải thành viên"). */
+class DiscordUnavailableError extends Error
+{}
+
+function isNotFound(error: unknown): boolean
+{
+	return typeof error === "object" && error !== null && "status" in error && error.status === 404;
+}
 
 export interface WebHandler
 {
@@ -55,6 +73,14 @@ function withSecurityHeaders(response: WebResponse): WebResponse
 	return { ...response, headers: { ...SECURITY_HEADERS, ...response.headers } };
 }
 
+/** 405 kèm header Allow (chỉ GET và POST; HEAD chỉ cho /healthz). */
+function methodNotAllowed(): WebResponse
+{
+	const response = textResponse("Phương thức không được hỗ trợ.", 405);
+	response.headers.Allow = "GET, POST";
+	return response;
+}
+
 function messagePage(title: string, message: string, status: number): WebResponse
 {
 	return renderPlainPage(title, html`<div class="login"><div class="card"><h1>${title}</h1><p>${message}</p>
@@ -63,7 +89,7 @@ function messagePage(title: string, message: string, status: number): WebRespons
 
 function loginPage(reason: string | null): WebResponse
 {
-	const message = reason === null ? null : LOGIN_MESSAGES[reason] ?? null;
+	const message = reason !== null && Object.hasOwn(LOGIN_MESSAGES, reason) ? LOGIN_MESSAGES[reason] ?? null : null;
 	return renderPlainPage("Đăng nhập", html`<div class="login"><div class="card">
 <h1>⚙️ Quản trị bot</h1>
 <p class="lead">Chỉ admin bot của server (có quyền Manage Server hoặc role admin bot) mới vào được.</p>
@@ -73,16 +99,20 @@ ${message ? html`<div class="flash ${reason === "out" ? "ok" : "error"}">${messa
 </div></div>`);
 }
 
-/** Lấy lại thông tin thành viên từ Discord (không dùng cache, để quyền luôn mới nhất); null nếu không còn trong server hoặc lỗi. */
+/**
+ * Lấy lại thông tin thành viên từ Discord (không dùng cache, để quyền luôn mới nhất). null nếu Discord báo không có (404: không
+ * còn trong server); lỗi khác (Discord lỗi, mạng) thì ném DiscordUnavailableError để không báo nhầm là "không có quyền".
+ */
 async function fetchMember(guild: Guild, userId: string): Promise<GuildMember | null>
 {
 	try
 	{
 		return await guild.members.fetch({ user: userId, force: true });
 	}
-	catch
+	catch (error)
 	{
-		return null;
+		if (isNotFound(error)) return null;
+		throw new DiscordUnavailableError(DISCORD_UNAVAILABLE, { cause: error });
 	}
 }
 
@@ -97,10 +127,14 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 	);
 	const authLimiter = new RateLimiter(30, 60_000);
 	const postLimiter = new RateLimiter(120, 60_000);
+	const getLimiter = new RateLimiter(600, 60_000);
 	const routes: readonly GuildRoute[] = modules.flatMap(module => module.routes);
 	const css = [BASE_CSS, ...modules.map(module => module.css ?? "")].join("\n");
 	const secure = deps.config.baseUrl.startsWith("https:");
 	const expectedHost = new URL(deps.config.baseUrl).host.toLowerCase();
+	const sessionCookie = secure ? `__Host-${SESSION_COOKIE}` : SESSION_COOKIE;
+	const stateCookie = secure ? `__Host-${STATE_COOKIE}` : STATE_COOKIE;
+	const statePath = secure ? "/" : "/auth";
 
 	function isAdminMember(guild: Guild, member: GuildMember): boolean
 	{
@@ -134,17 +168,40 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		return serializeCookie(name, "", { maxAgeSeconds: 0, path, secure });
 	}
 
-	function home(req: WebRequest, session: WebSession | null): WebResponse
+	/** Server đầu tiên (theo DISCORD_GUILD_IDS) mà người dùng là admin bot; null nếu không có. Ném DiscordUnavailableError khi Discord lỗi. */
+	async function firstAdminGuild(userId: string): Promise<string | null>
+	{
+		for (const guildId of deps.guildIds)
+		{
+			const guild = servedGuild(guildId);
+			const member = guild ? await fetchMember(guild, userId) : null;
+			if (guild && member && isAdminMember(guild, member)) return guildId;
+		}
+		return null;
+	}
+
+	/** Huỷ phiên của request (người dùng không còn quyền) và trả cookie xoá phiên kèm response. */
+	function dropSession(req: WebRequest, response: WebResponse): WebResponse
+	{
+		sessions.destroy(req.cookies.get(sessionCookie));
+		response.cookies.push(clearCookie(sessionCookie));
+		return response;
+	}
+
+	async function home(req: WebRequest, session: WebSession | null): Promise<WebResponse>
 	{
 		if (!session) return loginPage(req.query.get("loi"));
-		const first = deps.guildIds.find(id => deps.client.guilds.cache.has(id));
-		if (!first) return messagePage("Bot đang khởi động", "Bot chưa sẵn sàng hoặc không còn ở server nào. Hãy thử lại sau ít giây.", 503);
-		return redirect(`/g/${first}`);
+		if (!deps.guildIds.some(id => deps.client.guilds.cache.has(id)))
+		{
+			return messagePage("Bot đang khởi động", "Bot chưa sẵn sàng hoặc không còn ở server nào. Hãy thử lại sau ít giây.", 503);
+		}
+		const guildId = await firstAdminGuild(session.userId);
+		return guildId === null ? dropSession(req, redirect("/?loi=gone")) : redirect(`/g/${guildId}`);
 	}
 
 	function login(req: WebRequest): WebResponse
 	{
-		if (!authLimiter.allow(`ip:${req.ip}`, deps.clock.now())) return redirect("/?loi=busy");
+		if (!authLimiter.allow(rateLimitKey(req.ip), deps.clock.now())) return redirect("/?loi=busy");
 		const state = randomToken();
 		let location: string;
 		try
@@ -156,7 +213,7 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 			return redirect("/?loi=starting");
 		}
 		const response = redirect(location);
-		response.cookies.push(serializeCookie(STATE_COOKIE, state, { maxAgeSeconds: STATE_TTL_SECONDS, path: "/auth", secure }));
+		response.cookies.push(serializeCookie(stateCookie, state, { maxAgeSeconds: STATE_TTL_SECONDS, path: statePath, secure }));
 		return response;
 	}
 
@@ -165,13 +222,13 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		const fail = (reason: string): WebResponse =>
 		{
 			const response = redirect(`/?loi=${reason}`);
-			response.cookies.push(clearCookie(STATE_COOKIE, "/auth"));
+			response.cookies.push(clearCookie(stateCookie, statePath));
 			return response;
 		};
-		if (!authLimiter.allow(`ip:${req.ip}`, deps.clock.now())) return fail("busy");
+		if (!authLimiter.allow(rateLimitKey(req.ip), deps.clock.now())) return fail("busy");
 		if (req.query.has("error")) return fail("denied");
 		const state = req.query.get("state") ?? "";
-		const expected = req.cookies.get(STATE_COOKIE) ?? "";
+		const expected = req.cookies.get(stateCookie) ?? "";
 		const code = req.query.get("code") ?? "";
 		if (expected.length === 0 || !safeEqual(state, expected) || !OAUTH_CODE.test(code)) return fail("expired");
 
@@ -186,16 +243,16 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 			return fail("failed");
 		}
 
-		let allowedGuild: string | null = null;
-		for (const guildId of deps.guildIds)
+		let allowedGuild: string | null;
+		try
 		{
-			const guild = servedGuild(guildId);
-			const member = guild ? await fetchMember(guild, identity.id) : null;
-			if (guild && member && isAdminMember(guild, member))
-			{
-				allowedGuild = guildId;
-				break;
-			}
+			allowedGuild = await firstAdminGuild(identity.id);
+		}
+		catch (error)
+		{
+			if (!(error instanceof DiscordUnavailableError)) throw error;
+			logger.warn("Đăng nhập web: không lấy được thông tin thành viên từ Discord:", error.cause);
+			return fail("discord");
 		}
 		if (allowedGuild === null)
 		{
@@ -206,38 +263,57 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		const { token } = sessions.create(identity.id, identity.displayName);
 		logger.info(`Đăng nhập web: người dùng "${identity.id}".`);
 		const response = redirect(`/g/${allowedGuild}`);
-		response.cookies.push(serializeCookie(SESSION_COOKIE, token, { maxAgeSeconds: Math.floor(SESSION_TTL_MS / 1000), secure }));
-		response.cookies.push(clearCookie(STATE_COOKIE, "/auth"));
+		response.cookies.push(serializeCookie(sessionCookie, token, { maxAgeSeconds: Math.floor(SESSION_TTL_MS / 1000), secure }));
+		response.cookies.push(clearCookie(stateCookie, statePath));
 		return response;
+	}
+
+	/** Origin (nếu trình duyệt gửi) phải là chính trang; áp cho mọi POST, kể cả khi chưa có phiên (đăng xuất). */
+	function originAllowed(req: WebRequest): boolean
+	{
+		const origin = req.headers.origin;
+		return origin === undefined || origin === deps.config.baseUrl;
 	}
 
 	/** Kiểm tra form POST: có form, token CSRF đúng, Origin (nếu trình duyệt gửi) là chính trang. */
 	function postAllowed(req: WebRequest, session: WebSession): boolean
 	{
-		const origin = req.headers.origin;
-		if (origin !== undefined && origin !== deps.config.baseUrl) return false;
+		if (!originAllowed(req)) return false;
 		const token = req.form?.get("_csrf") ?? "";
 		return token.length > 0 && safeEqual(token, session.csrf);
 	}
 
 	function logout(req: WebRequest, session: WebSession | null): WebResponse
 	{
-		if (session && !postAllowed(req, session)) return messagePage("Không hợp lệ", "Yêu cầu đăng xuất không hợp lệ. Hãy tải lại trang rồi thử lại.", 403);
-		sessions.destroy(req.cookies.get(SESSION_COOKIE));
-		const response = redirect("/?loi=out");
-		response.cookies.push(clearCookie(SESSION_COOKIE));
-		return response;
+		const invalid = session ? !postAllowed(req, session) : !originAllowed(req);
+		if (invalid) return messagePage("Không hợp lệ", "Yêu cầu đăng xuất không hợp lệ. Hãy tải lại trang rồi thử lại.", 403);
+		return dropSession(req, redirect("/?loi=out"));
 	}
 
 	async function guildRoute(req: WebRequest, session: WebSession | null, guildId: string, subpath: string): Promise<WebResponse>
 	{
 		if (!session) return req.method === "GET" ? redirect("/") : messagePage("Chưa đăng nhập", "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.", 403);
+		if (req.method === "GET" && !getLimiter.allow(`user:${session.userId}`, deps.clock.now()))
+		{
+			return messagePage("Quá nhanh", "Bạn thao tác quá nhanh. Hãy đợi một phút rồi thử lại.", 429);
+		}
 		const guild = servedGuild(guildId);
 		if (!guild) return messagePage("Không tìm thấy", "Bot không phục vụ server này, hoặc đang khởi động.", 404);
-		const member = await fetchMember(guild, session.userId);
+		let member: GuildMember | null;
+		try
+		{
+			member = await fetchMember(guild, session.userId);
+		}
+		catch (error)
+		{
+			if (!(error instanceof DiscordUnavailableError)) throw error;
+			logger.warn(`Trang web: không lấy được thông tin thành viên từ Discord ở server "${guildId}":`, error.cause);
+			return messagePage("Tạm thời không kiểm tra được quyền", DISCORD_UNAVAILABLE, 503);
+		}
 		if (!member || !isAdminMember(guild, member))
 		{
-			return messagePage("Không có quyền", "Tài khoản của bạn không (còn) có quyền admin bot ở server này.", 403);
+			// Mất quyền (hoặc rời server): huỷ phiên luôn, để cookie cũ không còn dùng được và không gọi Discord mỗi lần bấm.
+			return dropSession(req, messagePage("Không có quyền", "Tài khoản của bạn không (còn) có quyền admin bot ở server này. Phiên đăng nhập đã bị huỷ.", 403));
 		}
 		if (req.method === "POST")
 		{
@@ -273,14 +349,15 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 
 	async function route(req: WebRequest): Promise<WebResponse>
 	{
-		if (req.method === "GET" && req.path === "/healthz") return textResponse("ok");
+		if ((req.method === "GET" || req.method === "HEAD") && req.path === "/healthz") return textResponse("ok");
+		if (req.method === "HEAD") return methodNotAllowed();
 		if ((req.headers.host ?? "").toLowerCase() !== expectedHost)
 		{
 			return textResponse("Sai địa chỉ truy cập: hãy mở trang bằng địa chỉ đã cấu hình (WEB_BASE_URL).", 421);
 		}
 		if (req.method === "GET" && req.path === "/static/app.css") return textResponse(css, 200, "text/css; charset=utf-8");
 
-		const session = sessions.get(req.cookies.get(SESSION_COOKIE));
+		const session = sessions.get(req.cookies.get(sessionCookie));
 		if (req.method === "GET" && req.path === "/") return home(req, session);
 		if (req.method === "GET" && req.path === "/auth/login") return login(req);
 		if (req.method === "GET" && req.path === "/auth/callback") return callback(req);
@@ -345,7 +422,7 @@ async function readBody(message: IncomingMessage, limit: number): Promise<string
 export async function readRequest(message: IncomingMessage): Promise<WebRequest>
 {
 	const method = message.method ?? "GET";
-	if (method !== "GET" && method !== "POST") throw new HttpError(405, "Phương thức không được hỗ trợ.");
+	if (method !== "GET" && method !== "POST" && method !== "HEAD") throw new HttpError(405, "Phương thức không được hỗ trợ.");
 	const url = new URL(message.url ?? "/", "http://localhost");
 	const headers = headerRecord(message);
 	let form: URLSearchParams | null = null;
@@ -388,6 +465,7 @@ async function serve(handler: WebHandler, message: IncomingMessage, res: ServerR
 		// Body chưa đọc hết (quá lớn, sai loại): đóng kết nối để client không gửi request kế tiếp trên kết nối dở dang.
 		const response = withSecurityHeaders(textResponse(text, status));
 		response.headers.Connection = "close";
+		if (status === 405) response.headers.Allow = "GET, POST";
 		send(res, response);
 		return;
 	}

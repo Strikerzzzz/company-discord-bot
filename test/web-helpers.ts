@@ -72,6 +72,8 @@ export interface WebWorld
 	roles: Collection<string, Role>;
 	channels: Collection<string, object>;
 	members: Map<string, FakeMemberSpec>;
+	/** true: Discord giả lỗi 503 khi lấy thông tin thành viên. */
+	discordDown: boolean;
 }
 
 function memberObject(world: WebWorld, spec: FakeMemberSpec): object
@@ -99,6 +101,7 @@ export function addRole(world: WebWorld, spec: FakeRoleSpec): void
 		name: spec.name,
 		managed: spec.managed ?? false,
 		position: spec.position ?? 1,
+		rawPosition: spec.position ?? 1,
 		color: spec.color ?? 0,
 		hexColor: `#${(spec.color ?? 0).toString(16).padStart(6, "0")}`,
 		permissions: new PermissionsBitField([]),
@@ -151,15 +154,16 @@ export function createWorld(): WebWorld
 			me: null as object | null,
 			fetch: (options: { user: string }): Promise<object> =>
 			{
+				if (world.discordDown) return Promise.reject(Object.assign(new Error("Service Unavailable"), { status: 503 }));
 				const spec = members.get(options.user);
-				if (!spec) return Promise.reject(new Error("Unknown Member"));
+				if (!spec) return Promise.reject(Object.assign(new Error("Unknown Member"), { status: 404, code: 10007 }));
 				const member = memberObject(world, spec);
 				memberCache.set(spec.id, member);
 				return Promise.resolve(member);
 			},
 		},
 	};
-	const world: WebWorld = { guild: guild as unknown as Guild, roles, channels, members };
+	const world: WebWorld = { guild: guild as unknown as Guild, roles, channels, members, discordDown: false };
 
 	addRole(world, { id: GUILD, name: "@everyone", position: 0 });
 	addRole(world, { id: ROLE_ADMIN_BOT, name: "Admin bot", position: 5 });
