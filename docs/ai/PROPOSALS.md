@@ -43,6 +43,9 @@
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
 | PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | REJECTED |
 | PROP-033 | Bảng điều khiển cấu hình chung `/config panel` | MEDIUM | APPROVED |
+| PROP-034 | Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot | MEDIUM | PROPOSED |
+| PROP-035 | Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server | LOW | PROPOSED |
+| PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
 
 ---
 
@@ -1367,3 +1370,73 @@ Giới hạn của Discord: một menu chọn tối đa 25 mục, một message 
 ### Trạng thái
 
 APPROVED (2026-09-29, DEC-037), kèm chế độ "chỉ kênh được bật". Đang làm ở Phase 15.
+
+## PROP-034 — Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot
+
+### Vấn đề
+
+Người chỉ là admin nhờ role admin bot (không có Manage Server) có thể bỏ chọn role đó, hoặc chọn một role mình không có. Thao tác được lưu ngay, và người đó mất quyền admin bot lập tức; chỉ người có Manage Server mới khôi phục được. Lệnh gõ `/config admin-role` vốn đã cho làm vậy, nhưng trên `/config panel` ô chọn điền sẵn role và cho bỏ chọn, nên bấm nhầm dễ hơn nhiều. Review bảo mật Phase 15 đã xác minh bằng chạy thử (T1).
+
+### Đề xuất
+
+Khi người thao tác không có Manage Server (theo `member.permissions`, LL-019) và giá trị mới làm họ mất quyền admin bot, tức role mới là null hoặc là role họ không có: từ chối, kèm giải thích và cách làm đúng (nhờ người có Manage Server). Có thể thay bằng một bước xác nhận (nút "Tôi hiểu, vẫn đổi"). Áp dụng cho cả bảng lẫn lệnh gõ.
+
+### Tác động
+
+- **Code:** `config.ts` (`panelSettingRole`, `updateAdminRole`), test.
+- **Database / Security:** không đổi schema; chỉ thu hẹp một thao tác tự gây hại.
+- **UX:** admin chỉ có role admin bot không tự bỏ được quyền của mình.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Chạm vào quy tắc phân quyền (DEC-021, DEC-034; PROP-032 đã bị từ chối vì người phụ trách chỉ có role admin bot), nên cần người phụ trách quyết.
+
+### Trạng thái
+
+PROPOSED (2026-09-29).
+
+## PROP-035 — Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server
+
+### Vấn đề
+
+Có từ trước Phase 15. Role team bị xoá trên Discord vẫn nằm trong danh sách team và chiếm một trong 25 chỗ, nhưng không gỡ được: menu chọn role và option role của lệnh gõ chỉ liệt kê role còn tồn tại. Tương tự, cấu hình riêng (`channel_settings`) của kênh đã bị xoá không reset được. Từ Phase 15, bảng cấu hình đã hiện cảnh báo "không còn trong server" cho role team, role admin, role tạo vote và kênh Bảng vàng, nhưng chưa có nút gỡ.
+
+### Đề xuất
+
+Trên bảng cấu hình thêm nút "🧹 Dọn cấu hình không còn dùng": gỡ role team, xoá role admin hoặc role tạo vote, tắt Bảng vàng, xoá cấu hình riêng của kênh, cho các ID không còn trong cache của server. Mỗi mục ghi một dòng audit. Có hỏi xác nhận, kèm danh sách sẽ gỡ.
+
+### Tác động
+
+- **Code:** `configPanel.ts` (thao tác mới), `config.ts`, `TeamService`/`GuildConfigService` (xoá theo danh sách), test.
+- **Database:** không đổi schema; chỉ xoá dòng cấu hình (không đụng ledger, DEC-027).
+- **Security:** chỉ admin; dựa vào cache của guild (bot có intent Guilds nên role và kênh luôn có trong cache).
+
+### Độ ưu tiên
+
+LOW
+
+### Trạng thái
+
+PROPOSED (2026-09-29).
+
+## PROP-036 — Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh
+
+### Vấn đề
+
+Mỗi lần đặt kênh Bảng vàng (lệnh `/config board` hay menu trên bảng), bot xoá message cũ và đăng message mới kèm 3 ảnh, tốn khoảng 0,3–0,4 giây CPU và dùng chung 2 chỗ vẽ với `/rank`. Bấm liên tục 20 lần sinh 20 lượt đăng và xoá ở kênh công khai, và `/rank` chậm đi vài giây. Admin là người đáng tin nên đây không phải lỗi bảo mật (review Phase 15, góp ý 1).
+
+### Đề xuất
+
+Cooldown 10–30 giây mỗi server cho việc đổi kênh Bảng vàng, hoặc gộp các lần refresh đang chờ của cùng server.
+
+### Độ ưu tiên
+
+LOW
+
+### Trạng thái
+
+PROPOSED (2026-09-29).

@@ -170,6 +170,40 @@ describe("TeamService", () =>
 		assert.deepEqual(deps.teams.resolveTeams(GUILD, []), []);
 	});
 
+	test("thêm/bỏ nhiều team một lần: bỏ trùng, role đã đúng trạng thái là unchanged, audit từng role, vượt giới hạn thì không thêm gì", () =>
+	{
+		const { deps } = createTestContext();
+		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+		assert.deepEqual(deps.teams.addMany(GUILD, [ROLE_FRONTEND, ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER], ADMIN), {
+			changed: [ROLE_FRONTEND, ROLE_OTHER],
+			unchanged: [ROLE_BACKEND],
+		});
+		assert.deepEqual(deps.teams.list(GUILD).sort(), [ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER].sort());
+		assert.deepEqual(deps.teams.removeMany(GUILD, [ROLE_OTHER, "600000000000000099"], ADMIN), { changed: [ROLE_OTHER], unchanged: ["600000000000000099"] });
+		assert.deepEqual(deps.audit.list(GUILD, 10).map(entry => entry.action), ["team.remove", "team.add", "team.add", "team.add"]);
+
+		const many = Array.from({ length: MAX_TEAMS }, (_, index) => `6000000000000001${String(index).padStart(2, "0")}`);
+		assert.throws(() => deps.teams.addMany(GUILD, many, ADMIN), /Bot chưa thêm role nào/);
+		assert.equal(deps.teams.list(GUILD).length, 2);
+	});
+
+	test("thêm nhiều team là một transaction: lỗi giữa chừng thì không role nào được lưu, không audit nào", () =>
+	{
+		const { deps } = createTestContext();
+		const record = deps.audit.record.bind(deps.audit);
+		let calls = 0;
+		deps.audit.record = (...args: Parameters<typeof record>): ReturnType<typeof record> =>
+		{
+			calls += 1;
+			if (calls === 2) throw new Error("đĩa đầy (giả lập)");
+			return record(...args);
+		};
+		assert.throws(() => deps.teams.addMany(GUILD, [ROLE_BACKEND, ROLE_FRONTEND], ADMIN), /đĩa đầy/);
+		deps.audit.record = record;
+		assert.deepEqual(deps.teams.list(GUILD), []);
+		assert.deepEqual(deps.audit.list(GUILD, 10), []);
+	});
+
 	test(`giới hạn tối đa ${MAX_TEAMS} team`, () =>
 	{
 		const { deps } = createTestContext();

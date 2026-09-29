@@ -747,7 +747,7 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 		const harness = createHarness();
 		const calls = await dispatch(harness, button({ type: "announce", enabled: true }));
 		assert.deepEqual(methods(calls), ["update"]);
-		assertPanel(harness, calls[0], "xp", "Không có gì thay đổi: • Thông báo lên level: **Bật** sẵn rồi.");
+		assertPanel(harness, calls[0], "xp", "Không có gì thay đổi:\n• Thông báo lên level: **Bật**");
 		assert.deepEqual(audits(harness.context, "config.update"), []);
 	});
 
@@ -847,6 +847,16 @@ describe("bảng cấu hình: role tạo vote và role admin bot", () =>
 		const again = await dispatch(harness, { kind: "role", id: id({ type: "pollRole", drawnRoleId: null }), values: [] });
 		assertPanel(harness, again[0], "poll", "Không có gì thay đổi:\n• Role tạo vote: **chưa đặt (chỉ admin)**");
 		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ pollCreatorRoleId: ROLE_A }, { pollCreatorRoleId: null }]);
+	});
+
+	test("chọn lại đúng role đang đặt (bảng cũ hoặc bấm nhầm): không ghi, không audit, báo không có gì thay đổi", async () =>
+	{
+		const harness = createHarness();
+		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_A }, USER_A);
+		const same = await dispatch(harness, { kind: "role", id: id({ type: "adminRole", drawnRoleId: null }), values: [ROLE_A] });
+		assert.deepEqual(methods(same), ["update"]);
+		assertPanel(harness, same[0], "board", `Không có gì thay đổi:\n• Role admin bot: **<@&${ROLE_A}>**`);
+		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ adminRoleId: ROLE_A }]);
 	});
 
 	test("bỏ chọn trên bảng cũ (role đã bị đổi sau khi vẽ): vẽ lại bảng theo dữ liệu mới, báo riêng, không xoá", async () =>

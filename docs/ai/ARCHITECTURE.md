@@ -174,7 +174,7 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
     | `cfgui:nav` | StringSelect, mọi trang | Chuyển trang (giá trị là trang), không ghi gì |
     | `cfgui:mode:<all\|selected>` | Nút, `channels` | Đặt chế độ kênh; đã đúng chế độ thì không ghi |
     | `cfgui:ch:<on\|off>` | ChannelSelect ≤ 25 (`XP_CHANNEL_TYPES`), `channels` | `setChannelsXpEnabled` bật hoặc tắt |
-    | `cfgui:team:<add\|del>` | RoleSelect nhiều role, `teams` | Thêm hoặc bỏ team |
+    | `cfgui:team:<add\|del>` | RoleSelect nhiều role, `teams` | Thêm hoặc bỏ team (`TeamService.addMany`/`removeMany`, một transaction, kiểm tra `MAX_TEAMS` bên trong) |
     | `cfgui:ann:<on\|off>` | Nút, `xp` | Đặt thông báo lên level |
     | `cfgui:xpform` → `cfgui:xpsave:<xp>.<cooldown>.<độ dài>.<chống trùng>` | Nút mở form 4 ô → form, `xp` | Lưu các ô đã sửa |
     | `cfgui:pollform` → `cfgui:pollsave:<xp vote>.<giới hạn ngày>.<điểm ghi nhận>` | Nút mở form 3 ô → form, `poll` | Lưu các ô đã sửa |
@@ -184,8 +184,11 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
     | `cfgui:tier` | Nút, `board` | Mở `/config tier panel` trong một tin nhắn trả lời riêng mới |
 
   - customId mang **trạng thái lúc vẽ** để bảng cũ không ghi đè thay đổi mới hơn (như `tierui`):
-    - form mang giá trị lúc mở (`drawn`, `XpFormValues`/`PollFormValues`). Khi lưu, ô có giá trị bằng `drawn` thì không ghi, nên hai admin sửa hai ô khác nhau không đè nhau. Ô số đọc bằng `parseFormNumber`: bỏ khoảng trắng, dấu chấm và dấu phẩy (coi là ngăn cách hàng nghìn), phải là số nguyên trong `SETTING_LIMITS`;
-    - `pollrole`/`admin` mang `drawnRoleId` (role lúc vẽ, `none` = chưa đặt). Chọn role thì luôn đặt; bỏ chọn chỉ xoá khi role hiện tại vẫn là `drawnRoleId`, ngược lại vẽ lại bảng và báo.
+    - form mang giá trị lúc mở (`drawn`, `XpFormValues`/`PollFormValues`). Khi lưu, ô có giá trị bằng `drawn` thì không ghi, nên hai admin sửa hai ô khác nhau không đè nhau. Ô số đọc bằng `parseFormNumber`: bỏ khoảng trắng, chỉ nhận chữ số (dấu chấm hay dấu phẩy bị từ chối, vì "2,5" hay "1.000" dễ hiểu nhầm), phải là số nguyên trong `SETTING_LIMITS`;
+    - `pollrole`/`admin` mang `drawnRoleId` (role lúc vẽ, `none` = chưa đặt). Chọn role thì đặt (chọn đúng role đang đặt thì không ghi); bỏ chọn chỉ xoá khi role hiện tại vẫn là `drawnRoleId`, ngược lại vẽ lại bảng và báo.
+  - Menu chọn (trừ `nav`) bị từ chối thì bảng được vẽ lại theo dữ liệu thật trước khi báo lỗi: nếu không, Discord vẫn hiện lựa chọn vừa bị từ chối trong khi customId giữ role lúc vẽ, và thao tác bỏ chọn kế tiếp sẽ xoá nhầm role đang đặt (review Phase 15).
+  - `nav` không đánh dấu `default` (placeholder ghi trang đang xem), để chọn lại trang đang xem là làm mới trang.
+  - Role/kênh đã lưu mà không còn trong cache của guild (`ConfigPanelData.missingIds`): không điền sẵn vào menu (Discord có thể từ chối ID không tồn tại) và hiện cảnh báo, như `missingRoleIds` của `tierui`.
   - Mọi thao tác đi qua đúng service và kiểm tra như lệnh gõ tay: chặn role danh hiệu làm team, role admin bot hay role tạo vote; kiểm tra quyền của bot và của người thao tác ở kênh Bảng vàng; audit như lệnh gõ tay.
   - `XP_CHANNEL_TYPES` và `BOARD_CHANNEL_TYPES` chuyển từ `config.ts` sang `configPanel.ts`, dùng chung cho option của lệnh gõ tay và menu của bảng. Menu kênh vì vậy không có thread và category.
 - Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`). Có 5 namespace: `lb` (`/leaderboard`), `contrib` (`/contribution`), `poll` (`/poll`), `tierui` và `cfgui` (`/config`). Component của command `adminOnly` cũng qua `assertAdmin` (DEC-033), nên người mất quyền admin bấm vào bảng cũ vẫn bị chặn.

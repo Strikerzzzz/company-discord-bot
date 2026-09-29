@@ -178,6 +178,14 @@ Nếu đổi `DATABASE_PATH` hoặc `BACKUP_DIR` ra ngoài thư mục `data/`, p
 
 ## 5. Cập nhật phiên bản
 
+**Trước khi cập nhật**, chạy `/admin backup` trong Discord để có bản sao lưu mới nhất. Bản mới có thể thêm migration: migration chỉ đi một chiều, code cũ sẽ từ chối database đã nâng cấp. Muốn quay về bản cũ thì phải khôi phục bản sao lưu này (mục 6).
+
+Trên server hiện tại (DEC-036) chưa có remote git, nên bản mới được chép bằng `git archive`, build và chạy `npm run check` trong thư mục staging của tài khoản quản trị (`~/deploy/src`), rồi cài bằng hai script trong thư mục `deploy/` của repo (chép vào `~/deploy/`):
+- `sudo bash ~/deploy/install.sh`: chép sang `/opt/company-discord-bot`, giữ nguyên `data/` và `.env`, cài unit, không khởi động lại bot;
+- `sudo bash ~/deploy/start.sh`: selfcheck trong sandbox của service (như mục 3.1), chỉ bật hoặc khởi động lại bot khi không có ❌, rồi in trạng thái và log.
+
+Khi đã có remote git nội bộ, dùng cách dưới đây:
+
 ```bash
 cd /opt/company-discord-bot
 sudo git pull
@@ -281,6 +289,8 @@ Mỗi bước ghi trang tương ứng trên `/config panel` và lệnh gõ tay t
      - cho phép role đó dùng lệnh `/admin` và `/config`.
 
      Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
+   - **Cẩn thận khi đổi hoặc bỏ role admin bot** nếu bạn là admin chỉ nhờ role đó (không có Manage Server): bỏ chọn trên bảng là lưu ngay, và bạn mất quyền admin bot ngay lập tức. Khi đó chỉ người có Manage Server khôi phục được.
+   - **Muốn thu quyền admin bot của một người**: gỡ role admin bot (hoặc quyền Manage Server) của người đó. Chỉ bỏ quyền dùng lệnh trong Integrations thì chưa đủ: bảng cấu hình hay bảng danh hiệu người đó đang mở vẫn bấm được, vì bot kiểm tra quyền theo role admin và Manage Server.
 6. **Bảng vàng** (tuỳ chọn, DEC-030), xem mục 7.2.
    - Trên bảng: trang **Bảng vàng và admin**.
    - Lệnh gõ tay: `/config board`.

@@ -107,7 +107,6 @@ import {
 	XP_CHANNEL_MODES,
 	XpChannelMode,
 } from "../../modules/guild-config/types";
-import { MAX_TEAMS } from "../../modules/team/TeamService";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
@@ -1334,7 +1333,7 @@ export default class ConfigCmd extends Command
 			const patch: Partial<GuildSettings> = { levelUpAnnouncements: action.enabled };
 			if (this.services.guildConfig.getSettings(guildId).levelUpAnnouncements === action.enabled)
 			{
-				await this.updateConfigPanel(interaction, page, `Không có gì thay đổi: ${describeSettingsPatch(patch).join("")} sẵn rồi.`);
+				await this.updateConfigPanel(interaction, page, `Không có gì thay đổi:\n${describeSettingsPatch(patch).join("\n")}`);
 				break;
 			}
 			this.services.guildConfig.updateSettings(guildId, patch, actorId);
@@ -1429,7 +1428,7 @@ export default class ConfigCmd extends Command
 
 	/**
 	 * Thêm hoặc bỏ nhiều role team. Thêm: mọi role qua cùng kiểm tra với `/config team add`, và tổng số team sau khi thêm không
-	 * vượt MAX_TEAMS; kiểm tra hết trước khi ghi, nên lỗi thì không thêm role nào.
+	 * vượt MAX_TEAMS (TeamService.addMany, một transaction); lỗi thì không thêm role nào.
 	 */
 	private async panelTeams(interaction: RoleSelectMenuInteraction, add: boolean, page: ConfigPanelPage): Promise<void>
 	{
@@ -1438,25 +1437,9 @@ export default class ConfigCmd extends Command
 		if (interaction.values.length === 0) throw new UserError(SELECT_AT_LEAST_ONE_ROLE);
 		const roles = [...new Set(interaction.values)].map(roleId => selectedRole(interaction, roleId));
 		const { teams } = this.services;
-		const changed: string[] = [];
-		const unchanged: string[] = [];
-		if (add)
-		{
-			for (const role of roles) this.assertUsableRole(guildId, role, "làm team");
-			const current = teams.list(guildId);
-			const fresh = roles.filter(role => !current.includes(role.id)).length;
-			if (current.length + fresh > MAX_TEAMS)
-			{
-				throw new UserError(`Chỉ được cấu hình tối đa ${MAX_TEAMS} team: server đang có ${current.length} team, `
-					+ `thêm ${fresh} role mới sẽ vượt giới hạn. Bot chưa thêm role nào.`);
-			}
-		}
-		for (const role of roles)
-		{
-			const done = add ? teams.add(guildId, role.id, actorId) : teams.remove(guildId, role.id, actorId);
-			if (done) changed.push(role.id);
-			else unchanged.push(role.id);
-		}
+		if (add) for (const role of roles) this.assertUsableRole(guildId, role, "làm team");
+		const roleIds = roles.map(role => role.id);
+		const { changed, unchanged } = add ? teams.addMany(guildId, roleIds, actorId) : teams.removeMany(guildId, roleIds, actorId);
 		await this.updateConfigPanel(interaction, page, teamsChangedText(add, changed, unchanged));
 	}
 
@@ -1518,6 +1501,11 @@ export default class ConfigCmd extends Command
 		{
 			const role = selectedRole(interaction, roleId);
 			this.assertUsableRole(guildId, role, setting.purpose);
+			if (guildConfig.getSettings(guildId)[key] === role.id)
+			{
+				await this.updateConfigPanel(interaction, page, `Không có gì thay đổi:\n${settingLine(key, role.id)}`);
+				return;
+			}
 			patch[key] = role.id;
 			notice = setting.setText(role.id);
 		}
