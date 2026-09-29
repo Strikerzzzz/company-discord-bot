@@ -245,3 +245,21 @@ Format mỗi mục:
 - **Hiện tượng:** Chép public key lên server bằng `Get-Content id_ed25519.pub | ssh ... "cat >> ~/.ssh/authorized_keys"` trong PowerShell. Server vẫn hỏi mật khẩu. `cat -A` cho thấy đầu dòng có BOM UTF-8 (`M-oM-;M-?`) và cuối dòng có `^M`, nên sshd không nhận ra loại key.
 - **Xử lý:** xoá BOM và CR bằng `sed -i '1s/^\xEF\xBB\xBF//; s/\r$//'`. Mọi lệnh chép dữ liệu lên server (kể cả `git archive | ssh ... tar -x`, dữ liệu nhị phân) chạy qua **Git Bash**. Script viết bằng Write rồi chép bằng redirect (`ssh ... "cat > file" < file`), sau đó kiểm tra không có CR và BOM.
 - **Bài học:** PowerShell coi dữ liệu qua pipe tới lệnh ngoài là văn bản và tự đổi encoding và xuống dòng. Không dùng pipe của PowerShell để chép file hay dữ liệu nhị phân sang Linux.
+
+## LL-022 — Form lưu nhiều mục cùng lúc: thao tác gỡ có tác dụng phụ phá huỷ phải tính theo cả lần lưu
+
+- **Phát hiện:** 2026-09-29 (review độc lập Phase 16, trang Danh hiệu của web quản trị) · **Mức độ:** Cao · **Trạng thái:** Đã xử lý
+- **Hiện tượng:** Trên web, admin chuyển một role do bot tạo từ bậc 1 sang bậc 2 trong cùng một lần lưu:
+  - bước bỏ gán ở bậc 1 gọi `clearTierRoleAssignment`, hàm này **xoá role khỏi server** (đúng với bảng Discord, nơi mỗi lần chỉ thao tác một bậc);
+  - bước gán cho bậc 2 không còn role để gán;
+  - cả hai bậc thành trống, thành viên mất role, không hoàn tác được.
+  - Kèm theo: kiểm tra từng bậc ngay trong vòng lặp ghi, nên hoán đổi hai bậc bị báo lỗi mâu thuẫn và kết quả phụ thuộc thứ tự bậc; một bậc lỗi thì các bậc trước đã ghi.
+- **Nguyên nhân:** chuyển logic từ giao diện mỗi lần một thao tác (bảng Discord) sang form nhiều thao tác cùng lúc mà không xét tương tác giữa các mục trong cùng một lần lưu. Test chỉ có ca chuyển role do admin gán, không có ca role do bot tạo.
+- **Xử lý:**
+  - kiểm tra mọi mục trước khi ghi (không `await` trong bước kiểm tra), có lỗi thì không ghi gì;
+  - ghi theo thứ tự: gỡ mapping mọi bậc đổi, rồi chỉ xoá role do bot tạo mà không bậc nào dùng lại trong lần lưu đó, rồi mới gán; role chuyển bậc giữ cờ `createdByBot`;
+  - test có ca chuyển, hoán đổi, chuyển vòng, và lỗi giữa chừng không ghi gì.
+- **Bài học:**
+  - Form web (hay bất kỳ thao tác hàng loạt nào) dùng lại hàm của giao diện từng thao tác thì phải rà các hàm có **tác dụng phụ ngoài DB** (xoá role, xoá message) theo kế hoạch của cả lần lưu.
+  - Test phải có ca một tài nguyên vừa bị bỏ ở mục này vừa được chọn ở mục khác.
+  - Liên quan: các agent chạy song song dùng chung thư mục tạm; file log phải đặt tên riêng, không thì lẫn output của nhau (agent A Phase 16 gặp).

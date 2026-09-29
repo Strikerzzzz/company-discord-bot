@@ -16,7 +16,12 @@
     - `src/discord/configOps.ts` dùng chung với `/config`;
     - cấu hình `WEB_*`, selfcheck;
     - 857 test pass.
-  - 4 agent đang làm song song: tổng quan/kênh/team; cài đặt/quyền/Bảng vàng/nhật ký; danh hiệu; tài liệu.
+  - 4 agent (tổng quan/kênh/team; cài đặt/quyền/Bảng vàng/nhật ký; danh hiệu; tài liệu) đã gộp.
+  - 2 review độc lập (bảo mật; tính đúng đắn):
+    - 1 lỗi CAO (trang Danh hiệu xoá nhầm role do bot tạo khi chuyển bậc, LL-022), 2 TRUNG BÌNH (kiểm tra trước khi ghi ở trang Danh hiệu; cookie dùng tên chung trên máy dùng chung) và các lỗi THẤP: đều đã sửa.
+    - Quy tắc mới trên web: giấu tên kênh người đăng nhập không xem được; trang kênh ghi đổi chế độ sau cùng; mất quyền admin thì huỷ phiên; cookie `ezbot_*`.
+    - Chấp nhận có ghi lại: role admin bot đổi được role admin trên web như lớp quyền 2 (PROP-032 đã bị từ chối; PROP-034 mở rộng cho web).
+  - 938 test pass.
   - Chưa bật trên server: cần `WEB_PORT`, `WEB_BASE_URL`, `DISCORD_CLIENT_SECRET`, và redirect trên Developer Portal.
   - Firewall `ufw` trên server đang chặn cổng 8787 (đã thử ngày 2026-09-29); cổng 8765 của dịch vụ khác thì mở. Khi bật web phải thêm luật `ufw` cho 8787, chỉ trong mạng nội bộ.
 - **Phase 15 (DEC-037) đã merge vào `main`** (DEC-038). Bản `2a84410` đã build sẵn ở `~/deploy/src` trên server, **chờ người phụ trách chạy `install.sh` và `start.sh`** (server vẫn chạy `38238e8`):
