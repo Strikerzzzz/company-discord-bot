@@ -1,6 +1,6 @@
 # Checklist chạy thật trên Discord
 
-> Dùng cho lần chạy thật đầu tiên trên server Linux (Phase 11), sau khi cài theo `docs/DEPLOY.md`. Mục 11 kiểm bảng cấu hình `/config panel` và chế độ kênh tính XP (Phase 15, DEC-037), làm sau khi cập nhật lên bản Phase 15.
+> Dùng cho lần chạy thật đầu tiên trên server Linux (Phase 11), sau khi cài theo `docs/DEPLOY.md`. Mục 11 kiểm bảng cấu hình `/config panel` và chế độ kênh tính XP (Phase 15, DEC-037), làm sau khi cập nhật lên bản Phase 15. Mục 12 kiểm trang web quản trị (Phase 16, DEC-039), làm sau khi cập nhật lên bản Phase 16 và bật web.
 > Mỗi mục ghi thao tác và kết quả mong đợi. Tick `[x]` khi đạt; mục không đạt thì ghi lại hiện tượng, ảnh chụp và dòng log `journalctl` liên quan.
 > Các mục này là những gì test tự động không chứng minh được (Discord giả luôn "đúng ý" người viết test, LL-013).
 > Làm theo thứ tự: các mục sau dùng cấu hình và dữ liệu tạo ở mục trước.
@@ -15,7 +15,8 @@
   - kênh `#chung` (mọi người chat), `#kenh-rieng` (chỉ một nhóm xem được, C không xem được), `#chi-doc` (thành viên không gửi được tin), `#bang-vang`, một thread trong `#chung`;
   - 2 role team (ví dụ `Backend`, `Frontend`) và 1 role admin bot;
   - ít nhất 4 tài khoản: **A** có **Manage Server và Manage Roles**, role cao nhất của A nằm trên role của bot; **B** chỉ có role admin bot; **C** là thành viên thường, có role `Backend`; **D** là thành viên thường chưa nhắn tin lần nào (dùng cho mục 8);
-  - cho mục 11: một người tạo được kênh mới (quyền Manage Channels), và A, B cùng online.
+  - cho mục 11: một người tạo được kênh mới (quyền Manage Channels), và A, B cùng online;
+  - cho mục 12: một máy tính khác trong mạng công ty (hoặc qua VPN), một điện thoại vào được mạng đó, và quyền sửa `.env` trên server.
 - [ ] Trên server chạy lệnh `systemd-run` ở DEPLOY mục 3.1 (selfcheck dưới user và sandbox của service): **không có dòng ❌**, exit code 0. Lần đầu có ⚠️ "Database chưa có" là bình thường; Node khác 24 cũng cho ⚠️.
 - [ ] `systemctl start company-discord-bot`, rồi `journalctl -u company-discord-bot -f`: thấy "Bot đã sẵn sàng", không có lỗi, không có SIGSYS.
 
@@ -196,3 +197,109 @@
 **Chốt khi đưa vào dùng thật (server ezOne)**
 
 - [ ] Chuyển sang "chỉ kênh được bật", xem danh sách "Kênh đang tính XP" trên trang Kênh: tắt các kênh thừa (ví dụ kênh đã bật riêng lúc kiểm thử), bật các kênh cần tính XP, rồi reset điểm theo DEPLOY mục 7.4 (`/admin backup` trước) → `/rank` của mọi người về 0, bảng xếp hạng trống; `/config view` giữ nguyên cấu hình; `/admin audit` có "Reset XP toàn server" và "Reset contribution toàn server".
+
+## 12. Trang web quản trị (Phase 16, DEC-039)
+
+> Làm sau khi cập nhật lên bản Phase 16. Cách bật web, biến `.env` và Developer Portal: DEPLOY mục 7.5. Ví dụ dưới đây dùng `WEB_BASE_URL=http://192.168.0.206:8787`; thay bằng giá trị thật nếu khác.
+> Dùng A, B, C như mục 0: A có Manage Server và Manage Roles; B chỉ có role admin bot; C là thành viên thường có role `Backend`.
+> Sau mỗi lần bấm lưu trên web, kết quả mong đợi luôn gồm: trang tải lại, có dòng báo kết quả ở đầu trang (xanh là đã lưu, đỏ là bị từ chối và không có gì thay đổi).
+
+**Cấu hình và selfcheck**
+
+- [ ] Chưa đặt `WEB_PORT`: selfcheck (`sudo bash ~/deploy/start.sh`) có dòng ✅ "Trang web quản trị: tắt (không đặt WEB_PORT)."; từ máy khác `curl http://192.168.0.206:8787/healthz` → không kết nối được.
+- [ ] Đặt `WEB_PORT=8787` và `WEB_BASE_URL` nhưng để trống `DISCORD_CLIENT_SECRET` → selfcheck có ❌ nêu tên biến `DISCORD_CLIENT_SECRET`, exit code 1, script báo bot **chưa** được bật lại; bot bản đang chạy vẫn chạy và trả lời `/ping`.
+- [ ] Lần lượt thử `WEB_PORT=80` và `WEB_BASE_URL=http://192.168.0.206:8787/admin` → mỗi lần có ❌ nêu tên biến sai. Không dòng nào in giá trị Client Secret.
+- [ ] Cấu hình đúng theo DEPLOY mục 7.5 → selfcheck có ✅ "Trang web quản trị: bật, lắng nghe 0.0.0.0:8787, địa chỉ http://192.168.0.206:8787; DISCORD_CLIENT_SECRET: có. Redirect cần đăng ký …: http://192.168.0.206:8787/auth/callback". Redirect này có đúng từng ký tự trong Developer Portal → OAuth2 → Redirects.
+- [ ] Sau khi script khởi động lại bot: log có "Bot đã sẵn sàng" rồi `Trang web quản trị: http://192.168.0.206:8787 (lắng nghe 0.0.0.0:8787).`; không có "Không mở được trang web quản trị". Đọc qua log: không thấy Client Secret.
+
+**Kết nối và địa chỉ truy cập**
+
+- [ ] Từ một máy khác trong mạng công ty: `curl http://192.168.0.206:8787/healthz` → `ok`. Mở `http://192.168.0.206:8787` trong trình duyệt → trang đăng nhập có nút "Đăng nhập bằng Discord".
+- [ ] (Nếu có VPN) từ máy ở ngoài công ty đã bật VPN: như trên. Tắt VPN (hoặc dùng 4G của điện thoại) → không mở được.
+- [ ] Mở bằng địa chỉ khác `WEB_BASE_URL` → mã **421**, chữ "Sai địa chỉ truy cập", không có trang đăng nhập:
+  - trên server: `curl -i http://127.0.0.1:8787/`;
+  - từ máy khác: `curl -i -H "Host: vi-du.local" http://192.168.0.206:8787/` (giả một tên miền lạ trỏ về server);
+  - cùng hai cách đó với `/healthz` → vẫn trả `ok`.
+- [ ] `curl -i http://192.168.0.206:8787/` → có header `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`.
+
+**Đăng nhập**
+
+- [ ] A bấm "Đăng nhập bằng Discord" → trang của Discord ghi ứng dụng "ezOne Bot" và chỉ xin biết thông tin tài khoản (scope `identify`); bấm cho phép → về trang **Tổng quan** của server. Thanh trên có tên A và nút "Đăng xuất".
+- [ ] B (chỉ có role admin bot, không có Manage Server) đăng nhập → vào được như A, dù chưa cho phép gì thêm trong Integrations.
+- [ ] C đăng nhập → quay về trang đăng nhập với thông báo "Tài khoản Discord này không có quyền admin bot …". C gõ thẳng `http://192.168.0.206:8787/g/<Server ID>` → về trang đăng nhập.
+- [ ] (Nếu có) một tài khoản Discord không ở trong server đăng nhập → bị từ chối như C.
+- [ ] Bấm "Đăng nhập bằng Discord" rồi bấm **Huỷ** trên trang của Discord → về trang đăng nhập với "Bạn đã huỷ đăng nhập trên Discord."; không vào được trang quản trị.
+- [ ] Sau một lần đăng nhập thành công, chép URL `/auth/callback?…` trong lịch sử trình duyệt, mở lại → "Lượt đăng nhập đã hết hạn hoặc không hợp lệ", không có phiên mới.
+- [ ] Log có `Đăng nhập web: người dùng "<ID của A>".` và `Đăng nhập web bị từ chối: …` cho C.
+
+**Mất quyền giữa chừng**
+
+- [ ] B đăng nhập và mở trang **Cài đặt điểm**. A gỡ role admin bot khỏi B (hoặc đổi role admin bot sang role mà B không có). B bấm lưu form đang mở → "Không có quyền", không có gì thay đổi (kiểm bằng `/config view`). B tải lại trang → vẫn "Không có quyền".
+- [ ] A trả lại quyền cho B → B tải lại trang là vào được, không cần đăng nhập lại.
+
+**Từng trang** (A làm; sau mỗi lần lưu so với Discord)
+
+- [ ] **Tổng quan**: khớp với `/config view` (chế độ kênh tính XP, XP, vote, contribution, role admin, team, kênh riêng, Bảng vàng, bộ danh hiệu).
+- [ ] **Kênh tính XP**:
+  - hiện toàn bộ kênh của server trên một trang, kể cả khi server có hơn 25 kênh;
+  - đổi chế độ kênh → `/config channel list` ghi chế độ mới ở cuối danh sách;
+  - tick bật `#chung`, bỏ tick `#chi-doc`, lưu → `/config channel list` và trang **Kênh** của `/config panel` khớp; C nhắn ở `#chung` (theo mẹo kiểm XP đầu file) → được XP;
+  - đặt XP riêng 20 và cooldown riêng 30 cho `#chung` → `/config channel list` ghi đúng; đưa về giá trị chung → ghi "dùng giá trị chung";
+  - lưu mà không đổi gì → `/admin audit` không có dòng mới.
+- [ ] **Team**:
+  - thêm 2 role chưa là team (ví dụ tạo tạm `QA`, `Design`) → `/config team list` khớp; bỏ 2 team đó → khớp;
+  - thêm một role danh hiệu làm team → bị từ chối kèm lý do;
+  - tạo role tạm, thêm làm team, rồi xoá role đó trong Server Settings → Roles → trang Team có mục team mà role đã bị xoá; gỡ ở đó → `/config team list` không còn team này.
+- [ ] **Cài đặt điểm**:
+  - đổi XP mỗi tin thành 15 → `/config view` và trang XP của `/config panel` hiện 15, các số khác giữ nguyên;
+  - nhập `abc`, `-5`, `1001` vào ô XP mỗi tin → mỗi lần bị từ chối, thông báo nêu tên ô và khoảng hợp lệ; không số nào đổi;
+  - đặt giới hạn XP vote mỗi ngày = 0 → `/config view` ghi "không giới hạn"; đổi điểm mỗi lượt ghi nhận contribution → `/config view` khớp;
+  - bật/tắt thông báo lên level → `/config view` khớp;
+  - trả lại mặc định: 10 XP mỗi tin, cooldown 60 giây, giới hạn XP vote 25, thông báo lên level bật.
+- [ ] **Quyền**:
+  - đặt role tạo vote là `Backend` → C `/poll create` được; bỏ → C bị từ chối;
+  - chọn một role danh hiệu làm role admin bot hay role tạo vote → bị từ chối, không đổi gì;
+  - A đổi role admin bot rồi đặt lại như cũ → `/config view` khớp sau mỗi lần (cẩn thận: B mất quyền trong lúc đổi).
+- [ ] **Bảng vàng**:
+  - chọn `#bang-vang` → bot đăng bảng ở đó (như mục 5); tắt → message Bảng vàng bị xoá; `/config view` khớp;
+  - chọn kênh bot thiếu Attach Files → "Bot thiếu quyền" kèm tên quyền;
+  - người thao tác không gửi được tin ở kênh đã chọn → "Bạn không có quyền".
+- [ ] **Danh hiệu**:
+  - chọn bộ "Rank game" → `/config tier list` và `/config tier panel` khớp;
+  - đổi tên bậc 2 → `/config tier panel` hiện tên mới; tên có link hoặc `@everyone` → bị từ chối;
+  - A gán role cho một bậc, bấm tạo/đồng bộ role → kết quả như mục 8;
+  - B (không có Manage Roles) gán role hay tạo role → bị từ chối.
+- [ ] **Nhật ký**: có đủ các thao tác vừa làm, khớp với `/admin audit`.
+- [ ] Lệnh gõ tay vẫn như cũ: đổi bằng `/config xp` hoặc `/config team add` rồi tải lại trang web → trang hiện giá trị mới.
+
+**Hai tab cùng lưu**
+
+- [ ] A mở trang **Cài đặt điểm** ở hai tab (hoặc A và B cùng mở), cả hai đang hiện 10 XP mỗi tin. Tab 1 đổi XP mỗi tin thành 20, lưu. Tab 2 (chưa tải lại) chỉ đổi cooldown thành 30, lưu → XP mỗi tin **20** (tab 2 không đè về 10), cooldown 30. `/admin audit`: lần lưu thứ hai chỉ có cooldown.
+- [ ] Trang **Kênh tính XP** ở hai tab: tab 1 bật kênh X, lưu. Tab 2 (chưa tải lại, vẫn hiện X tắt) bật kênh Y, lưu → cả X và Y đều bật.
+- [ ] Trả lại cấu hình như trước khi test.
+
+**Dữ liệu lạ hiển thị an toàn**
+
+- [ ] Tạo role tạm tên `<b>đậm</b><img src=x>` và thêm làm team (trên web). Mở trang Team, Tổng quan, Nhật ký và dòng báo kết quả → tên role hiện **nguyên văn** (thấy cả dấu `<` `>`), không in đậm, không có ảnh vỡ, không có hộp thoại bật lên.
+- [ ] (Tuỳ chọn) Đổi tên hiển thị Discord (display name) của tài khoản B thành `<i>nghiêng</i>`, B đăng nhập lại → thanh trên hiện nguyên văn, không in nghiêng.
+- [ ] Bỏ team và xoá role tạm; trả lại tên hiển thị của B.
+
+**Đăng xuất và phiên**
+
+- [ ] Bấm "Đăng xuất" → về trang đăng nhập với "Bạn đã đăng xuất."; bấm Back của trình duyệt rồi tải lại → vẫn về trang đăng nhập.
+- [ ] Đăng nhập cùng tài khoản ở hai trình duyệt; đăng xuất ở một → trình duyệt kia vẫn dùng được.
+- [ ] Đang đăng nhập, khởi động lại bot (`sudo systemctl restart company-discord-bot`) → tải lại trang: về trang đăng nhập, phải đăng nhập lại. Bấm lưu một form mở từ trước khi khởi động lại → "Phiên đăng nhập đã hết hạn", không có gì thay đổi.
+- [ ] Mở một trang ở tab 1; ở tab 2 đăng xuất rồi đăng nhập lại; quay về tab 1 bấm lưu → "Form đã cũ hoặc không hợp lệ", không có gì thay đổi. Tải lại tab 1 → lưu được.
+- [ ] (Tuỳ chọn) Để trình duyệt đăng nhập hơn 8 giờ → phải đăng nhập lại.
+
+**Audit ghi đúng người**
+
+- [ ] `/admin audit` và trang **Nhật ký**: mỗi thao tác trên web ghi người thực hiện là đúng tài khoản Discord đã đăng nhập (A hoặc B), không phải bot; nội dung giống khi làm bằng lệnh Discord.
+
+**Điện thoại**
+
+- [ ] Điện thoại trong mạng công ty (Wi-Fi nội bộ hoặc VPN): đăng nhập được (Discord có thể mở app Discord để hỏi cho phép); menu, danh sách kênh và các form hiển thị đủ chữ, không phải kéo ngang cả trang, bấm được mọi nút; đăng xuất được.
+
+**Tắt web**
+
+- [ ] Xoá `WEB_PORT`, chạy `sudo bash ~/deploy/start.sh` → selfcheck ghi "tắt"; từ máy khác `/healthz` không kết nối được; bot vẫn chạy, lệnh Discord bình thường. Bật lại nếu tiếp tục dùng web.

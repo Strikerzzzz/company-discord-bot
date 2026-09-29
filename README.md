@@ -18,11 +18,13 @@ Ngoài ra bot có **vote / bầu cử / lấy ý kiến**:
 - **Thẻ rank và bảng xếp hạng dạng ảnh**: bảng tổng, tuần này, tháng này; có nút chuyển loại điểm, phạm vi, kỳ và trang.
 - **Bảng vàng**: một message bảng xếp hạng dạng ảnh bot giữ trong kênh do admin chọn và tự cập nhật định kỳ.
 
-**Cấu hình bằng giao diện ngay trong Discord**: `/config panel` mở một bảng riêng cho admin (chỉ người mở thấy), có 6 trang (tổng quan, kênh tính XP, team, XP, vote, Bảng vàng và admin). Admin bấm nút, chọn kênh hay role trong menu, sửa số bằng form, không cần nhớ tên lệnh. Bảng không phải trang web: không có link, không có dashboard. Các lệnh gõ tay vẫn dùng được.
+**Cấu hình bằng giao diện ngay trong Discord**: `/config panel` mở một bảng riêng cho admin (chỉ người mở thấy), có 6 trang (tổng quan, kênh tính XP, team, XP, vote, Bảng vàng và admin). Admin bấm nút, chọn kênh hay role trong menu, sửa số bằng form, không cần nhớ tên lệnh. Bảng nằm ngay trong Discord, không có link. Các lệnh gõ tay vẫn dùng được.
 
-Team được xác định bằng Discord Role. Mọi quản trị thực hiện trong Discord (bảng cấu hình hoặc slash command) và được ghi audit log.
+**Trang web quản trị (tuỳ chọn)**: admin cấu hình bằng trình duyệt trong mạng nội bộ, đăng nhập bằng tài khoản Discord. Xem mục **Trang web quản trị (tuỳ chọn)** bên dưới.
 
-Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Database của bot hoàn toàn độc lập.
+Team được xác định bằng Discord Role. Mọi quản trị thực hiện trong Discord (bảng cấu hình hoặc slash command), hoặc trên trang web quản trị nếu bật, và đều được ghi audit log.
+
+Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Trang web quản trị (nếu bật) chạy trong chính process này. Database của bot hoàn toàn độc lập.
 
 ## Lệnh cho người dùng
 
@@ -57,6 +59,23 @@ Cần quyền **Manage Server** hoặc role admin do bot cấu hình.
 
 Reset toàn server (`reset-all`, phải nhập `XAC NHAN` để xác nhận) chỉ đánh dấu huỷ điểm cũ: không xoá dữ liệu, không đổi cấu hình (xem [docs/DEPLOY.md](docs/DEPLOY.md) mục 7.4).
 
+## Trang web quản trị (tuỳ chọn)
+
+Admin cấu hình bot bằng trình duyệt thay cho, hoặc cùng với, lệnh trong Discord (DEC-039). Hướng dẫn bật, dùng và xử lý sự cố: [docs/DEPLOY.md](docs/DEPLOY.md) mục 7.5.
+
+- **Chạy trong chính process của bot**: không có server hay dịch vụ riêng, không cần cài thêm gì. Web tắt khi không đặt `WEB_PORT`.
+- **Chỉ dùng trong mạng nội bộ công ty hoặc qua VPN.** Không mở cổng ra Internet.
+- **Đăng nhập bằng tài khoản Discord** (scope `identify`: bot chỉ biết bạn là ai), không có mật khẩu riêng. Chỉ người có Manage Server hoặc role admin bot vào được; quyền được kiểm tra lại ở mỗi lần mở trang hay bấm lưu. Phiên đăng nhập 8 giờ, khởi động lại bot thì phải đăng nhập lại.
+- **Các trang**: tổng quan; kênh tính XP (toàn bộ kênh cùng lúc, XP và cooldown riêng); team; cài đặt điểm (XP, chống spam, vote, contribution); quyền (role admin bot, role tạo vote); Bảng vàng; danh hiệu (bộ, tên bậc, role theo bậc); nhật ký quản trị.
+- Mọi thao tác được kiểm tra như lệnh Discord và ghi audit log với người thao tác là tài khoản Discord đã đăng nhập. Lệnh và bảng trong Discord giữ nguyên.
+
+| Biến môi trường | Bắt buộc khi bật web | Ý nghĩa |
+| --- | --- | --- |
+| `WEB_PORT` | ✅ (đặt là bật) | Cổng HTTP, 1024–65535, ví dụ `8787`. Bỏ trống thì web tắt |
+| `WEB_BASE_URL` | ✅ | Địa chỉ admin mở trong trình duyệt, không có "/" ở cuối, ví dụ `http://192.168.0.206:8787`. Phải đăng ký `<WEB_BASE_URL>/auth/callback` ở Developer Portal → OAuth2 → Redirects |
+| `DISCORD_CLIENT_SECRET` | ✅ | Client Secret của Discord Application (OAuth2 → Reset Secret). Bí mật như token |
+| `WEB_HOST` | | Địa chỉ lắng nghe (mặc định `0.0.0.0`) |
+
 ## Phát triển
 
 Yêu cầu: Node.js ≥ 22.14 (production dùng Node 24 LTS).
@@ -90,11 +109,13 @@ node --test --test-name-pattern="cooldown" "build-test/test/**/*.test.js"  # the
 | `BACKUP_KEEP` | | Số bản sao lưu giữ lại (mặc định 14) |
 | `LOG_LEVEL` | | `debug`, `info`, `warn`, `error` (mặc định `info`) |
 
-Các con số nghiệp vụ (XP mỗi tin, cooldown, điểm mỗi lượt ghi nhận, XP khi vote, ...) do admin chỉnh trong Discord bằng `/config`, không nằm trong file cấu hình.
+Bốn biến `WEB_PORT`, `WEB_BASE_URL`, `DISCORD_CLIENT_SECRET`, `WEB_HOST` chỉ dùng cho trang web quản trị (xem mục **Trang web quản trị (tuỳ chọn)** ở trên).
+
+Các con số nghiệp vụ (XP mỗi tin, cooldown, điểm mỗi lượt ghi nhận, XP khi vote, ...) do admin chỉnh trong Discord bằng `/config` (hoặc trên trang web quản trị), không nằm trong file cấu hình.
 
 ## Triển khai
 
-Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, cấu hình ban đầu bằng `/config panel`, chế độ kênh tính XP, bắt đầu lại từ đầu (reset điểm, giữ cấu hình), bộ danh hiệu và role danh hiệu, Bảng vàng, xử lý sự cố. Checklist chạy thật trên Discord: [docs/TEST-PLAN.md](docs/TEST-PLAN.md).
+Xem [docs/DEPLOY.md](docs/DEPLOY.md): tạo Discord Application (quyền tối thiểu, bật Message Content Intent), cài đặt trên Linux, chạy bằng systemd, sao lưu và khôi phục, cấu hình ban đầu bằng `/config panel`, chế độ kênh tính XP, bắt đầu lại từ đầu (reset điểm, giữ cấu hình), bộ danh hiệu và role danh hiệu, Bảng vàng, trang web quản trị (tuỳ chọn), xử lý sự cố. Checklist chạy thật trên Discord: [docs/TEST-PLAN.md](docs/TEST-PLAN.md).
 
 Quyền của bot: View Channels, Send Messages, Send Messages in Threads, Embed Links, **Attach Files** (ảnh thẻ, Bảng vàng) và **Manage Roles** (gán, tạo, đổi tên và xoá role danh hiệu do bot tạo; role của bot phải nằm trên các role này; muốn thấy màu danh hiệu thì kéo role danh hiệu lên trên role có màu khác, vẫn dưới role của bot). Không dùng Administrator. Font Be Vietnam Pro (SIL OFL 1.1) nằm sẵn trong `assets/fonts/`.
 
