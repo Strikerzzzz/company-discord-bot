@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-27, Phase 13 (bộ danh hiệu, branch `phase-13/tier-sets`). Phase 0–12 đã merge vào `main`.
+> Cập nhật lần cuối: 2026-09-29, Phase 15 (bảng cấu hình `/config panel` và chế độ kênh tính XP, branch `phase-15/config-panel`, DEC-037). Phase 0–14 đã merge vào `main`.
 > Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
 ## 1. Tổng quan
@@ -22,7 +22,7 @@ Discord ──► Tầng Discord (mỏng) ──► Service nghiệp vụ ──
 src/
 ├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login
 ├── selfcheck.ts              Entry point thứ hai (`npm run selfcheck`): tự kiểm tra môi trường trước khi bật bot; logic ở selfcheck/
-│                             (không gọi mạng, không mở DB thật bằng SQLite: đọc header và chạy thử trên bản sao trong RAM, LL-020)
+│                             (không gọi mạng, không mở DB thật bằng SQLite: đọc header và chạy thử trên bản sao trong thư mục tạm, LL-020)
 ├── config.ts                 Đọc và validate biến môi trường (DEC-015)
 ├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
 ├── shared/                   clock (inject được), errors (UserError), logger (che token), time (ngày/tuần/tháng giờ Việt Nam)
@@ -33,7 +33,8 @@ src/
 ├── modules/                  Nghiệp vụ, KHÔNG import discord.js
 │   ├── deps.ts               ServiceDeps: clock, guildConfig, teams, audit, xpLedger, contributionLedger
 │   ├── ledger/Ledger.ts      Sổ cái điểm append-only + cache tổng + snapshot team (PROP-014)
-│   ├── guild-config/         Cấu hình guild/channel, giới hạn hợp lệ, permissions (isAdmin, canCreatePoll)
+│   ├── guild-config/         Cấu hình guild/channel, chế độ kênh tính XP (DEC-037, mục 3.2b), bật/tắt XP hàng loạt
+│   │                         (setChannelsXpEnabled), giới hạn hợp lệ, permissions (isAdmin, canCreatePoll)
 │   ├── team/                 Team = role do admin chỉ định; resolveTeams() tạo snapshot
 │   ├── audit/                Nhật ký thao tác quản trị
 │   ├── activity/             levels (5n²+50n+100), tiers (5 bộ danh hiệu × 8 bậc cùng mốc, khoá bậc bac-1…bac-8, giọng văn theo bộ), antiSpam (chống trùng trong RAM), ActivityService
@@ -71,8 +72,9 @@ src/
     ├── renderGate.ts         Cooldown vẽ ảnh 3 giây mỗi người (/rank, /leaderboard, nút lb) + tối đa 2 lần vẽ đồng thời
     ├── roleSync.ts           Đồng bộ role danh hiệu (từng role một), tierRoleSafetyIssue (chặn role nguy hiểm)
     ├── tierRoleSetup.ts      Bot tạo role (không quyền) / đổi tên, màu role đã gán theo bộ; khoá chống chạy trùng theo guild
-    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin, progression (thông báo theo bộ),
-                              tierPanel (bảng điều khiển danh hiệu, Components V2)
+    └── views/                Hàm thuần dựng embed/nút: activity, contribution, poll, admin (có nhãn chế độ kênh), progression
+                              (thông báo theo bộ), tierPanel (bảng điều khiển danh hiệu, Components V2), configPanel (bảng cấu
+                              hình chung `/config panel`, Components V2, hợp đồng customId `cfgui`, form sửa số; mục 3.5)
 assets/fonts/                 Be Vietnam Pro (4 weight) + OFL.txt
 test/                         node:test + SQLite :memory: (xem mục 7)
 deploy/                       Unit systemd
@@ -100,7 +102,8 @@ Khi `clientReady`:
 ```
 messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; thread → dùng channel cha)
   → ActivityService.handleMessage
-      1. channel tắt XP?                 → channel_disabled
+      1. channel không tính XP?          → channel_disabled  (cấu hình riêng tắt XP, hoặc không có cấu hình riêng
+                                                              mà chế độ kênh là `selected`; mục 3.2b)
       2. chống trùng trong RAM (hash)    → duplicate      (DEC-023, không lưu nội dung)
       3. tin quá ngắn?                   → too_short
       4. transaction: cooldown theo member_xp.last_message_xp_at → cooldown
@@ -109,6 +112,23 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
     (views/progression.ts; chỉ ping đúng người đó)
   → mọi tin được XP: syncTierRoles (thêm role cảnh giới hiện tại, bỏ role cảnh giới khác; DEC-031)
 ```
+
+### 3.2b Chế độ kênh tính XP (DEC-037)
+- `guild_settings.xp_channel_mode` (`XpChannelMode`): `all` (mặc định, giữ hành vi cũ) hoặc `selected`.
+- Quy tắc trong `GuildConfigService.getChannel` / `effectiveChannelXp`:
+  - channel có dòng `channel_settings` (cấu hình riêng) → dùng dòng đó. Cấu hình riêng **luôn thắng** chế độ;
+  - channel không có dòng → `xpEnabled = (mode === "all")`, XP và cooldown lấy theo guild. Channel tạo sau này không có dòng nên theo chế độ;
+  - `/config channel reset` xoá dòng → channel quay về theo chế độ;
+  - thread và bài forum dùng channel cha (`messageCreate`), như trước.
+- Đổi chế độ: `updateSettings({ xpChannelMode })`, audit `config.update`. `/config channel mode` không ghi gì khi chế độ không đổi. Phản hồi (`channelModeChangedText`, views/admin.ts) cảnh báo khi chuyển sang `selected` mà chưa bật channel nào.
+- `setChannelsXpEnabled(guildId, channelIds, enabled, actorId)` → `{ changed, unchanged }`, dùng cho menu kênh của `/config panel`:
+  - bỏ trùng; rỗng hoặc quá `MAX_BULK_CHANNELS` (25, bằng số lựa chọn tối đa của ChannelSelect) → `UserError`;
+  - một transaction, đọc chế độ bên trong transaction;
+  - channel đã đúng trạng thái → `unchanged`, không ghi, không audit;
+  - channel không có XP/cooldown riêng mà trạng thái mới trùng mặc định của chế độ → **xoá** dòng thay vì ghi, để `channel_settings` chỉ chứa channel khác mặc định. Channel có XP/cooldown riêng giữ các giá trị đó;
+  - mỗi channel đổi trạng thái có một audit `channel.set` với `{ xpEnabled }`.
+- Hệ quả của việc xoá dòng: trạng thái tường minh chỉ được lưu khi khác mặc định của chế độ **lúc thao tác**. Ví dụ ở `all`, bật bằng bảng một channel chưa có dòng là `unchanged` (không tạo dòng); ở `selected`, tắt bằng bảng thì xoá dòng. Đổi chế độ sau đó thì các channel này theo chế độ mới. Ngược lại, `setChannel` (`/config channel set`) luôn ghi dòng, kể cả khi chỉ đặt XP hay cooldown riêng: khi đó trạng thái bật/tắt hiện hành (có thể đến từ chế độ) được lưu cứng vào dòng.
+- Hiển thị: `xpChannelModeLabel` (views/admin.ts) cho `/config view`, chân `/config channel list` và audit (`xpChannelMode`).
 
 ### 3.3 Contribution (DEC-025)
 - **Gửi contribution**:
@@ -144,7 +164,31 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
   - customId mang trạng thái lúc vẽ để panel cũ không ghi đè: `tierui:reset:<setKey>`, `tierui:role:<bậc>:<roleId|none>`, `tierui:names:<nhóm>:<setKey>:<8 hex vân tay tên>`. Trạng thái đã đổi thì bot vẽ lại panel và báo riêng.
   - Nút ✨ (`tierRoleSetup.ts`) chỉ đổi tên/màu role do bot tạo (`created_by_bot`), tạo role từ bậc 8 xuống bậc 1, dừng khi server đủ số role (30005); audit `tier_role.setup` ghi trong `finally`, bỏ qua khi không có thay đổi.
   - Bỏ gán role do bot tạo (`clearTierRoleAssignment`, dùng chung cho `clear-role` và panel) thì xoá role đó nếu người gọi có Manage Roles; audit `tier_role.clear` có `deletedRoleId`.
-- Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`); component của command `adminOnly` cũng qua `assertAdmin` (DEC-033).
+- `/config panel` (PROP-033, DEC-037): bảng cấu hình chung (ephemeral, Components V2), namespace `cfgui`. View thuần ở `src/discord/views/configPanel.ts`; handler trong `config.ts`. `/config view|xp|channel|team|admin-role|poll|contribution|board` là lệnh gõ tay tương ứng, giữ nguyên.
+  - 6 trang (`ConfigPanelPage`): `home` (tổng quan), `channels` (chế độ kênh, bật/tắt nhiều channel, danh sách channel đang tính XP ở `selected` hoặc đang tắt ở `all`), `teams`, `xp`, `poll` (vote và contribution), `board` (Bảng vàng, role admin bot, nút mở bảng danh hiệu). Chọn trang bằng menu `cfgui:nav`.
+  - Dữ liệu vẽ (`ConfigPanelData`) đọc từ service ngay trước khi vẽ. Kết quả thao tác hiện nguyên văn trong `notice` ở đầu trang, thay cho tin phản hồi riêng. Mỗi message ≤ 40 component; mọi customId dựng bằng `configPanelId`.
+  - Hợp đồng customId (`configPanelId` / `parseConfigPanelId`; sai định dạng → `UserError(INVALID_CONFIG_PANEL)`, luôn ≤ 100 ký tự):
+
+    | customId | Component, trang | Việc |
+    | --- | --- | --- |
+    | `cfgui:nav` | StringSelect, mọi trang | Chuyển trang (giá trị là trang), không ghi gì |
+    | `cfgui:mode:<all\|selected>` | Nút, `channels` | Đặt chế độ kênh; đã đúng chế độ thì không ghi |
+    | `cfgui:ch:<on\|off>` | ChannelSelect ≤ 25 (`XP_CHANNEL_TYPES`), `channels` | `setChannelsXpEnabled` bật hoặc tắt |
+    | `cfgui:team:<add\|del>` | RoleSelect nhiều role, `teams` | Thêm hoặc bỏ team |
+    | `cfgui:ann:<on\|off>` | Nút, `xp` | Đặt thông báo lên level |
+    | `cfgui:xpform` → `cfgui:xpsave:<xp>.<cooldown>.<độ dài>.<chống trùng>` | Nút mở form 4 ô → form, `xp` | Lưu các ô đã sửa |
+    | `cfgui:pollform` → `cfgui:pollsave:<xp vote>.<giới hạn ngày>.<điểm ghi nhận>` | Nút mở form 3 ô → form, `poll` | Lưu các ô đã sửa |
+    | `cfgui:pollrole:<roleId\|none>` | RoleSelect một role, cho bỏ chọn, `poll` | Đặt hoặc xoá role tạo vote |
+    | `cfgui:board` · `cfgui:boardoff` | ChannelSelect một kênh (`BOARD_CHANNEL_TYPES`) · nút, `board` | Đặt kênh Bảng vàng (kiểm tra quyền như `/config board`) · tắt Bảng vàng |
+    | `cfgui:admin:<roleId\|none>` | RoleSelect một role, cho bỏ chọn, `board` | Đặt hoặc xoá role admin bot |
+    | `cfgui:tier` | Nút, `board` | Mở `/config tier panel` trong một tin nhắn trả lời riêng mới |
+
+  - customId mang **trạng thái lúc vẽ** để bảng cũ không ghi đè thay đổi mới hơn (như `tierui`):
+    - form mang giá trị lúc mở (`drawn`, `XpFormValues`/`PollFormValues`). Khi lưu, ô có giá trị bằng `drawn` thì không ghi, nên hai admin sửa hai ô khác nhau không đè nhau. Ô số đọc bằng `parseFormNumber`: bỏ khoảng trắng, dấu chấm và dấu phẩy (coi là ngăn cách hàng nghìn), phải là số nguyên trong `SETTING_LIMITS`;
+    - `pollrole`/`admin` mang `drawnRoleId` (role lúc vẽ, `none` = chưa đặt). Chọn role thì luôn đặt; bỏ chọn chỉ xoá khi role hiện tại vẫn là `drawnRoleId`, ngược lại vẽ lại bảng và báo.
+  - Mọi thao tác đi qua đúng service và kiểm tra như lệnh gõ tay: chặn role danh hiệu làm team, role admin bot hay role tạo vote; kiểm tra quyền của bot và của người thao tác ở kênh Bảng vàng; audit như lệnh gõ tay.
+  - `XP_CHANNEL_TYPES` và `BOARD_CHANNEL_TYPES` chuyển từ `config.ts` sang `configPanel.ts`, dùng chung cho option của lệnh gõ tay và menu của bảng. Menu kênh vì vậy không có thread và category.
+- Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`). Có 5 namespace: `lb` (`/leaderboard`), `contrib` (`/contribution`), `poll` (`/poll`), `tierui` và `cfgui` (`/config`). Component của command `adminOnly` cũng qua `assertAdmin` (DEC-033), nên người mất quyền admin bấm vào bảng cũ vẫn bị chặn.
 - `/config tier set-role|clear-role|list`: gán role cho bậc; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
 ### 3.6 Quyền xem và đăng
@@ -157,28 +201,33 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 
 | Nhóm | Bảng |
 | --- | --- |
-| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`), `channel_settings`, `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
+| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
 | Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration:
+Migration (5 migration, version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
   - `contributions.source_message_id` + unique index một phần `(guild_id, source_message_id) WHERE source_message_id IS NOT NULL AND status = 'active'`.
-- **4** (Phase 13): đổi khoá cảnh giới cũ trong `tier_roles` sang `bac-N`, thêm `created_by_bot`; bảng `tier_set_config` (bộ đang dùng) và `tier_name_overrides` (tên/emoji tuỳ chỉnh theo bộ). Backup/restore không đổi.
 - **3** (Phase 12):
   - `guild_settings.poll_xp_daily_cap` (mặc định 25);
   - `tier_roles` (unique theo role trong guild), `live_boards`;
   - index cho bảng theo kỳ (`idx_*_events_period`), chuỗi ngày và XP vote trong ngày (`idx_xp_events_user_source`), huy hiệu (`idx_contribution_votes_voter`, `idx_poll_participants_user`). Xem LL-015.
   - Không đổi gì với backup/restore: vẫn một file SQLite. Chuỗi ngày và huy hiệu tính lại từ ledger, không có bảng riêng.
+- **4** (Phase 13): đổi khoá cảnh giới cũ trong `tier_roles` sang `bac-N`, thêm `created_by_bot`; bảng `tier_set_config` (bộ đang dùng) và `tier_name_overrides` (tên/emoji tuỳ chỉnh theo bộ). Backup/restore không đổi.
+- **5** (Phase 15, DEC-037): `guild_settings.xp_channel_mode TEXT NOT NULL DEFAULT 'all'`, `CHECK (xp_channel_mode IN ('all', 'selected'))`. Guild đang chạy nhận `all`, nên hành vi không đổi khi cập nhật. `getSettings` vẫn kiểm tra giá trị đọc ra (giá trị lạ rơi về mặc định).
+  - Backup/restore: vẫn một file SQLite, không có file mới.
+  - Backup cũ (version ≤ 4) khôi phục vào code mới thì tự migrate lên 5 lúc khởi động, với chế độ `all`. Guild đã chuyển sang `selected` phải chọn lại chế độ và bật lại channel sau khi khôi phục (DEPLOY mục 6).
+  - Code cũ (migration ≤ 4) gặp DB version 5 thì từ chối khởi động, như mọi migration; selfcheck của code cũ báo ❌.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;
 - ledger chỉ thêm dòng, không sửa hay xoá (void bằng `voided_at`);
 - bảng `member_*` và `*_team_totals` là cache, luôn cập nhật trong cùng transaction với ledger;
+- `channel_settings` chỉ là cấu hình riêng: channel không có dòng thì theo `guild_settings.xp_channel_mode` (mục 3.2b);
 - hạng tính theo competition ranking (`RANK()`: hoà điểm thì cùng hạng), giống nhau ở `/rank` và `/leaderboard`;
 - không có cột nào chứa nội dung tin nhắn.
 
@@ -188,6 +237,7 @@ Quy tắc:
 - Quyền bot tối thiểu: View Channels, Send Messages, Send Messages in Threads, Embed Links, Attach Files (ảnh thẻ, DEC-030), Manage Roles (role cảnh giới, DEC-031) (`docs/DEPLOY.md`).
 - Role danh hiệu: không nhận `@everyone`, role managed, role mentionable, role có quyền quản trị/kiểm duyệt (cấp server hoặc overwrite kênh), role không thấp hơn role cao nhất của bot; kiểm tra lại mỗi lần thêm role. Quyền Manage Roles của người gọi lấy ở cấp server (`member.permissions`, LL-019).
 - `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level/đột phá mới ping người được nhắc.
+- Bảng `/config panel` không thêm quyền bot hay intent. Bề mặt mới là component namespace `cfgui`: dispatcher kiểm tra admin (lớp 2) cho mọi component, customId được đọc bằng regex chặt, ô số kiểm tra theo `SETTING_LIMITS`, role/kênh chọn trong menu đi qua cùng kiểm tra với lệnh gõ tay.
 - Secret chỉ lấy từ env; logger che token; `build/` không chứa file cấu hình.
 - `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
 
@@ -209,3 +259,4 @@ Quy tắc:
 - Ảnh: `test/cards.test.ts` vẽ thật và kiểm PNG; lệnh `/rank`, `/leaderboard` cho phép thay hàm vẽ (`renderCard`) trong test. `/config board` cho phép thay hàm Bảng vàng (`liveBoardActions`).
 - `test/audit-view.test.ts` kiểm hiển thị audit với dữ liệu thật (LL-011).
 - `test/commands.test.ts` kiểm mọi command build được JSON, không trùng tên, và command admin có đủ hai lớp quyền.
+- Phase 15: `test/config-panel-contract.test.ts` kiểm hợp đồng customId `cfgui` (mã hoá rồi đọc lại, ≤ 100 ký tự, không trùng, từ chối customId lạ) và `parseFormNumber`; `test/guildConfig.test.ts` kiểm chế độ kênh và `setChannelsXpEnabled`; `test/activity.test.ts` kiểm tin ở channel chưa bật khi chế độ `selected`; `test/migrations.test.ts` kiểm migration 5 trên DB version 4 có sẵn cấu hình.
