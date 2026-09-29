@@ -247,7 +247,7 @@ describe("bảng cấu hình: khung chung (hàm thuần)", () =>
 		}
 	});
 
-	test("tiêu đề kèm tên trang, rồi menu chọn trang: 6 lựa chọn có emoji, label, description; default là trang hiện tại", () =>
+	test("tiêu đề kèm tên trang, rồi menu chọn trang: 6 lựa chọn có emoji, label, description; không default (chọn lại trang đang xem để làm mới), placeholder ghi trang đang xem", () =>
 	{
 		for (const page of CONFIG_PANEL_PAGES)
 		{
@@ -258,7 +258,8 @@ describe("bảng cấu hình: khung chung (hàm thuần)", () =>
 			assert.equal(nav.min_values, 1);
 			assert.equal(nav.max_values, 1);
 			assert.deepEqual(nav.options?.map(option => option.value), [...CONFIG_PANEL_PAGES]);
-			assert.deepEqual(nav.options?.map(option => option.default ?? false), CONFIG_PANEL_PAGES.map(key => key === page), page);
+			assert.ok((nav.options ?? []).every(option => option.default !== true), page);
+			assert.ok((nav.placeholder ?? "").startsWith("📍 Đang xem: "), page);
 			for (const option of nav.options ?? [])
 			{
 				assert.ok(option.label.length > 0 && (option.description ?? "").length > 0, option.value);

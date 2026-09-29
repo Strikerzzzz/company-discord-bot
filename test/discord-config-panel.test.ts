@@ -15,12 +15,15 @@ import {
 	configPanelReply,
 	configPanelUpdate,
 	INVALID_CONFIG_PANEL,
+	pageOfAction,
+	parseConfigPanelId,
 	XpFormValues,
 } from "../src/discord/views/configPanel";
 import { INVALID_PANEL_ACTION, TierPanelData, tierPanelReply, tierPanelUpdate } from "../src/discord/views/tierPanel";
 import InteractionCreate from "../src/events/interactionCreate";
 import ButtonHandler from "../src/handlers/ButtonHandler";
 import ConfigCmd, {
+	BOARD_CHANNEL_NOT_VISIBLE,
 	CONFIG_ROLE_CHANGED,
 	FORM_UNCHANGED,
 	SELECT_AT_LEAST_ONE_ROLE,
@@ -350,9 +353,35 @@ function privateText(recorded: Recorded | undefined): string
 }
 
 /** Lỗi báo riêng cho người bấm: đúng một tin nhắn riêng, không đụng tới bảng. */
+/** Menu chọn của bảng cấu hình (trừ chuyển trang) bị từ chối thì bảng được vẽ lại theo dữ liệu thật trước khi báo lỗi. */
+function redrawsOnRefusal(call: Call): boolean
+{
+	if (call.kind !== "channel" && call.kind !== "role" && call.kind !== "string") return false;
+	try
+	{
+		return parseConfigPanelId(call.id).type !== "nav";
+	}
+	catch
+	{
+		return false;
+	}
+}
+
+/**
+ * Thao tác bị từ chối: nút và form chỉ báo riêng; menu chọn của bảng cấu hình vẽ lại bảng (update, dữ liệu không đổi) rồi báo
+ * riêng bằng followUp, để Discord không giữ lựa chọn vừa bị từ chối (review Phase 15).
+ */
 async function refused(harness: Harness, call: Call, message: string): Promise<void>
 {
 	const calls = await dispatch(harness, call);
+	if (redrawsOnRefusal(call))
+	{
+		assert.deepEqual(methods(calls), ["update", "followUp"], call.id);
+		const page = pageOfAction(parseConfigPanelId(call.id));
+		assert.deepEqual(toJson(calls[0].payload), toJson(configPanelUpdate(page, panelData(harness))), call.id);
+		assert.equal(privateText(calls[1]), message, call.id);
+		return;
+	}
 	assert.deepEqual(methods(calls), ["reply"], call.id);
 	assert.equal(privateText(calls[0]), message, call.id);
 }
@@ -370,17 +399,30 @@ function textOf(value: unknown): string
 	return Object.entries(value).map(([key, item]) => (key === "content" && typeof item === "string" ? item : textOf(item))).join("\n");
 }
 
-/** Dữ liệu bảng đọc thẳng từ service thật (độc lập với handler), để so với bảng handler vẽ ra. */
+/**
+ * Dữ liệu bảng đọc thẳng từ service thật (độc lập với handler), để so với bảng handler vẽ ra. Role/kênh đã lưu mà không có
+ * trong server giả (`world`) được đánh dấu "không còn trong server", như handler làm với cache của guild.
+ */
 function panelData(harness: Harness, notice: string | null = null): ConfigPanelData
 {
 	const { guildConfig, teams, tierSets } = harness.context.deps;
+	const settings = guildConfig.getSettings(GUILD);
+	const teamIds = teams.list(GUILD);
+	const boardChannelId = harness.liveBoards.get(GUILD)?.channelId ?? null;
+	const missingIds = new Set<string>();
+	for (const roleId of [settings.adminRoleId, settings.pollCreatorRoleId, ...teamIds])
+	{
+		if (roleId !== null && !harness.world.roles.has(roleId)) missingIds.add(roleId);
+	}
+	if (boardChannelId !== null && !harness.world.channels.has(boardChannelId)) missingIds.add(boardChannelId);
 	return {
-		settings: guildConfig.getSettings(GUILD),
+		settings,
 		channels: guildConfig.listChannels(GUILD),
-		teams: teams.list(GUILD),
-		boardChannelId: harness.liveBoards.get(GUILD)?.channelId ?? null,
+		teams: teamIds,
+		boardChannelId,
 		tierSet: tierSets.current(GUILD),
 		tierRoleCount: harness.tierRoles.list(GUILD).length,
+		missingIds,
 		notice,
 	};
 }
@@ -700,6 +742,15 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ levelUpAnnouncements: false }]);
 	});
 
+	test("công tắc thông báo lên level trên bảng cũ (giá trị đã đúng): không ghi, không audit, báo không có gì thay đổi", async () =>
+	{
+		const harness = createHarness();
+		const calls = await dispatch(harness, button({ type: "announce", enabled: true }));
+		assert.deepEqual(methods(calls), ["update"]);
+		assertPanel(harness, calls[0], "xp", "Không có gì thay đổi: • Thông báo lên level: **Bật** sẵn rồi.");
+		assert.deepEqual(audits(harness.context, "config.update"), []);
+	});
+
 	test("nút mở form: form XP và form vote điền sẵn giá trị hiện tại (customId mang giá trị lúc mở)", async () =>
 	{
 		const harness = createHarness();
@@ -897,10 +948,10 @@ describe("bảng cấu hình: Bảng vàng và bảng danh hiệu", () =>
 			`Bot thiếu quyền **Attach Files** ở <#${CHANNEL_NO_ATTACH}>. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
 		await refused(harness, { kind: "channel", id: board, values: [CHANNEL_VOICE] },
 			`Bảng vàng chỉ đặt được ở kênh chữ hoặc kênh thông báo; <#${CHANNEL_VOICE}> không phải loại kênh này.`);
-		await refused(harness, { kind: "channel", id: board, values: [CHANNEL_UNKNOWN] }, SELECTED_CHANNEL_UNAVAILABLE);
-		await refused(harness, { kind: "channel", id: board, values: [] }, SELECTED_CHANNEL_UNAVAILABLE);
+		await refused(harness, { kind: "channel", id: board, values: [CHANNEL_UNKNOWN] }, BOARD_CHANNEL_NOT_VISIBLE);
+		await refused(harness, { kind: "channel", id: board, values: [] }, BOARD_CHANNEL_NOT_VISIBLE);
 		assert.equal(harness.liveBoards.get(GUILD), null);
-		assert.deepEqual(harness.steps, ["reply", "reply", "reply", "reply", "reply"]);
+		assert.deepEqual(harness.steps, Array.from({ length: 5 }, () => ["update", "followUp"]).flat(), "không defer, không đăng hay xoá message Bảng vàng");
 		assert.deepEqual(audits(harness.context, "board"), []);
 	});
 

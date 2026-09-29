@@ -195,6 +195,8 @@ export const CONFIG_ROLE_CHANGED = "Role này vừa được đổi ở nơi kh�
 	+ "Bảng đã được cập nhật; hãy kiểm tra rồi thao tác lại.";
 export const SELECT_AT_LEAST_ONE_ROLE = "Hãy chọn ít nhất một role.";
 export const SELECTED_CHANNEL_UNAVAILABLE = "Không tìm thấy kênh vừa chọn trong server. Vui lòng thử lại.";
+export const BOARD_CHANNEL_NOT_VISIBLE = "Bot không thấy kênh vừa chọn: có thể bot chưa có quyền **View Channel** ở kênh đó. "
+	+ "Hãy cấp quyền View Channel, Send Messages, Attach Files cho bot ở kênh đó rồi chọn lại.";
 export const FORM_UNCHANGED = "Không có gì thay đổi: bạn chưa sửa ô nào trong form.";
 
 /** Component của bảng cấu hình trả lời bằng cách sửa chính bảng (update hoặc deferUpdate + editReply). */
@@ -650,7 +652,7 @@ export default class ConfigCmd extends Command
 		else if (group === "team") await this.executeTeam(context, subcommand);
 		else if (group === "tier") await this.executeTier(context, subcommand);
 		else if (subcommand === "view") await this.view(context);
-		else if (subcommand === "panel") await interaction.reply(configPanelReply("home", this.configPanelData(context.guildId)));
+		else if (subcommand === "panel") await interaction.reply(configPanelReply("home", this.configPanelData(context.guildId, context.interaction.guild)));
 		else if (subcommand === "xp") await this.updateXp(context);
 		else if (subcommand === "admin-role") await this.updateAdminRole(context);
 		else if (subcommand === "poll") await this.updatePoll(context);
@@ -857,9 +859,13 @@ export default class ConfigCmd extends Command
 	private async resetChannel({ interaction, guildId, actorId }: ConfigContext): Promise<void>
 	{
 		const channel = interaction.options.getChannel("kenh", true);
-		const removed = this.services.guildConfig.resetChannel(guildId, channel.id, actorId);
+		const { guildConfig } = this.services;
+		const removed = guildConfig.resetChannel(guildId, channel.id, actorId);
+		const consequence = guildConfig.getSettings(guildId).xpChannelMode === "all"
+			? "và **tính XP** (server đang dùng chế độ tất cả kênh)"
+			: "và **không tính XP** (server đang dùng chế độ chỉ kênh được bật)";
 		await interaction.reply(ephemeral(removed
-			? `Đã xoá cấu hình riêng của ${channelMention(channel.id)}. Channel này dùng lại cấu hình chung.`
+			? `Đã xoá cấu hình riêng của ${channelMention(channel.id)}. Channel này dùng lại cấu hình chung ${consequence}.`
 			: `${channelMention(channel.id)} vốn không có cấu hình riêng.`));
 	}
 
@@ -1275,17 +1281,33 @@ export default class ConfigCmd extends Command
 
 	// ---------- Bảng cấu hình chung `/config panel` (PROP-033, DEC-037) ----------
 
-	/** Dữ liệu dựng bảng cấu hình, đọc từ service ngay trước khi vẽ; `notice` là kết quả thao tác vừa làm. */
-	private configPanelData(guildId: string, notice: string | null = null): ConfigPanelData
+	/**
+	 * Dữ liệu dựng bảng cấu hình, đọc từ service ngay trước khi vẽ; `notice` là kết quả thao tác vừa làm. `guild` (nếu có trong
+	 * cache) để nhận ra role/kênh đã lưu nhưng không còn trong server: bảng không điền sẵn các ID đó và hiện cảnh báo.
+	 */
+	private configPanelData(guildId: string, guild: Guild | null, notice: string | null = null): ConfigPanelData
 	{
 		const { guildConfig, teams, liveBoards, tierSets, tierRoles } = this.services;
+		const settings = guildConfig.getSettings(guildId);
+		const teamIds = teams.list(guildId);
+		const boardChannelId = liveBoards.get(guildId)?.channelId ?? null;
+		const missingIds = new Set<string>();
+		if (guild)
+		{
+			for (const roleId of [settings.adminRoleId, settings.pollCreatorRoleId, ...teamIds])
+			{
+				if (roleId !== null && !guild.roles.cache.has(roleId)) missingIds.add(roleId);
+			}
+			if (boardChannelId !== null && !guild.channels.cache.has(boardChannelId)) missingIds.add(boardChannelId);
+		}
 		return {
-			settings: guildConfig.getSettings(guildId),
+			settings,
 			channels: guildConfig.listChannels(guildId),
-			teams: teams.list(guildId),
-			boardChannelId: liveBoards.get(guildId)?.channelId ?? null,
+			teams: teamIds,
+			boardChannelId,
 			tierSet: tierSets.current(guildId),
 			tierRoleCount: tierRoles.list(guildId).length,
+			missingIds,
 			notice,
 		};
 	}
@@ -1293,7 +1315,7 @@ export default class ConfigCmd extends Command
 	/** Thay bảng hiện có bằng trang `page`, kèm kết quả thao tác (`notice`). */
 	private async updateConfigPanel(interaction: PanelComponentInteraction, page: ConfigPanelPage, notice: string | null = null): Promise<void>
 	{
-		await interaction.update(configPanelUpdate(page, this.configPanelData(requireGuildId(interaction), notice)));
+		await interaction.update(configPanelUpdate(page, this.configPanelData(requireGuildId(interaction), interaction.guild, notice)));
 	}
 
 	/** Nút của bảng cấu hình: đổi chế độ kênh, bật/tắt thông báo lên level, mở form, tắt Bảng vàng, mở bảng danh hiệu. */
@@ -1310,6 +1332,11 @@ export default class ConfigCmd extends Command
 		case "announce":
 		{
 			const patch: Partial<GuildSettings> = { levelUpAnnouncements: action.enabled };
+			if (this.services.guildConfig.getSettings(guildId).levelUpAnnouncements === action.enabled)
+			{
+				await this.updateConfigPanel(interaction, page, `Không có gì thay đổi: ${describeSettingsPatch(patch).join("")} sẵn rồi.`);
+				break;
+			}
 			this.services.guildConfig.updateSettings(guildId, patch, actorId);
 			await this.updateConfigPanel(interaction, page, `Đã cập nhật cấu hình Activity XP:\n${describeSettingsPatch(patch).join("\n")}`);
 			break;
@@ -1331,8 +1358,36 @@ export default class ConfigCmd extends Command
 		}
 	}
 
-	/** Menu chọn của bảng cấu hình; loại menu phải khớp thao tác trong customId, không thì báo bảng đã cũ. */
+	/**
+	 * Menu chọn của bảng cấu hình. Thao tác bị từ chối trước khi bot trả lời thì vẽ lại bảng theo dữ liệu thật rồi mới ném lại
+	 * lỗi (dispatcher báo riêng): nếu không, Discord vẫn hiện lựa chọn vừa bị từ chối trong khi customId giữ role lúc vẽ, và
+	 * thao tác "hoàn tác" kế tiếp (bỏ chọn) sẽ xoá nhầm role đang đặt (như panelAssignRole của bảng danh hiệu).
+	 */
 	private async configPanelSelect(interaction: AnySelectMenuInteraction, action: ConfigPanelAction): Promise<void>
+	{
+		try
+		{
+			await this.routeConfigPanelSelect(interaction, action);
+		}
+		catch (error)
+		{
+			if (action.type !== "nav" && !interaction.replied && !interaction.deferred)
+			{
+				try
+				{
+					await this.updateConfigPanel(interaction, pageOfAction(action));
+				}
+				catch (redrawError)
+				{
+					logger.warn(`Không vẽ lại được bảng cấu hình sau thao tác bị từ chối ở server "${interaction.guildId ?? ""}":`, redrawError);
+				}
+			}
+			throw error;
+		}
+	}
+
+	/** Loại menu phải khớp thao tác trong customId, không thì báo bảng đã cũ. */
+	private async routeConfigPanelSelect(interaction: AnySelectMenuInteraction, action: ConfigPanelAction): Promise<void>
 	{
 		const page = pageOfAction(action);
 		if (action.type === "nav" && interaction.isStringSelectMenu()) await this.panelNavigate(interaction);
@@ -1427,7 +1482,7 @@ export default class ConfigCmd extends Command
 		const changed = Object.keys(patch).length > 0;
 		if (changed) this.services.guildConfig.updateSettings(guildId, patch, interaction.user.id);
 		const notice = changed ? `Đã cập nhật cấu hình ${label}:\n${describeSettingsPatch(patch).join("\n")}` : FORM_UNCHANGED;
-		await interaction.update(configPanelUpdate(page, this.configPanelData(guildId, notice)));
+		await interaction.update(configPanelUpdate(page, this.configPanelData(guildId, interaction.guild, notice)));
 	}
 
 	/**
@@ -1480,7 +1535,7 @@ export default class ConfigCmd extends Command
 		const { guild, guildId } = interaction;
 		const channelId = interaction.values[0];
 		const channel = channelId === undefined ? undefined : guild.channels.cache.get(channelId);
-		if (!channel) throw new UserError(SELECTED_CHANNEL_UNAVAILABLE);
+		if (!channel) throw new UserError(BOARD_CHANNEL_NOT_VISIBLE);
 		if (!isBoardChannel(channel))
 		{
 			throw new UserError(`Bảng vàng chỉ đặt được ở kênh chữ hoặc kênh thông báo; ${channelMention(channel.id)} không phải loại kênh này.`);
@@ -1519,7 +1574,7 @@ export default class ConfigCmd extends Command
 	{
 		try
 		{
-			await interaction.editReply(configPanelUpdate(page, this.configPanelData(guildId, notice)));
+			await interaction.editReply(configPanelUpdate(page, this.configPanelData(guildId, interaction.guild, notice)));
 		}
 		catch (error)
 		{

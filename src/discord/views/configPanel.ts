@@ -242,6 +242,11 @@ export interface ConfigPanelData
 	tierSet: TierSet;
 	tierRoleCount: number;
 	/**
+	 * ID role/kênh đang lưu trong cấu hình nhưng không còn trong server (role admin, role tạo vote, role team, kênh Bảng vàng):
+	 * không điền sẵn vào menu chọn (Discord có thể từ chối ID không tồn tại) và hiện cảnh báo. Không truyền = coi như còn đủ.
+	 */
+	missingIds?: ReadonlySet<string>;
+	/**
 	 * Kết quả thao tác vừa làm (ví dụ "Đã bật XP cho 3 kênh"), hiển thị NGUYÊN VĂN trong một TextDisplay ở đầu trang;
 	 * null/undefined = không có. Thay cho tin nhắn phản hồi riêng.
 	 */
@@ -369,11 +374,15 @@ function tierSummary({ tierSet, tierRoleCount }: ConfigPanelData): string
 
 // ---------- Khung chung: tiêu đề, notice, menu chọn trang ----------
 
+/**
+ * Menu chọn trang. Không đánh dấu `default` cho trang hiện tại (placeholder ghi trang đang xem), để chọn lại đúng trang đó
+ * vẫn sinh interaction, tức là làm mới trang.
+ */
 function navSelect(page: ConfigPanelPage): StringSelectMenuBuilder
 {
 	return new StringSelectMenuBuilder()
 		.setCustomId(configPanelId({ type: "nav" }))
-		.setPlaceholder("Chọn mục cấu hình")
+		.setPlaceholder(`📍 Đang xem: ${PAGE_INFO[page].label} · chọn để chuyển trang hoặc làm mới`)
 		.setMinValues(1)
 		.setMaxValues(1)
 		.addOptions(CONFIG_PANEL_PAGES.map(key => ({
@@ -381,9 +390,15 @@ function navSelect(page: ConfigPanelPage): StringSelectMenuBuilder
 			value: key,
 			description: PAGE_INFO[key].description,
 			emoji: { name: PAGE_INFO[key].emoji },
-			default: key === page,
 		})));
 }
+
+function isMissing(data: ConfigPanelData, id: string | null): boolean
+{
+	return id !== null && (data.missingIds?.has(id) ?? false);
+}
+
+const MISSING_ROLE_NOTE = "⚠️ Role đã lưu không còn trong server.";
 
 // ---------- Trang tổng quan ----------
 
@@ -476,10 +491,26 @@ function channelsSelect(enabled: boolean): ChannelSelectMenuBuilder
 		.setMaxValues(SELECT_MAX_VALUES);
 }
 
+/**
+ * Kênh có trạng thái lưu riêng mà chế độ hiện tại không cần tới (chế độ all: kênh bật riêng không có XP/cooldown riêng;
+ * chế độ selected: kênh tắt riêng). Không liệt kê, chỉ nhắc số lượng vì chúng giữ nguyên trạng thái khi đổi chế độ.
+ */
+function pinnedChannelsNote({ settings, channels }: ConfigPanelData): string | null
+{
+	if (settings.xpChannelMode === "all")
+	{
+		const pinned = channels.filter(channel => channel.xpEnabled && !hasOwnXp(channel)).length;
+		return pinned === 0 ? null : `-# ${formatNumber(pinned)} kênh được bật riêng: vẫn tính XP nếu chuyển sang chế độ chỉ kênh được bật.`;
+	}
+	const pinned = channels.filter(channel => !channel.xpEnabled).length;
+	return pinned === 0 ? null : `-# ${formatNumber(pinned)} kênh bị tắt riêng: vẫn tắt nếu chuyển sang chế độ tất cả kênh.`;
+}
+
 function addChannelsPage(container: ContainerBuilder, data: ConfigPanelData, budget: number): void
 {
 	const mode = data.settings.xpChannelMode;
-	const modeText = `**Chế độ hiện tại: ${xpChannelModeLabel(mode)}**\n${MODE_DETAILS[mode]}`;
+	const pinned = pinnedChannelsNote(data);
+	const modeText = [`**Chế độ hiện tại: ${xpChannelModeLabel(mode)}**`, MODE_DETAILS[mode], ...(pinned === null ? [] : [pinned])].join("\n");
 	const listMax = Math.min(LIST_MAX, budget - modeText.length - CHANNELS_NOTE.length);
 	container
 		.addTextDisplayComponents(textDisplay(modeText))
@@ -508,9 +539,10 @@ function teamSelect(add: boolean, teamCount: number): RoleSelectMenuBuilder
 		.setDisabled(add ? full : none);
 }
 
-function addTeamsPage(container: ContainerBuilder, { teams }: ConfigPanelData, budget: number): void
+function addTeamsPage(container: ContainerBuilder, data: ConfigPanelData, budget: number): void
 {
-	const lines = teams.map((roleId, index) => `${index + 1}. ${roleMention(roleId)}`);
+	const { teams } = data;
+	const lines = teams.map((roleId, index) => `${index + 1}. ${roleMention(roleId)}${isMissing(data, roleId) ? " ⚠️ không còn trong server" : ""}`);
 	const head = `Team đang có (${formatNumber(teams.length)}/${formatNumber(MAX_TEAMS)})`;
 	const empty = "Chưa có team nào. Chọn role ở ô ➕ bên dưới để thêm.";
 	const listMax = Math.min(LIST_MAX, budget - TEAMS_NOTE.length);
@@ -539,29 +571,38 @@ function addXpPage(container: ContainerBuilder, { settings }: ConfigPanelData): 
 
 // ---------- Trang vote và contribution ----------
 
-/** Ô chọn một role, cho phép bỏ chọn; điền sẵn role hiện tại nếu có. */
-function singleRoleSelect(action: ConfigPanelAction, placeholder: string, roleId: string | null): RoleSelectMenuBuilder
+/** Ô chọn một role, cho phép bỏ chọn; điền sẵn role hiện tại nếu có và còn trong server (`prefill`). */
+function singleRoleSelect(action: ConfigPanelAction, placeholder: string, roleId: string | null, prefill: boolean): RoleSelectMenuBuilder
 {
 	const select = new RoleSelectMenuBuilder()
 		.setCustomId(configPanelId(action))
 		.setPlaceholder(placeholder)
 		.setMinValues(0)
 		.setMaxValues(1);
-	return roleId === null ? select : select.setDefaultRoles(roleId);
+	return roleId === null || !prefill ? select : select.setDefaultRoles(roleId);
 }
 
-function addPollPage(container: ContainerBuilder, { settings }: ConfigPanelData): void
+function addPollPage(container: ContainerBuilder, data: ConfigPanelData): void
 {
+	const { settings } = data;
 	const roleId = settings.pollCreatorRoleId;
+	const missing = isMissing(data, roleId);
+	const lines = ["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS)];
+	if (missing) lines.push(`${MISSING_ROLE_NOTE} Chọn role khác, hoặc xoá bằng \`/config poll xoa-role-tao-vote:True\`.`);
 	container
-		.addTextDisplayComponents(textDisplay(["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS), POLL_NOTE].join("\n")))
+		.addTextDisplayComponents(textDisplay([...lines, POLL_NOTE].join("\n")))
 		.addActionRowComponents(row(button({ type: "pollForm" }, "✏️ Sửa số", ButtonStyle.Primary)))
-		.addActionRowComponents(row(singleRoleSelect({ type: "pollRole", drawnRoleId: roleId }, "Role được tạo vote (bỏ chọn = chỉ admin)", roleId)));
+		.addActionRowComponents(row(singleRoleSelect(
+			{ type: "pollRole", drawnRoleId: roleId },
+			"Role được tạo vote (bỏ chọn = chỉ admin)",
+			roleId,
+			!missing,
+		)));
 }
 
 // ---------- Trang Bảng vàng và quyền ----------
 
-function boardSelect(boardChannelId: string | null): ChannelSelectMenuBuilder
+function boardSelect(boardChannelId: string | null, prefill: boolean): ChannelSelectMenuBuilder
 {
 	const select = new ChannelSelectMenuBuilder()
 		.setCustomId(configPanelId({ type: "board" }))
@@ -569,26 +610,32 @@ function boardSelect(boardChannelId: string | null): ChannelSelectMenuBuilder
 		.setChannelTypes(...BOARD_CHANNEL_TYPES)
 		.setMinValues(1)
 		.setMaxValues(1);
-	return boardChannelId === null ? select : select.setDefaultChannels(boardChannelId);
+	return boardChannelId === null || !prefill ? select : select.setDefaultChannels(boardChannelId);
 }
 
 function addBoardPage(container: ContainerBuilder, data: ConfigPanelData): void
 {
 	const { settings, boardChannelId } = data;
-	const boardText = boardChannelId === null
+	const boardMissing = isMissing(data, boardChannelId);
+	let boardText = boardChannelId === null
 		? "Đang tắt. Chọn kênh bên dưới để bật."
 		: `Đang đặt ở ${channelMention(boardChannelId)}; bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.`;
+	if (boardMissing) boardText += "\n⚠️ Bot không còn thấy kênh này (đã bị xoá hoặc bot mất quyền xem). Chọn kênh khác hoặc tắt Bảng vàng.";
 	const adminRoleId = settings.adminRoleId;
+	const adminMissing = isMissing(data, adminRoleId);
+	const adminLines = ["**🔐 Quyền admin bot**", settingLine("adminRoleId", adminRoleId)];
+	if (adminMissing) adminLines.push(`${MISSING_ROLE_NOTE} Chọn role khác, hoặc xoá bằng \`/config admin-role\` (bỏ trống role).`);
 	container
 		.addTextDisplayComponents(textDisplay(`**🏆 Bảng vàng**\n${boardText}`))
-		.addActionRowComponents(row(boardSelect(boardChannelId)))
+		.addActionRowComponents(row(boardSelect(boardChannelId, !boardMissing)))
 		.addActionRowComponents(row(button({ type: "boardOff" }, "Tắt Bảng vàng", ButtonStyle.Danger).setDisabled(boardChannelId === null)))
 		.addSeparatorComponents(separator())
-		.addTextDisplayComponents(textDisplay(["**🔐 Quyền admin bot**", settingLine("adminRoleId", adminRoleId), ADMIN_NOTE].join("\n")))
+		.addTextDisplayComponents(textDisplay([...adminLines, ADMIN_NOTE].join("\n")))
 		.addActionRowComponents(row(singleRoleSelect(
 			{ type: "adminRole", drawnRoleId: adminRoleId },
 			"Role admin bot (bỏ chọn = chỉ người có Manage Server)",
 			adminRoleId,
+			!adminMissing,
 		)))
 		.addSeparatorComponents(separator())
 		.addTextDisplayComponents(textDisplay(`**🏅 Danh hiệu:** ${tierSummary(data)}`))
@@ -597,7 +644,7 @@ function addBoardPage(container: ContainerBuilder, data: ConfigPanelData): void
 
 /**
  * Bảng cấu hình của một trang (Components V2, màu nhấn COLORS.primary): tiêu đề kèm tên trang, `notice` nguyên văn nếu có
- * (dài quá CONFIG_PANEL_NOTICE_MAX thì cắt), menu chọn trang (`nav`, điền sẵn trang hiện tại), rồi nội dung trang.
+ * (dài quá CONFIG_PANEL_NOTICE_MAX thì cắt), menu chọn trang (`nav`, placeholder ghi trang đang xem), rồi nội dung trang.
  * Trang nhiều nhất (board) có 19 component tính cả lồng nhau, dưới giới hạn 40; danh sách kênh và team cắt bằng fitLines để
  * tổng chữ của mọi TextDisplay ≤ 4.000. Mọi customId từ configPanelId.
  */

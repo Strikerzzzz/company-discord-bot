@@ -93,6 +93,31 @@ function data(mode: XpChannelMode): ConfigPanelData
 	};
 }
 
+describe("bảng cấu hình: role/kênh đã lưu nhưng không còn trong server", () =>
+{
+	test("không điền sẵn vào menu, hiện cảnh báo; customId vẫn mang role lúc vẽ để bỏ chọn đúng", () =>
+	{
+		const missing: ConfigPanelData = { ...data("all"), missingIds: new Set([ROLE_ADMIN, ROLE_POLL, ROLE_TEAM, CHANNEL_A]) };
+		const poll = buildConfigPanel("poll", missing).toJSON();
+		const board = buildConfigPanel("board", missing).toJSON();
+		const teams = JSON.stringify(buildConfigPanel("teams", missing).toJSON());
+		for (const [page, json] of [["poll", poll], ["board", board]] as const)
+		{
+			const text = JSON.stringify(json);
+			assert.ok(text.includes("không còn trong server") || text.includes("Bot không còn thấy kênh này"), page);
+			assert.ok(!text.includes("default_values"), `${page}: không điền sẵn ID không còn tồn tại`);
+		}
+		assert.ok(JSON.stringify(board).includes("Bot không còn thấy kênh này"));
+		assert.ok(teams.includes(`<@&${ROLE_TEAM}> ⚠️ không còn trong server`));
+		const adminSelect = interactives(board).find(component => component.customId.startsWith("cfgui:admin:"));
+		assert.equal(adminSelect?.customId, `cfgui:admin:${ROLE_ADMIN}`);
+
+		const present = JSON.stringify(buildConfigPanel("board", data("all")).toJSON());
+		assert.ok(present.includes("default_values"), "còn trong server thì vẫn điền sẵn");
+		assert.ok(!present.includes("không còn"));
+	});
+});
+
 describe("bảng cấu hình: giao diện (agent A) khớp handler (agent B)", () =>
 {
 	for (const mode of ["all", "selected"] as const)
