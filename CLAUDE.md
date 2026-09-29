@@ -61,6 +61,7 @@ Chi tiết và sơ đồ: `docs/ai/ARCHITECTURE.md`. Những điểm cần biế
 - **Dispatcher** `events/interactionCreate.ts` là error boundary duy nhất. Nó hiển thị `UserError` nguyên văn và kiểm tra `adminOnly` (lớp quyền 2).
 - **Button**: `customId` có dạng `<namespace>:<payload>`. Namespace khai báo trong `buttonIds`; command tự validate payload.
 - **Hiển thị**: dựng embed/nút bằng hàm thuần trong `src/discord/views/`, dùng helper trong `src/discord/format.ts`.
+- **Trang web quản trị** (`src/web/`, DEC-039): tầng ngang hàng tầng Discord, chạy trong cùng process (node:http, tắt khi không đặt `WEB_PORT`). Đăng nhập bằng Discord OAuth2; server kiểm tra quyền admin ở mỗi request, CSRF và Host/Origin trước khi gọi trang. Trang gọi đúng service và `src/discord/configOps.ts` như lệnh `/config`, không tự viết lại quy tắc. HTML chỉ dựng bằng template `html` (tự escape); không style hay script inline (CSP).
 
 Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa dispatcher, loader, ledger, migration hay cơ chế config.
 
@@ -87,7 +88,7 @@ Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước 
 Chỉ được thay đổi thông qua proposal đã được duyệt (xem mục Quy trình):
 
 1. Không truy cập database sản phẩm của công ty. Database của bot hoàn toàn độc lập.
-2. Không tự thêm PostgreSQL, MySQL, MongoDB, Redis, Kafka, RabbitMQ, microservices, Kubernetes, API server riêng, database server riêng, external SaaS, cloud service, dashboard, Docker.
+2. Không tự thêm PostgreSQL, MySQL, MongoDB, Redis, Kafka, RabbitMQ, microservices, Kubernetes, API server riêng, database server riêng, external SaaS, cloud service, dashboard, Docker. (Ngoại lệ đã duyệt: trang web quản trị nhúng trong process bot, chỉ mạng nội bộ, DEC-039. Không mở rộng ngoại lệ này khi chưa có proposal mới.)
 3. Không tự thêm external service hay network call.
 4. Không tự cấp quyền Administrator.
 5. Không tự quyết định hoặc thay đổi công thức scoring hay business rule.
