@@ -110,6 +110,20 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		);
 	}
 
+	/**
+	 * Trang GET để quay về sau khi POST ở `subpath` bị lỗi: chính `subpath` nếu có route GET, không thì bỏ dần đoạn cuối
+	 * (`/board/off` → `/board`, `/tiers/set` → `/tiers`), cuối cùng là trang tổng quan.
+	 */
+	function pageAfterPost(subpath: string): string
+	{
+		let path = subpath;
+		while (path.length > 0 && !routes.some(entry => entry.method === "GET" && entry.path === path))
+		{
+			path = path.slice(0, path.lastIndexOf("/"));
+		}
+		return path;
+	}
+
 	function servedGuild(guildId: string): Guild | null
 	{
 		return deps.guildIds.includes(guildId) ? deps.client.guilds.cache.get(guildId) ?? null : null;
@@ -251,7 +265,7 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 			if (req.method === "POST")
 			{
 				session.flash = { kind: "error", text: message };
-				return redirect(`/g/${guildId}${subpath}`);
+				return redirect(`/g/${guildId}${pageAfterPost(subpath)}`);
 			}
 			return error instanceof UserError ? messagePage("Không thực hiện được", message, 400) : messagePage("Lỗi", message, 500);
 		}

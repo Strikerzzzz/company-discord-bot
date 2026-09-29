@@ -231,6 +231,23 @@ describe("web: phân quyền và form", () =>
 		await call(harness, target, { form: withCsrf(auth, { loi: "2" }), cookies: auth.cookies });
 		assert.ok((await call(harness, target, { cookies: auth.cookies })).body.includes("Đã có lỗi xảy ra"), "lỗi lạ không lộ chi tiết");
 	});
+
+	test("POST ở đường dẫn con không có trang GET bị lỗi: quay về trang cha gần nhất có GET, flash hiện ở đó", async () =>
+	{
+		const nested: PageModule = {
+			routes: [
+				...TEST_PAGE.routes,
+				{ method: "POST", path: "/thu/xoa", handler: () => Promise.reject(new UserError("Không xoá được.")) },
+				{ method: "POST", path: "/khac/con", handler: () => Promise.reject(new UserError("Lỗi ở trang không có cha.")) },
+			],
+		};
+		const harness = createWebHarness([nested]);
+		const auth = await login(harness, ADMIN_USER);
+		const refused = await call(harness, `/g/${GUILD}/thu/xoa`, { form: withCsrf(auth), cookies: auth.cookies });
+		assert.equal(refused.headers.Location, `/g/${GUILD}/thu`);
+		assert.ok((await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies })).body.includes("Không xoá được."));
+		assert.equal((await call(harness, `/g/${GUILD}/khac/con`, { form: withCsrf(auth), cookies: auth.cookies })).headers.Location, `/g/${GUILD}`);
+	});
 });
 
 describe("web: máy chủ HTTP thật", () =>

@@ -51,7 +51,8 @@ export type NavKey = "overview" | "channels" | "teams" | "settings" | "roles" | 
  * Quy ước:
  * - GET trả về `renderPage(ctx, ...)` (layout.ts).
  * - POST xử lý form rồi trả về `redirectWithFlash(ctx, path, "ok", text)` (mẫu POST → chuyển hướng → GET). Lỗi nghiệp vụ thì
- *   ném `UserError`: server tự đặt flash lỗi và chuyển hướng về GET cùng đường dẫn, không ghi gì thêm.
+ *   ném `UserError`: server tự đặt flash lỗi và chuyển hướng về trang GET cùng đường dẫn, hoặc trang cha gần nhất có route GET
+ *   (`/board/off` → `/board`), không ghi gì thêm.
  * - Mọi form POST phải có `csrfField(ctx)`. Đọc form bằng `ctx.req.form`. Không bao giờ tin giá trị form: kiểm tra lại ID kênh/role
  *   có trong `ctx.guild` và đúng loại; số đi qua `parseFormNumber` hoặc giới hạn của service.
  * - Form có thể bị hai admin mở cùng lúc: đặt giá trị lúc vẽ vào input ẩn và chỉ ghi phần admin thật sự đổi (như `/config panel`).
