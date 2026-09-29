@@ -1,29 +1,33 @@
 # ARCHITECTURE
 
-> Cập nhật lần cuối: 2026-09-29, Phase 15 (bảng cấu hình `/config panel` và chế độ kênh tính XP, branch `phase-15/config-panel`, DEC-037). Phase 0–14 đã merge vào `main`.
+> Cập nhật lần cuối: 2026-09-29, Phase 16 (trang web quản trị, branch `phase-16/web-admin`, DEC-039). Phase 0–15 đã merge vào `main`.
 > Mô tả kiến trúc **hiện tại**, theo source code thực tế.
 
 ## 1. Tổng quan
 
 ```
-Discord ──► Tầng Discord (mỏng) ──► Service nghiệp vụ ──► Ledger / Repository ──► SQLite (1 file)
-            events, commands,        modules/*              modules/ledger,
-            views, guards            (không import          *Repository.ts
-                                     discord.js)
+Discord ─────► Tầng Discord (mỏng) ───┐
+               events, commands,      │
+               views, guards          ├──► Service nghiệp vụ ──► Ledger / Repository ──► SQLite (1 file)
+                                      │    modules/*              modules/ledger,
+Trình duyệt ──► Tầng web (mỏng) ──────┘    (không import          *Repository.ts
+(mạng nội bộ)   src/web/, node:http,       discord.js)
+                tuỳ chọn (WEB_PORT)
 ```
 
-- **Topology** (DEC-002, DEC-016): 1 process Node.js (Linux, Node 24 LTS), 1 file SQLite (WAL), kết nối ra Discord (API và CDN avatar, DEC-030). Không mở port, không có hạ tầng nào khác.
+- **Topology** (DEC-002, DEC-016, DEC-039): 1 process Node.js (Linux, Node 24 LTS), 1 file SQLite (WAL), kết nối ra Discord (API, OAuth2 và CDN avatar, DEC-030). Không có hạ tầng nào khác. Không mở port, trừ cổng `WEB_PORT` của trang web quản trị tuỳ chọn: cổng này do chính process bot lắng nghe, chỉ dùng trong mạng nội bộ hoặc VPN (mục 3.7).
 - **Hai hệ thống điểm độc lập** (DEC-004): Activity XP dùng `xp_events` + `member_xp`; Contribution Score dùng `contribution_events` + `member_contribution`. Hai hệ thống dùng hai instance `Ledger` riêng và không bao giờ cộng gộp.
-- **Hướng phụ thuộc**: `discord` → `modules` → `db` / `shared`. ESLint chặn `src/modules/**`, `src/db/**`, `src/shared/**` import discord.js (DEC-007).
+- **Hướng phụ thuộc**: `discord` → `modules` → `db` / `shared`; `web` → `modules` và helper dùng chung của `discord` (chủ yếu `discord/configOps.ts`, mục 3.7). `discord` không import `web`; chỉ `index.ts` nối hai tầng. ESLint chặn `src/modules/**`, `src/db/**`, `src/shared/**` import discord.js (DEC-007). Tầng web được import discord.js (đối tượng `Guild`, `GuildMember` của bot), như tầng Discord.
 
 ## 2. Cấu trúc thư mục
 
 ```
 src/
-├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login
+├── index.ts                  Composition root: config → mở DB + migrate → services → lịch backup → client → login;
+│                             khi clientReady mở trang web quản trị nếu có WEB_PORT (mục 3.7)
 ├── selfcheck.ts              Entry point thứ hai (`npm run selfcheck`): tự kiểm tra môi trường trước khi bật bot; logic ở selfcheck/
 │                             (không gọi mạng, không mở DB thật bằng SQLite: đọc header và chạy thử trên bản sao trong thư mục tạm, LL-020)
-├── config.ts                 Đọc và validate biến môi trường (DEC-015)
+├── config.ts                 Đọc và validate biến môi trường (DEC-015); loadWebConfig (WEB_*, DISCORD_CLIENT_SECRET; null = web tắt)
 ├── services.ts               AppServices + createServices(): khởi tạo mọi service bằng constructor injection
 ├── shared/                   clock (inject được), errors (UserError), logger (che token), time (ngày/tuần/tháng giờ Việt Nam)
 ├── db/
@@ -53,7 +57,23 @@ src/
 ├── interactions/
 │   ├── commands/             ping, rank, leaderboard, contribution, poll, admin, config
 │   └── contextMenus/         RecognizeContribution ("Ghi nhận đóng góp")
+├── web/                      Trang web quản trị tuỳ chọn (DEC-039, mục 3.7): chạy trong process bot, chỉ mở khi có WEB_PORT
+│   ├── server.ts             createWebHandler (thuần: Host, route, phiên, lấy lại member, isAdmin, CSRF/Origin, flash, error
+│   │                         boundary của web) + readRequest, startWebServer (nối node:http, timeout, giới hạn body)
+│   ├── http.ts               WebRequest/WebResponse, cookie (HttpOnly, SameSite=Lax), SECURITY_HEADERS (CSP), RateLimiter,
+│   │                         safeEqual, MAX_FORM_BYTES (256 KB)
+│   ├── oauth.ts              DiscordOAuth: URL cho phép (scope identify), đổi code lấy token → users/@me → bỏ token
+│   ├── session.ts            SessionStore trong bộ nhớ: 8 giờ tuyệt đối, tối đa 500 phiên, khoá là SHA-256 của token; CSRF, flash
+│   ├── types.ts              Hợp đồng trang: WebDeps, GuildPageContext, GuildRoute, PageModule, NavKey, quy ước form
+│   ├── layout.ts             Khung trang (menu 8 mục NAV_ITEMS), renderPage/renderPlainPage, csrfField, redirectWithFlash
+│   ├── html.ts               Template `html` tự escape mọi giá trị chèn vào, RawHtml
+│   ├── format.ts             Tên kênh/role/người thay cho ID; discordText (markdown/mention kiểu Discord → HTML đã escape)
+│   ├── assets.ts             CSS nền, phục vụ ở /static/app.css (CSP chặn style inline)
+│   └── pages/                8 module trang (overview, channels, teams, settings, roles, board, tiers, audit); index.ts: PAGE_MODULES
 └── discord/                  Helper của tầng Discord
+    ├── configOps.ts          Kiểm tra và thao tác cấu hình dùng chung cho `/config` và web (DEC-039): role dùng được
+    │                         (assertAssignableRole, assertNotTierRole, assertUsableRole), quyền kênh Bảng vàng của bot và người
+    │                         gọi (assertBoardChannelAccess), moveLiveBoard/turnOffLiveBoard, LiveBoardActions
     ├── guards.ts             requireGuildId, assertAdmin/checkAdmin, checkCanCreatePoll,
     │                         canSendMessages (chặn đăng hộ vào kênh chỉ đọc), canViewChannel/filterViewable
     ├── members.ts            roleIdsOf()
@@ -77,7 +97,7 @@ src/
                               hình chung `/config panel`, Components V2, hợp đồng customId `cfgui`, form sửa số; mục 3.5)
 assets/fonts/                 Be Vietnam Pro (4 weight) + OFL.txt
 test/                         node:test + SQLite :memory: (xem mục 7)
-deploy/                       Unit systemd
+deploy/                       Unit systemd, install.sh, start.sh (unit không đổi khi bật web)
 docs/DEPLOY.md                Runbook triển khai và vận hành
 ```
 
@@ -85,18 +105,20 @@ docs/DEPLOY.md                Runbook triển khai và vận hành
 
 ### 3.1 Khởi động
 `index.ts`:
-1. `loadConfig()`;
+1. `loadConfig()`, gồm `loadWebConfig()`: cấu hình web sai (đặt `WEB_PORT` mà thiếu hay sai `WEB_BASE_URL`, `DISCORD_CLIENT_SECRET`) thì bot từ chối khởi động;
 2. `openDatabase()` + `runMigrations()`, **trước** khi login (LL-007);
 3. `createServices()`;
 4. `startBackupSchedule()`;
 5. `new DiscordClient(services, guildIds)`;
-6. `ProcessManager` với các hook tắt: dừng backup → `client.destroy()` → `db.close()`;
-7. `login()`.
+6. nếu có `config.web`: đăng ký `client.once(ClientReady)` để mở web (bên dưới);
+7. `ProcessManager` với các hook tắt: đóng web (nếu đang mở) → dừng backup → `client.destroy()` → `db.close()`;
+8. `login()`.
 
 Khi `clientReady`:
 - deploy toàn bộ command theo guild, set global command về rỗng;
 - khởi động lịch đóng vote (30 giây một lần);
-- khởi động lịch Bảng vàng (10 phút một lần, lượt đầu sau 15 giây).
+- khởi động lịch Bảng vàng (10 phút một lần, lượt đầu sau 15 giây);
+- nếu có `WEB_PORT`: `startWebServer()` (mục 3.7). Web mở **sau** khi bot sẵn sàng vì cần cache guild, role, kênh. Log `Trang web quản trị: <WEB_BASE_URL> (lắng nghe <host>:<port>).`; không mở được (ví dụ cổng bị chiếm) thì chỉ ghi log lỗi, bot vẫn chạy.
 
 ### 3.2 Tin nhắn → Activity XP
 ```
@@ -200,6 +222,92 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 - **Đăng**: tạo nội dung công khai (contribution, vote) cần quyền gửi tin ở kênh đó. `/rank` và `/leaderboard` thì trả lời riêng khi người gọi không có quyền gửi tin.
 - **Guild**: bot bỏ qua tin nhắn và interaction của guild không có trong `DISCORD_GUILD_IDS`.
 
+### 3.7 Trang web quản trị (DEC-039)
+
+> **Ngoại lệ có phạm vi** của luật protected số 2 (dashboard, API server) và số 3 (thêm endpoint nhận kết nối từ ngoài vào), theo DEC-039 (duyệt PROP-037): chỉ **web quản trị nhúng trong process bot, chỉ mạng nội bộ hoặc VPN, đăng nhập bằng Discord**. Ngoại lệ không mở rộng sang dashboard công khai, API cho hệ thống khác, server hay dịch vụ riêng, reverse proxy. Mọi mở rộng cần proposal mới.
+
+Tầng web `src/web/` ngang hàng tầng Discord: nhận request từ trình duyệt, kiểm tra, rồi gọi đúng service (và `configOps`) như lệnh `/config`. Không thêm dependency: dùng `node:http`, `node:crypto` và `fetch` có sẵn của Node. HTML render phía server; CSP không cho chạy script nào, nên trang không có JavaScript phía client.
+
+**Luồng request**
+
+```
+node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliveTimeout 5 s)
+  → readRequest: chỉ GET/POST (khác → 405); POST chỉ nhận application/x-www-form-urlencoded (khác → 415),
+                 body ≤ MAX_FORM_BYTES 256 KB (quá → 413); các lỗi này trả lời kèm Connection: close
+  → createWebHandler.handle (bộ xử lý thuần, test gọi thẳng; mọi response thêm SECURITY_HEADERS; lỗi lạ → trang 500 + log)
+      1. GET /healthz                  → "ok" (không kiểm Host, không cần đăng nhập)
+      2. Host ≠ host của WEB_BASE_URL   → 421 "Sai địa chỉ truy cập" (chống DNS rebinding)
+      3. GET /static/app.css           → BASE_CSS + css của các PageModule
+      4. đọc phiên từ cookie `sid`
+      5. route chung: GET / (trang đăng nhập, hoặc chuyển tới guild đầu tiên) · GET /auth/login · GET /auth/callback ·
+                      POST /auth/logout (còn phiên thì cần CSRF)
+      6. /g/<guildId><subpath>:
+           chưa có phiên                         → GET: 303 về "/"; POST: 403
+           guild không thuộc DISCORD_GUILD_IDS hoặc không có trong cache → 404
+           lấy lại member qua REST (guild.members.fetch({ force: true }), không dùng cache)
+             → isAdmin (Manage Server theo member.permissions hoặc role admin bot; cùng hàm với lớp quyền 2) → không đạt: 403
+           POST: RateLimiter theo user (120 lần/phút) → 429
+                 token `_csrf` khớp phiên (safeEqual) và Origin (nếu trình duyệt gửi) = WEB_BASE_URL → không đạt: 403
+           tìm GuildRoute theo method + subpath     → không có: 404
+           handler trang (GuildPageContext: req, deps, session, guild, member, actorId) → service / configOps
+             UserError: POST → flash lỗi + 303 về GET cùng trang; GET → trang lỗi 400. Lỗi khác: log + thông báo chung
+```
+
+**Đăng nhập** (OAuth2 authorization code, scope `identify`, `src/web/oauth.ts`):
+- `GET /auth/login`: giới hạn tần suất theo IP (30 lần/phút) → state ngẫu nhiên vào cookie `oauth_state` (Path=/auth, 10 phút) → 303 tới `discord.com/oauth2/authorize` với `redirect_uri=<WEB_BASE_URL>/auth/callback`, `prompt=none` (người đã cho phép từ trước thì Discord không hỏi lại).
+- `GET /auth/callback`:
+  - giới hạn tần suất theo IP; có `error` (người dùng huỷ) → về trang đăng nhập;
+  - so `state` với cookie (safeEqual), `code` đúng định dạng;
+  - `DiscordOAuth.identify`: POST `oauth2/token` (Basic auth bằng Application ID và `DISCORD_CLIENT_SECRET`), rồi GET `users/@me`, timeout 10 giây. **Access token bị bỏ ngay**, không lưu;
+  - tìm guild đầu tiên trong `DISCORD_GUILD_IDS` mà người này là admin (member lấy qua REST). Không có → về trang đăng nhập với mã `noadmin`. Có → tạo phiên, đặt cookie `sid`, 303 tới `/g/<guildId>`.
+- Trang đăng nhập chỉ hiện thông báo theo mã cố định (`?loi=denied|expired|failed|noadmin|busy|starting|out`), không phản chiếu chữ từ URL.
+- Application ID lấy từ client sau khi login (`client.application.id`), nên không cần biến môi trường riêng.
+
+**Phiên và form:**
+- `SessionStore` trong bộ nhớ process. Cookie chỉ chứa token ngẫu nhiên 32 byte; map lưu theo SHA-256 của token. Hạn 8 giờ tuyệt đối, không gia hạn; tối đa 500 phiên (vượt thì bỏ phiên cũ nhất). Khởi động lại bot là mất mọi phiên. Đăng xuất chỉ huỷ phiên hiện tại.
+- Mỗi phiên có một token CSRF; mọi form POST có `csrfField(ctx)`.
+- Mẫu POST → xử lý → `redirectWithFlash` (303) → GET. Flash lưu trong phiên, hiện một lần.
+- Form mang giá trị lúc vẽ trong input ẩn và chỉ ghi phần admin thật sự đổi, như customId mang trạng thái của `/config panel` (mục 3.5), để hai tab hay hai admin không đè nhau.
+- Không tin giá trị form: kiểm tra lại ID kênh/role có trong guild và đúng loại; số đi qua `parseFormNumber` hoặc giới hạn của service (quy ước trong `src/web/types.ts`).
+
+**Mô hình bảo mật:**
+- Chỉ mạng nội bộ hoặc VPN: ràng buộc về hạ tầng (không mở cổng ra Internet, `docs/DEPLOY.md` mục 7.5), code không tự chặn theo IP.
+- Xác thực bằng Discord (OAuth2 `identify`). Phân quyền bằng đúng `isAdmin` của lớp quyền 2, kiểm tra lại ở **mỗi request** với member lấy mới từ Discord. Không có mật khẩu; không lưu access token hay refresh token.
+- Cookie `sid` và `oauth_state`: HttpOnly, SameSite=Lax (để cookie state đi theo khi Discord chuyển hướng về callback), thêm `Secure` khi `WEB_BASE_URL` là https.
+- CSRF: token theo phiên và kiểm Origin cho mọi POST, kể cả đăng xuất.
+- Kiểm tra Host (421) chống DNS rebinding; `/healthz` là ngoại lệ duy nhất.
+- `SECURITY_HEADERS` cho mọi response: CSP `default-src 'none'; style-src 'self'; img-src 'self' https://cdn.discordapp.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-store`.
+- Escape: mọi HTML dựng bằng template `html` (tự escape giá trị chèn vào). Chữ kiểu Discord từ service hay `UserError` đi qua `discordText`: escape trước, rồi mới đổi mention và markdown.
+- Giới hạn tần suất: `/auth/login` và `/auth/callback` 30 lần/phút mỗi IP; POST trang guild 120 lần/phút mỗi người. Body form ≤ 256 KB; có timeout request.
+- Secret: `DISCORD_CLIENT_SECRET` chỉ đọc từ env qua `config.ts`, không bao giờ đưa vào log hay thông báo lỗi. Logger không có mẫu che riêng cho secret này, nên code không được log nó. Selfcheck chỉ báo "có".
+- HTTP nội bộ: cookie đi không mã hoá trong mạng công ty (rủi ro đã nêu ở PROP-037, chấp nhận ở DEC-039). HTTPS cần chứng chỉ do IT cấp; `startWebServer` hiện chỉ phục vụ HTTP, cách gắn chứng chỉ cần duyệt riêng.
+- Không thêm quyền bot hay intent: lấy member qua REST không cần Server Members Intent.
+
+**Dùng chung với `/config`: `src/discord/configOps.ts`**
+- Tách từ `interactions/commands/config.ts` ở nền móng Phase 16, để lệnh Discord và web luôn cùng quy tắc:
+  - role gán được (không phải @everyone hay role managed), không phải role danh hiệu, dùng được làm role admin bot, role tạo vote hay team;
+  - quyền của bot và của người thao tác ở kênh Bảng vàng (LL-013);
+  - `moveLiveBoard` / `turnOffLiveBoard`.
+- Thông báo trả về dùng markdown/mention kiểu Discord; web chuyển sang HTML bằng `discordText`.
+- `LiveBoardActions` (đăng/xoá message Bảng vàng) inject qua `WebDeps.liveBoardActions`; test thay bằng hàm giả.
+- `GuildConfigService.setChannelsXpEnabled` nhận thêm `maxChannels`: menu Discord giữ `MAX_BULK_CHANNELS` (25), web dùng `MAX_WEB_BULK_CHANNELS` (500).
+
+**Cấu hình** (`loadWebConfig` trong `src/config.ts`, mẫu trong `.env.example`):
+
+| Biến | Ý nghĩa |
+| --- | --- |
+| `WEB_PORT` | 1024–65535. Không đặt → `config.web = null`, web tắt |
+| `WEB_BASE_URL` | Bắt buộc khi bật. Chỉ `http(s)://host[:port]`, chuẩn hoá thành `url.origin`. Dùng cho redirect OAuth2 và kiểm tra Host/Origin |
+| `DISCORD_CLIENT_SECRET` | Bắt buộc khi bật. Không được chứa khoảng trắng |
+| `WEB_HOST` | Địa chỉ lắng nghe, mặc định `0.0.0.0` |
+
+- Selfcheck: `checkWebConfig` (dùng đúng `loadWebConfig`) in trạng thái tắt/bật, địa chỉ lắng nghe và redirect cần đăng ký; lỗi chỉ nêu tên biến.
+- Unit systemd không đổi: cổng > 1024 không cần capability; `RestrictAddressFamilies` đã có `AF_INET` và `AF_INET6`.
+
+**Database:** không đổi schema, không có migration mới (vẫn 5 migration). Phiên lưu trong bộ nhớ, nên phương án migration 6 (bảng phiên) của PROP-037 không làm (DEC-039). Backup/restore không đổi. Mọi thao tác ghi đi qua service có sẵn, audit với `actorId` là Discord user ID của người đăng nhập.
+
+**Trang:** 8 module trong `src/web/pages/` (`NavKey` → đường dẫn dưới `/g/<guildId>`): `overview` (rỗng) · `channels` `/channels` · `teams` `/teams` · `settings` `/settings` · `roles` `/roles` · `board` `/board` · `tiers` `/tiers` · `audit` `/audit`. Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), thêm vào `PAGE_MODULES`; cần mục menu thì thêm `NavKey` và `NAV_ITEMS`.
+
 ## 4. Dữ liệu
 
 | Nhóm | Bảng |
@@ -225,6 +333,7 @@ Migration (5 migration, version lưu ở `PRAGMA user_version`):
   - Backup/restore: vẫn một file SQLite, không có file mới.
   - Backup cũ (version ≤ 4) khôi phục vào code mới thì tự migrate lên 5 lúc khởi động, với chế độ `all`. Guild đã chuyển sang `selected` phải chọn lại chế độ và bật lại channel sau khi khôi phục (DEPLOY mục 6).
   - Code cũ (migration ≤ 4) gặp DB version 5 thì từ chối khởi động, như mọi migration; selfcheck của code cũ báo ❌.
+- Phase 16 (trang web quản trị, DEC-039) **không** thêm migration: phiên đăng nhập web chỉ lưu trong bộ nhớ (mục 3.7).
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;
@@ -241,7 +350,8 @@ Quy tắc:
 - Role danh hiệu: không nhận `@everyone`, role managed, role mentionable, role có quyền quản trị/kiểm duyệt (cấp server hoặc overwrite kênh), role không thấp hơn role cao nhất của bot; kiểm tra lại mỗi lần thêm role. Quyền Manage Roles của người gọi lấy ở cấp server (`member.permissions`, LL-019).
 - `allowedMentions` rỗng ở cấp client; chỉ thông báo lên level/đột phá mới ping người được nhắc.
 - Bảng `/config panel` không thêm quyền bot hay intent. Bề mặt mới là component namespace `cfgui`: dispatcher kiểm tra admin (lớp 2) cho mọi component, customId được đọc bằng regex chặt, ô số kiểm tra theo `SETTING_LIMITS`, role/kênh chọn trong menu đi qua cùng kiểm tra với lệnh gõ tay.
-- Secret chỉ lấy từ env; logger che token; `build/` không chứa file cấu hình.
+- Trang web quản trị (DEC-039, mục 3.7): tắt mặc định. Khi bật, bề mặt mới là một cổng HTTP trong mạng nội bộ. Không thêm quyền bot hay intent. Có đăng nhập Discord (`identify`), kiểm tra admin ở mỗi request, CSRF, kiểm tra Host/Origin, CSP, giới hạn tần suất, escape mọi dữ liệu hiển thị.
+- Secret (`DISCORD_TOKEN`, `DISCORD_CLIENT_SECRET`) chỉ lấy từ env; logger che token; Client Secret không bao giờ được log; `build/` không chứa file cấu hình.
 - `.npmrc ignore-scripts=true`; systemd chạy bằng user riêng và chỉ được ghi vào `data/`.
 
 ## 6. Giao tiếp ra bên ngoài
@@ -250,6 +360,8 @@ Quy tắc:
 | --- | --- |
 | Runtime | Discord Gateway (WebSocket) và Discord REST, qua discord.js |
 | Runtime | CDN avatar của Discord (chỉ `cdn.discordapp.com`), HTTPS, không theo redirect, chỉ PNG/JPEG/WebP tối đa 512 KB, qua `AvatarFetcher` (DEC-030) |
+| Runtime, khi admin đăng nhập web | Discord OAuth2: POST `discord.com/api/v10/oauth2/token`, GET `users/@me`, timeout 10 giây, qua `DiscordOAuth` (DEC-039) |
+| Runtime, chiều vào (chỉ khi bật web) | Trình duyệt trong mạng nội bộ/VPN → cổng `WEB_PORT` (HTTP) do chính process bot lắng nghe (DEC-039) |
 | Cài đặt | npm registry (không có install script; binary better-sqlite3 và `@napi-rs/canvas` nằm sẵn trong package theo nền tảng) |
 
 ## 7. Test
@@ -263,3 +375,8 @@ Quy tắc:
 - `test/audit-view.test.ts` kiểm hiển thị audit với dữ liệu thật (LL-011).
 - `test/commands.test.ts` kiểm mọi command build được JSON, không trùng tên, và command admin có đủ hai lớp quyền.
 - Phase 15: `test/config-panel-contract.test.ts` kiểm hợp đồng customId `cfgui` (mã hoá rồi đọc lại, ≤ 100 ký tự, không trùng, từ chối customId lạ) và `parseFormNumber`; `test/guildConfig.test.ts` kiểm chế độ kênh và `setChannelsXpEnabled`; `test/activity.test.ts` kiểm tin ở channel chưa bật khi chế độ `selected`; `test/migrations.test.ts` kiểm migration 5 trên DB version 4 có sẵn cấu hình.
+- Phase 16 (trang web quản trị):
+  - `test/web-helpers.ts` là bộ dựng dùng chung: service thật trên SQLite `:memory:`, server Discord giả (guild, role, kênh, thành viên với quyền và role), `fakeDiscordFetch` thay OAuth2 của Discord, gọi thẳng bộ xử lý thuần `createWebHandler` (không cần socket). Có sẵn `login()` (đi hết luồng OAuth2 giả, trả cookie và token CSRF), `call()`, `withCsrf()`, `setCookieValue()`, các ID mẫu (`ADMIN_USER`, `ROLE_ADMIN_USER`, `PLAIN_USER`, `STRANGER`, …);
+  - `test/web-core.test.ts`: HTML escape và `discordText`, Host sai → 421, header bảo mật, luồng đăng nhập (state, huỷ, không phải admin), đăng xuất cần CSRF, quyền kiểm lại ở mỗi request, CSRF/Origin cho POST, flash; một test chạy qua `node:http` thật (chỉ nhận form, chặn body quá lớn, phương thức lạ);
+  - `test/selfcheck.test.ts` kiểm `checkWebConfig` (tắt, bật, lỗi không in secret);
+  - test của từng trang dùng cùng bộ dựng `web-helpers.ts`.

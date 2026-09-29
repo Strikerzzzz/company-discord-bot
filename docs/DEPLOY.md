@@ -1,6 +1,6 @@
 # Triển khai và vận hành
 
-> Dành cho người cài đặt và vận hành bot trên server Linux. Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Không cần database server, không mở port nào từ ngoài vào.
+> Dành cho người cài đặt và vận hành bot trên server Linux. Kiến trúc: **1 process Node.js + 1 file SQLite + Discord**. Không cần database server. Không mở port nào từ ngoài vào, trừ khi bật trang web quản trị (tuỳ chọn, mục 7.5): khi đó mở một cổng, chỉ trong mạng nội bộ.
 
 ## 1. Yêu cầu
 
@@ -8,8 +8,8 @@
 | --- | --- |
 | Hệ điều hành | Linux có systemd ≥ 247 (ví dụ Ubuntu Server 24.04 LTS) |
 | Node.js | **24 LTS** (tối thiểu 22.14, vì better-sqlite3 cần N-API 10) |
-| Mạng ra ngoài | HTTPS/WSS cổng 443 tới `discord.com`, `gateway.discord.gg`; tới `cdn.discordapp.com` để tải avatar vẽ lên ảnh thẻ (DEC-030); tới `registry.npmjs.org` khi cài đặt |
-| Mạng vào | Không cần (trừ SSH để quản trị) |
+| Mạng ra ngoài | HTTPS/WSS cổng 443 tới `discord.com` (cả đăng nhập trang web quản trị), `gateway.discord.gg`; tới `cdn.discordapp.com` để tải avatar vẽ lên ảnh thẻ (DEC-030); tới `registry.npmjs.org` khi cài đặt |
+| Mạng vào | Không cần (trừ SSH để quản trị). Bật trang web quản trị (tuỳ chọn, mục 7.5) thì mở thêm cổng `WEB_PORT` (ví dụ 8787), **chỉ trong mạng nội bộ hoặc VPN** |
 | Tài nguyên | 1 vCPU, 1–2 GB RAM, ~20 GB ổ đĩa (tính cả bản sao lưu) |
 
 Không cần C++ build tools: better-sqlite3 13 đã kèm sẵn binary, và `.npmrc` tắt install script (LL-008).
@@ -47,6 +47,11 @@ Không cần C++ build tools: better-sqlite3 13 đã kèm sẵn binary, và `.np
    - Mở URL vừa tạo để mời bot vào server.
    - Bot đã được mời từ trước (bản chưa có Attach Files, Manage Roles): mở lại link mời mới để cập nhật quyền, hoặc thêm hai quyền này cho role của bot trong **Server Settings → Roles**.
 5. Lấy Server ID: trong Discord, bật Developer Mode, chuột phải vào server và chọn Copy Server ID.
+6. **Chỉ khi bật trang web quản trị** (tuỳ chọn, mục 7.5), làm thêm trong tab **OAuth2**:
+   - **Client Secret**: bấm "Reset Secret" rồi chép vào `DISCORD_CLIENT_SECRET` trong `.env`. Không gửi qua chat hay email;
+   - **Redirects**: thêm `<WEB_BASE_URL>/auth/callback`, ví dụ `http://192.168.0.206:8787/auth/callback`, rồi lưu.
+
+   Không bật web thì bỏ qua bước này. Web không cần thêm quyền bot, scope hay intent nào.
 
 ## 3. Cài đặt lần đầu
 
@@ -72,7 +77,7 @@ sudo install -d -m 700 -o discordbot -g discordbot data
 
 # Cấu hình bí mật
 sudo install -m 600 .env.example .env
-sudo nano .env                 # điền DISCORD_TOKEN, DISCORD_GUILD_IDS
+sudo nano .env                 # điền DISCORD_TOKEN, DISCORD_GUILD_IDS (biến WEB_* chỉ khi bật web, mục 7.5)
 ```
 
 ### 3.1. Tự kiểm tra môi trường (`selfcheck`)
@@ -81,6 +86,11 @@ Chạy **sau khi build và điền `.env`, trước khi bật service**, và sau
 
 1. Phiên bản Node: tối thiểu 22.14, khuyến nghị 24 LTS.
 2. Cấu hình đọc bằng đúng code của bot: có `DISCORD_TOKEN` (chỉ báo "có", không in giá trị hay độ dài; token quá ngắn hoặc còn khoảng trắng/xuống dòng ở giữa là ❌), `DISCORD_GUILD_IDS` hợp lệ, đường dẫn database và backup, `LOG_LEVEL`. Giá trị sai không được in lại: lỗi `DISCORD_GUILD_IDS` chỉ nêu vị trí mục sai (ví dụ "mục thứ 2"), vì biến này có thể bị dán nhầm token.
+   - Có thêm một dòng cho **trang web quản trị** (mục 7.5):
+     - không đặt `WEB_PORT`: ✅ "Trang web quản trị: tắt (không đặt WEB_PORT).";
+     - đã bật: ✅ "Trang web quản trị: bật, lắng nghe 0.0.0.0:8787, địa chỉ http://192.168.0.206:8787; DISCORD_CLIENT_SECRET: có. Redirect cần đăng ký trên Developer Portal (OAuth2 → Redirects): http://192.168.0.206:8787/auth/callback". So redirect này với tab OAuth2 → Redirects trên portal;
+     - cấu hình web sai (thiếu `WEB_BASE_URL` hay `DISCORD_CLIENT_SECRET`, cổng ngoài 1024–65535, `WEB_BASE_URL` có đường dẫn phía sau, secret có khoảng trắng hoặc xuống dòng ở giữa): ❌. Lỗi chỉ nêu tên biến, không in Client Secret. **Bot từ chối khởi động** khi cấu hình web sai, nên phải sửa `.env` hoặc xoá `WEB_PORT`.
+   - Selfcheck không thử mở cổng web và không gọi Discord. Cổng bị chiếm, firewall chặn hay redirect chưa đăng ký thì kiểm tra theo mục 7.5.
 3. Thư mục database và thư mục backup tồn tại hoặc tạo được, và ghi được: tạo rồi xoá một file tạm. Thư mục phải tạo để thử thì được xoá lại ngay.
 4. better-sqlite3 nạp được, tức binary native đúng nền tảng.
 5. Database:
@@ -197,6 +207,7 @@ sudo systemctl restart company-discord-bot
 
 - Lúc chạy selfcheck, bot bản cũ vẫn đang chạy, nên cảnh báo "Có file ...-wal chưa gộp vào database" là bình thường. Nếu gặp ⚠️ "kết quả kiểm tra database không tin cậy khi bot đang ghi": đó là do bot đang ghi đúng lúc selfcheck chép database, không phải database hỏng. Muốn kiểm chắc chắn thì dừng bot (`sudo systemctl stop company-discord-bot`), chạy lại selfcheck rồi mới bật lại; **không** khôi phục backup chỉ vì dòng này.
 - Migration database chạy tự động khi bot khởi động.
+- Đã bật trang web quản trị (mục 7.5) thì sau khi bot khởi động lại, admin phải đăng nhập lại trên web. Đây là bình thường: phiên đăng nhập chỉ lưu trong bộ nhớ.
 - Nếu database mới hơn code (ví dụ lỡ quay về bản cũ), bot từ chối khởi động để tránh hỏng dữ liệu.
 
 ## 6. Sao lưu và khôi phục (DEC-017)
@@ -236,13 +247,13 @@ Nên diễn tập khôi phục một lần trước khi đưa vào dùng chính 
 
 ## 7. Cấu hình ban đầu trong Discord
 
-Người có quyền **Manage Server** (hoặc role admin bot, xem bước 5) cấu hình bot ngay trong Discord. Mọi thay đổi đều được ghi audit log, xem bằng `/admin audit`.
+Người có quyền **Manage Server** (hoặc role admin bot, xem bước 5) cấu hình bot ngay trong Discord, hoặc trên trang web quản trị nếu đã bật (mục 7.5). Mọi thay đổi đều được ghi audit log, xem bằng `/admin audit`.
 
 ### Bảng cấu hình `/config panel`
 
 Cách dễ nhất là gõ `/config panel`. Bot trả lời bằng một bảng **chỉ bạn thấy**. Bạn bấm nút và chọn trong menu, không cần nhớ tên option.
 
-- Không có trang web hay đường link nào. Bảng nằm ngay trong Discord và chỉ mở được bằng lệnh `/config panel`. Dự án không làm dashboard web.
+- Bảng nằm ngay trong Discord, không có đường link, chỉ mở được bằng lệnh `/config panel`. Muốn cấu hình bằng trình duyệt thì dùng trang web quản trị (tuỳ chọn, mục 7.5). Trang web phải bật riêng và chỉ dùng trong mạng nội bộ.
 - Menu ở đầu bảng dùng để chuyển trang. Bảng có 6 trang:
 
 | Trang | Hiện gì | Làm được gì |
@@ -262,7 +273,7 @@ Cách bảng hoạt động:
 - Mỗi ô trong form phải là số nguyên trong khoảng ghi dưới ô. Nhập sai thì bot từ chối và nêu tên ô.
 - Menu chọn role (role tạo vote, role admin bot) điền sẵn role hiện tại. Bỏ chọn nghĩa là xoá role đó. Nếu role vừa bị đổi ở nơi khác sau khi bảng được vẽ, bot không xoá gì mà vẽ lại bảng theo dữ liệu mới. Bạn kiểm tra rồi làm lại.
 - Menu chọn kênh không có thread và category. Tin trong thread và bài trong forum tính theo kênh cha. Muốn bật cả một category thì chọn từng kênh trong đó.
-- XP hoặc cooldown riêng của từng kênh không có trên bảng. Dùng `/config channel set` như cũ.
+- XP hoặc cooldown riêng của từng kênh không có trên bảng. Dùng `/config channel set` như cũ, hoặc trang **Kênh tính XP** của trang web quản trị (mục 7.5).
 - Bảng báo "đã cũ hoặc không hợp lệ" thì mở lại bằng `/config panel`.
 
 ### Các bước cấu hình ban đầu
@@ -290,7 +301,7 @@ Mỗi bước ghi trang tương ứng trên `/config panel` và lệnh gõ tay t
 
      Lý do: hai lệnh này mặc định chỉ hiện với người có Manage Server, và Discord chặn trước khi yêu cầu tới được bot.
    - **Cẩn thận khi đổi hoặc bỏ role admin bot** nếu bạn là admin chỉ nhờ role đó (không có Manage Server): bỏ chọn trên bảng là lưu ngay, và bạn mất quyền admin bot ngay lập tức. Khi đó chỉ người có Manage Server khôi phục được.
-   - **Muốn thu quyền admin bot của một người**: gỡ role admin bot (hoặc quyền Manage Server) của người đó. Chỉ bỏ quyền dùng lệnh trong Integrations thì chưa đủ: bảng cấu hình hay bảng danh hiệu người đó đang mở vẫn bấm được, vì bot kiểm tra quyền theo role admin và Manage Server.
+   - **Muốn thu quyền admin bot của một người**: gỡ role admin bot (hoặc quyền Manage Server) của người đó. Chỉ bỏ quyền dùng lệnh trong Integrations thì chưa đủ: bảng cấu hình hay bảng danh hiệu người đó đang mở vẫn bấm được, và trang web quản trị (nếu bật) vẫn vào được, vì bot kiểm tra quyền theo role admin và Manage Server.
 6. **Bảng vàng** (tuỳ chọn, DEC-030), xem mục 7.2.
    - Trên bảng: trang **Bảng vàng và admin**.
    - Lệnh gõ tay: `/config board`.
@@ -443,6 +454,147 @@ Sau khi reset:
 - Bài contribution và vote cũ vẫn còn. Lượt 👍 có trước khi reset đã bị huỷ và không bấm lại được cho bài đó. Người đã tham gia một vote đang mở không được XP thêm lần nữa từ vote đó.
 - Huy hiệu tính theo số vote đã tham gia và số contribution đã gửi vẫn còn, vì bot không xoá vote hay contribution.
 
+### 7.5. Trang web quản trị (tuỳ chọn, DEC-039)
+
+Admin cấu hình bot bằng trình duyệt: thấy toàn bộ kênh cùng lúc, sửa nhiều mục trên một trang. Admin đăng nhập bằng chính tài khoản Discord, không có mật khẩu riêng.
+
+- Web **chạy trong chính process của bot**. Không có server hay dịch vụ riêng, không cài thêm gì, không thêm bảng hay file dữ liệu nào (sao lưu và khôi phục không đổi).
+- Web **tắt** khi không đặt `WEB_PORT`. Đây là mặc định.
+- Lệnh và bảng trong Discord giữ nguyên. Web chỉ là cách thao tác thứ hai, cùng quy tắc và cùng audit log.
+
+> ⚠️ Chỉ dùng trong **mạng nội bộ công ty hoặc qua VPN**. Không bao giờ mở cổng web ra Internet.
+
+#### Bật trang web
+
+**Bước 1: Discord Developer Portal.** Vào https://discord.com/developers/applications, chọn app "ezOne Bot" (Application ID `1554342618434109440`). Giao diện portal có thể là tiếng Việt ("Ứng dụng", "OAuth2", "Bot").
+
+1. Tab **OAuth2** → mục **Client Secret** → bấm "Reset Secret" → chép secret mới.
+   - Dán thẳng vào `.env` ở bước 2. Không gửi qua chat, email hay lưu vào file khác.
+   - Client Secret khác với token của bot. Reset Client Secret không ảnh hưởng token, bot vẫn chạy bình thường.
+2. Cùng tab **OAuth2** → mục **Redirects** → thêm `http://192.168.0.206:8787/auth/callback` (tức `<WEB_BASE_URL>/auth/callback`) → bấm lưu.
+   - Redirect phải khớp **từng ký tự** với `WEB_BASE_URL`: cùng `http`/`https`, cùng địa chỉ, cùng cổng.
+
+Không cần đổi quyền của bot, link mời hay intent.
+
+**Bước 2: sửa `.env`.** Thêm các dòng:
+
+```bash
+WEB_PORT=8787
+WEB_BASE_URL=http://192.168.0.206:8787
+DISCORD_CLIENT_SECRET=<dán Client Secret vào đây>
+# WEB_HOST=          để trống: lắng nghe 0.0.0.0
+```
+
+| Biến | Bắt buộc khi bật web | Ý nghĩa |
+| --- | --- | --- |
+| `WEB_PORT` | ✅ (đặt là bật) | Cổng HTTP, từ 1024 đến 65535, ví dụ 8787. Để trống hoặc xoá dòng này là tắt web |
+| `WEB_BASE_URL` | ✅ | Địa chỉ admin gõ vào trình duyệt, dạng `http://địa-chỉ:cổng`, không có "/" hay đường dẫn phía sau. Cổng ở đây phải trùng `WEB_PORT` (selfcheck không kiểm tra điều này). Bot dùng địa chỉ này để dựng redirect đăng nhập và để kiểm tra địa chỉ truy cập |
+| `DISCORD_CLIENT_SECRET` | ✅ | Client Secret của application. Bí mật như token |
+| `WEB_HOST` | | Địa chỉ lắng nghe. Mặc định `0.0.0.0` (mọi card mạng), để máy khác trong mạng nội bộ vào được |
+
+Trên server hiện tại (DEC-036), `.env` nằm ở `/opt/company-discord-bot/.env` (thuộc root, quyền 600). Sửa từ máy của bạn bằng:
+
+```bash
+ssh -t tiennt@192.168.0.206 "sudo nano /opt/company-discord-bot/.env"
+```
+
+**Bước 3: khởi động lại bot.**
+
+```bash
+ssh -t tiennt@192.168.0.206 "sudo bash ~/deploy/start.sh"
+```
+
+Script chạy selfcheck trong sandbox của service (mục 3.1). Không có ❌ thì script khởi động lại bot và in log. Kiểm tra:
+
+- selfcheck có dòng ✅ "Trang web quản trị: bật, …". Redirect in trong dòng này phải có trong tab OAuth2 → Redirects;
+- có ❌ ở dòng "Trang web quản trị" thì bot **chưa** được khởi động lại. Sửa `.env` theo gợi ý rồi chạy lại script;
+- log có dòng `Trang web quản trị: http://192.168.0.206:8787 (lắng nghe 0.0.0.0:8787).`, xuất hiện sau dòng "Bot đã sẵn sàng". Web chỉ mở sau khi bot kết nối xong với Discord. Xem lại log bằng `sudo journalctl -u company-discord-bot --since "10 min ago"`;
+- log có "Không mở được trang web quản trị (bot vẫn chạy bình thường)": xem mục 8.
+
+Unit systemd **không cần sửa**: cổng lớn hơn 1024 nên không cần quyền đặc biệt, và `RestrictAddressFamilies` đã cho phép `AF_INET`.
+
+#### Kiểm tra cổng và firewall
+
+1. Trên máy của bạn (đang ở mạng công ty hoặc đã bật VPN): chạy `curl http://192.168.0.206:8787/healthz`, hoặc mở địa chỉ đó trong trình duyệt. Kết quả đúng là chữ `ok`. Đường dẫn `/healthz` không cần đăng nhập và không trả thông tin gì khác.
+2. Không kết nối được thì kiểm tra ngay trên server: `curl http://127.0.0.1:8787/healthz` (khi `WEB_HOST` để mặc định).
+   - Trên server được `ok`: bot đang lắng nghe, nhưng firewall của server hoặc của mạng chặn cổng. Nhờ IT mở cổng **trong mạng nội bộ**. Ví dụ nếu server dùng ufw:
+
+     ```bash
+     sudo ufw allow from <dải mạng nội bộ> to any port 8787 proto tcp
+     ```
+
+     Chỉ mở cho dải mạng nội bộ và VPN, không mở cho mọi nơi (`ufw allow 8787`). Máy này dùng chung với dịch vụ khác của IT, nên để IT quyết định cách mở.
+   - Trên server cũng không được: web chưa mở. Xem log (mục 8): `WEB_PORT` chưa đặt, bot chưa khởi động xong, hoặc cổng đã bị dịch vụ khác dùng. Lệnh `sudo ss -ltnp | grep 8787` cho biết process nào đang giữ cổng.
+3. Không cấu hình chuyển cổng (port forward, NAT) hay dịch vụ tunnel để mở trang này ra Internet.
+
+#### Đăng nhập và sử dụng
+
+1. Ở mạng công ty hoặc bật VPN, mở đúng địa chỉ `WEB_BASE_URL` (ví dụ `http://192.168.0.206:8787`). Mở bằng địa chỉ khác (tên máy, IP khác của server, `localhost`) thì trang báo "Sai địa chỉ truy cập".
+2. Bấm **"Đăng nhập bằng Discord"**. Trình duyệt chuyển sang trang của Discord (chưa đăng nhập Discord trên trình duyệt đó thì Discord hỏi đăng nhập trước).
+3. Discord hỏi có cho phép "ezOne Bot" biết bạn là ai không (scope `identify`). Bot chỉ biết ID và tên Discord của bạn, **không** thấy mật khẩu, email, tin nhắn hay danh sách server của bạn. Bấm cho phép. Lần sau Discord có thể không hỏi lại mà quay về ngay.
+4. Trình duyệt quay về trang quản trị của server.
+
+**Ai vào được:** người có **Manage Server** hoặc **role admin bot** trong server, giống quyền dùng `/config`.
+
+- Không cần cho phép role trong Server Settings → Integrations. Bước đó chỉ để thấy lệnh `/admin`, `/config` trong Discord.
+- Quyền được kiểm tra lại **mỗi lần** mở trang hay bấm lưu. Mất quyền trong Discord là mất quyền trên web ngay, kể cả trang đang mở.
+- Muốn thu quyền của một người: gỡ role admin bot (hoặc Manage Server) của người đó trong Discord. Không cần làm gì trên web.
+- Bot phục vụ nhiều server thì thanh trên cùng có link chuyển server. Chỉ vào được server mà bạn là admin bot.
+
+**Các trang** (menu bên trái):
+
+| Trang | Làm được gì | Tương ứng trong Discord |
+| --- | --- | --- |
+| **Tổng quan** | Tóm tắt cấu hình của server | `/config view`, trang Tổng quan của `/config panel` |
+| **Kênh tính XP** | Chọn chế độ kênh (mục 7.3). Thấy **toàn bộ kênh** cùng lúc, không giới hạn 25; tick để bật hoặc tắt tính XP; đặt XP và cooldown riêng của từng kênh | `/config channel mode · set · reset · list`, trang Kênh |
+| **Team** | Thêm, bỏ team. Có mục gỡ team mà role đã bị xoá khỏi server | `/config team`, trang Team |
+| **Cài đặt điểm** | XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng, thông báo lên level; XP khi vote, giới hạn XP vote mỗi ngày; điểm mỗi lượt ghi nhận contribution | `/config xp`, `/config poll`, `/config contribution`, trang XP và Vote |
+| **Quyền** | Role admin bot, role được tạo vote | `/config admin-role`, `/config poll role-tao-vote` |
+| **Bảng vàng** | Chọn kênh Bảng vàng hoặc tắt (mục 7.2) | `/config board` |
+| **Danh hiệu** | Chọn bộ, đổi tên bậc, gán role theo bậc, tạo/đồng bộ role (mục 7.1) | `/config tier panel`, `/config tier …` |
+| **Nhật ký** | Xem nhật ký quản trị | `/admin audit` |
+
+Cách trang hoạt động:
+
+- Mọi thao tác được kiểm tra **như lệnh Discord**, với người thao tác là tài khoản Discord đã đăng nhập. Ví dụ: gán hay tạo role danh hiệu cần chính bạn có Manage Roles (mục 7.1); đặt Bảng vàng cần bạn xem và gửi được tin ở kênh đó (mục 7.2).
+- Mọi thay đổi được ghi audit log với người thao tác là tài khoản đã đăng nhập. Xem trên trang **Nhật ký** hoặc bằng `/admin audit`.
+- Bấm lưu xong, trang tải lại và báo kết quả ở đầu trang: màu xanh là đã lưu, màu đỏ là bị từ chối (không có gì thay đổi).
+- Như `/config panel`, bot **chỉ lưu phần bạn đổi**. Hai admin (hoặc hai tab) cùng mở một trang và sửa hai mục khác nhau thì không đè lên nhau.
+- Thay đổi có hiệu lực ngay. Bảng `/config panel` đang mở trong Discord không tự cập nhật: chọn lại trang trên bảng để thấy giá trị mới.
+- Nút **Đăng xuất** ở thanh trên cùng. Dùng máy chung thì luôn đăng xuất khi xong việc.
+- Trang dùng được trên điện thoại (cần ở mạng công ty hoặc bật VPN).
+
+#### Bảo mật
+
+- **Không mở cổng ra Internet.** Chỉ dùng trong mạng nội bộ hoặc VPN.
+- **HTTP nội bộ:** dữ liệu và cookie đăng nhập đi **không mã hoá** trong mạng công ty. Không dùng trang này qua Wi-Fi khách hay mạng công cộng (ngoài VPN).
+- **HTTPS:** cần IT cấp chứng chỉ. Bot hiện chỉ phục vụ HTTP và không tự dùng chứng chỉ, nên cách gắn chứng chỉ phải bàn và duyệt riêng. Khi đã có HTTPS, đặt `WEB_BASE_URL` bắt đầu bằng `https://` (và đăng ký lại redirect): bot tự thêm cờ `Secure` cho cookie.
+- **Phiên đăng nhập 8 giờ**, tính từ lúc đăng nhập, không tự gia hạn. Hết hạn thì đăng nhập lại.
+- Phiên lưu **trong bộ nhớ** của bot. Bot khởi động lại (cập nhật phiên bản, sửa `.env`, restart) thì mọi người phải đăng nhập lại. Muốn đăng xuất tất cả mọi người ngay thì khởi động lại bot.
+- Đăng xuất chỉ huỷ phiên của trình duyệt đó. Trình duyệt khác vẫn đăng nhập tới khi hết hạn.
+- Bot không lưu mật khẩu hay access token Discord: token chỉ dùng một lần để biết bạn là ai rồi bỏ.
+- Có chống giả mạo form (CSRF), kiểm tra địa chỉ truy cập, chặn script và nhúng trang (CSP), giới hạn tần suất đăng nhập (30 lần mỗi phút cho mỗi IP) và lưu (120 lần mỗi phút cho mỗi người).
+- `DISCORD_CLIENT_SECRET` chỉ nằm trong `.env`. Selfcheck chỉ báo "có", lỗi cấu hình chỉ nêu tên biến. Log ghi Discord user ID của mỗi lần đăng nhập thành công hay bị từ chối.
+
+#### Tắt trang web
+
+1. Xoá dòng `WEB_PORT` trong `.env` (hoặc để trống).
+2. `ssh -t tiennt@192.168.0.206 "sudo bash ~/deploy/start.sh"`. Selfcheck ghi "Trang web quản trị: tắt (không đặt WEB_PORT)." và cổng đóng lại.
+3. Không dùng web nữa thì dọn thêm:
+   - xoá `DISCORD_CLIENT_SECRET` khỏi `.env`, và bấm "Reset Secret" trên portal để secret cũ hết hiệu lực;
+   - xoá redirect trong tab OAuth2 → Redirects;
+   - nhờ IT đóng cổng trên firewall.
+
+Bot và lệnh Discord vẫn chạy bình thường khi web tắt.
+
+#### Đổi Client Secret khi nghi bị lộ
+
+1. Portal → tab **OAuth2** → **Client Secret** → "Reset Secret". Secret cũ hết hiệu lực ngay, nên đăng nhập web sẽ lỗi cho tới khi xong bước 3.
+2. Sửa `DISCORD_CLIENT_SECRET` trong `.env` (lệnh `ssh … sudo nano …` ở trên).
+3. `ssh -t tiennt@192.168.0.206 "sudo bash ~/deploy/start.sh"`. Bot khởi động lại, mọi phiên đăng nhập cũ bị huỷ.
+
+Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì reset riêng theo mục 2 (tab Bot → Reset Token).
+
 ## 8. Xử lý sự cố
 
 | Hiện tượng | Nguyên nhân thường gặp |
@@ -474,3 +626,13 @@ Sau khi reset:
 | `/config admin-role`, `/config poll role-tao-vote`, `/config team add` (hoặc menu tương ứng trên `/config panel`) báo role đang là role danh hiệu | Role danh hiệu do bot tự thêm/gỡ theo level, không dùng được vào việc khác. Chọn role khác, hoặc bỏ gán bằng `/config tier panel` hay `/config tier clear-role` trước |
 | Người vote báo không được cộng XP | Đã chạm giới hạn XP từ vote trong ngày (`/config poll gioi-han-xp-ngay`); bot có ghi rõ trong phản hồi riêng |
 | Bot không khởi động sau khi quay về bản cũ | Database mới hơn code; dùng lại bản code mới |
+| Bot không khởi động sau khi thêm biến web; selfcheck có ❌ "Trang web quản trị: …" | Cấu hình web sai: đặt `WEB_PORT` mà thiếu `WEB_BASE_URL` hoặc `DISCORD_CLIENT_SECRET`, cổng ngoài 1024–65535, `WEB_BASE_URL` có đường dẫn phía sau, hoặc secret có khoảng trắng ở giữa. Log của bot có dòng "Không khởi động được bot" kèm tên biến. Sửa theo tên biến trong thông báo, hoặc xoá `WEB_PORT` để tắt web (mục 7.5) |
+| Không mở được trang web quản trị (trình duyệt báo không kết nối được hoặc hết thời gian chờ) | Theo thứ tự: đang ở ngoài mạng công ty mà chưa bật VPN; `WEB_PORT` chưa đặt (selfcheck ghi "tắt"); bot chưa khởi động xong (web chỉ mở sau "Bot đã sẵn sàng"; log phải có dòng "Trang web quản trị: …"); firewall của server hoặc mạng chặn cổng (trên server `curl http://127.0.0.1:8787/healthz` ra `ok` thì nhờ IT mở cổng trong mạng nội bộ). Xem "Kiểm tra cổng và firewall" ở mục 7.5 |
+| Log có "Không mở được trang web quản trị (bot vẫn chạy bình thường)" | Thường do cổng đã có dịch vụ khác dùng (`EADDRINUSE`; xem bằng `sudo ss -ltnp \| grep 8787`): đổi `WEB_PORT` (và `WEB_BASE_URL`, redirect trên portal cho khớp) rồi khởi động lại. Hoặc `WEB_HOST` là địa chỉ server không có |
+| Trang báo "Sai địa chỉ truy cập" | Mở bằng địa chỉ khác với `WEB_BASE_URL` (tên máy, IP khác, `localhost`, thiếu cổng). Mở đúng địa chỉ in trong selfcheck. Muốn dùng địa chỉ khác thì sửa `WEB_BASE_URL`, thêm redirect mới trên portal, rồi khởi động lại bot |
+| Discord báo "Invalid OAuth2 redirect_uri" khi đăng nhập | Chưa thêm `<WEB_BASE_URL>/auth/callback` vào tab OAuth2 → Redirects, hoặc thêm mà chưa bấm lưu, hoặc `WEB_BASE_URL` khác với redirect đã đăng ký (khác IP, cổng, `http`/`https`). Redirect phải khớp từng ký tự với dòng "Redirect cần đăng ký" của selfcheck |
+| Trang báo "Không đăng nhập được bằng Discord" | Client Secret sai, hoặc đã bị reset trên portal mà `.env` chưa cập nhật (log không ghi gì trong trường hợp này): làm theo "Đổi Client Secret" ở mục 7.5. Nếu log có "Đăng nhập web: không đổi được mã OAuth2 với Discord": server không kết nối được `discord.com` |
+| Đăng nhập xong báo tài khoản không có quyền admin bot | Tài khoản đó không có Manage Server hay role admin bot ở server bot đang phục vụ, hoặc không phải thành viên server. Kiểm tra role admin bot bằng `/config view`. Đang dùng mà trang báo "Không có quyền": vừa mất quyền trong Discord (quyền được kiểm tra lại ở mỗi lần mở trang) |
+| Bị đăng xuất khỏi trang web sau khi cập nhật hoặc khởi động lại bot | Bình thường: phiên đăng nhập lưu trong bộ nhớ, mất khi bot khởi động lại. Phiên cũng hết hạn sau 8 giờ. Đăng nhập lại |
+| Bấm lưu trên web bị báo "Form đã cũ hoặc không hợp lệ" | Trang được mở từ trước lần đăng nhập gần nhất (ví dụ bạn đã đăng nhập lại ở tab khác sau khi bot khởi động lại), nên mã chống giả mạo trong form đã cũ. Tải lại trang (F5) rồi làm lại. Báo "Phiên đăng nhập đã hết hạn" thì đăng nhập lại |
+| Trang web báo "Bạn thao tác quá nhanh" | Giới hạn tần suất đăng nhập hoặc lưu. Đợi một phút rồi thử lại |
