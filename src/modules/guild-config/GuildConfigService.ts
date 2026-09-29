@@ -15,6 +15,8 @@ import {
 
 /** Số kênh tối đa một lần bật/tắt hàng loạt (bằng số lựa chọn tối đa của một menu chọn kênh của Discord). */
 export const MAX_BULK_CHANNELS = 25;
+/** Số kênh tối đa một lần lưu trên trang web quản trị (hiện toàn bộ kênh của server; Discord cho tối đa 500 kênh). */
+export const MAX_WEB_BULK_CHANNELS = 500;
 
 /** Kết quả bật/tắt hàng loạt: kênh đã đổi trạng thái và kênh vốn đã đúng trạng thái (theo thứ tự đầu vào, đã bỏ trùng). */
 export interface BulkChannelResult
@@ -182,14 +184,14 @@ export class GuildConfigService
 	 * Bật hoặc tắt XP cho nhiều channel cùng lúc (bảng điều khiển, DEC-037), trong một transaction. Kênh đã đúng trạng thái
 	 * thì bỏ qua (không ghi, không audit). Kênh đổi trạng thái được lưu thành cấu hình riêng (như `/config channel set`),
 	 * giữ nguyên XP/cooldown riêng nếu có, nên trạng thái admin đặt vẫn giữ khi đổi chế độ kênh về sau. Mỗi kênh đổi trạng
-	 * thái có một dòng audit `channel.set` với `xpEnabled`. UserError nếu danh sách rỗng hoặc quá MAX_BULK_CHANNELS kênh
-	 * (sau khi bỏ trùng).
+	 * thái có một dòng audit `channel.set` với `xpEnabled`. UserError nếu danh sách rỗng hoặc quá `maxChannels` kênh (sau khi
+	 * bỏ trùng; mặc định MAX_BULK_CHANNELS cho menu Discord, web dùng MAX_WEB_BULK_CHANNELS).
 	 */
-	setChannelsXpEnabled(guildId: string, channelIds: readonly string[], enabled: boolean, actorId: string): BulkChannelResult
+	setChannelsXpEnabled(guildId: string, channelIds: readonly string[], enabled: boolean, actorId: string, maxChannels = MAX_BULK_CHANNELS): BulkChannelResult
 	{
 		const unique = [...new Set(channelIds)];
 		if (unique.length === 0) throw new UserError("Hãy chọn ít nhất một kênh.");
-		if (unique.length > MAX_BULK_CHANNELS) throw new UserError(`Mỗi lần chỉ bật hoặc tắt tối đa ${MAX_BULK_CHANNELS} kênh.`);
+		if (unique.length > maxChannels) throw new UserError(`Mỗi lần chỉ bật hoặc tắt tối đa ${maxChannels} kênh.`);
 
 		return this.db.transaction((): BulkChannelResult =>
 		{

@@ -9,7 +9,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { openDatabase } from "../src/db/connection";
 import { MIGRATIONS, runMigrations } from "../src/db/migrations";
 import { findFontDir } from "../src/discord/cards/fonts";
-import { checkConfig, checkEnvFileMode, checkNodeVersion, CheckResult, CheckStep, checkWritableDirectory } from "../src/selfcheck/checks";
+import { checkConfig, checkEnvFileMode, checkNodeVersion, CheckResult, CheckStep, checkWebConfig, checkWritableDirectory } from "../src/selfcheck/checks";
 import { checkDatabaseFile, checkMigrations, DatabaseReadOptions, loadSqliteToolkit, SqliteToolkit } from "../src/selfcheck/database";
 import { CanvasToolkit, checkCanvas, checkRendering, loadCanvasToolkit, pngSize } from "../src/selfcheck/render";
 import { oneLine, redactSecrets, runSelfCheck, SelfCheckOptions, SelfCheckReport } from "../src/selfcheck/run";
@@ -239,7 +239,7 @@ describe("selfcheck: cấu hình", () =>
 	{
 		const dir = freshDir();
 		const { results, paths } = checkConfig(envFor(dir, { BACKUP_KEEP: "30" }));
-		assert.deepEqual(results.map(result => result.status), ["ok", "ok", "ok"]);
+		assert.deepEqual(results.map(result => result.status), ["ok", "ok", "ok", "ok"]);
 		assert.equal(results[0].message, "DISCORD_TOKEN: có.");
 		assert.match(results[1].message, /2 guild hợp lệ/);
 		assert.match(results[2].message, /giữ 30 bản/);
@@ -251,7 +251,7 @@ describe("selfcheck: cấu hình", () =>
 	{
 		const dir = freshDir();
 		const { results, paths } = checkConfig(envFor(dir, { DISCORD_TOKEN: "   " }));
-		assert.deepEqual(results.map(result => result.status), ["fail", "ok", "ok"]);
+		assert.deepEqual(results.map(result => result.status), ["fail", "ok", "ok", "ok"]);
 		assert.match(results[0].message, /DISCORD_TOKEN: chưa có/);
 		assert.ok(paths);
 	});
@@ -268,7 +268,7 @@ describe("selfcheck: cấu hình", () =>
 	test("guild ID sai: lỗi chỉ nêu vị trí mục sai, không in giá trị; đường dẫn vẫn dùng được cho các bước sau", () =>
 	{
 		const { results, paths } = checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: "abc,100000000000000001" }));
-		assert.deepEqual(statuses(results, "config"), ["ok", "fail", "ok"]);
+		assert.deepEqual(statuses(results, "config"), ["ok", "fail", "ok", "ok"]);
 		assert.match(results[1].message, /^DISCORD_GUILD_IDS không hợp lệ: mục thứ 1 không phải guild ID/);
 		assert.ok(!results[1].message.includes("abc"));
 		assert.ok(paths);
@@ -287,10 +287,37 @@ describe("selfcheck: cấu hình", () =>
 	test("BACKUP_KEEP sai và guild sai: báo cả hai lỗi; không có đường dẫn", () =>
 	{
 		const { results, paths } = checkConfig(envFor(freshDir(), { DISCORD_GUILD_IDS: "", BACKUP_KEEP: "0" }));
-		assert.deepEqual(results.map(result => result.status), ["ok", "fail", "fail"]);
+		assert.deepEqual(results.map(result => result.status), ["ok", "fail", "fail", "ok"]);
 		assert.match(results[1].message, /DISCORD_GUILD_IDS/);
 		assert.match(results[2].message, /BACKUP_KEEP/);
 		assert.equal(paths, null);
+	});
+
+	test("trang web quản trị: tắt khi không có WEB_PORT; bật thì báo cổng, địa chỉ, redirect; thiếu hay sai thì lỗi không in secret", () =>
+	{
+		const off = checkWebConfig({});
+		assert.equal(off.status, "ok");
+		assert.match(off.message, /tắt/);
+
+		const secret = "client-secret-SELFCHECK-web";
+		const on = checkWebConfig({ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:8787/", DISCORD_CLIENT_SECRET: secret });
+		assert.equal(on.status, "ok");
+		assert.match(on.message, /0\.0\.0\.0:8787/);
+		assert.match(on.message, /http:\/\/192\.168\.0\.206:8787\/auth\/callback/);
+		assert.ok(!on.message.includes(secret));
+
+		for (const env of [
+			{ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:8787" },
+			{ WEB_PORT: "80", WEB_BASE_URL: "http://192.168.0.206", DISCORD_CLIENT_SECRET: secret },
+			{ WEB_PORT: "8787", WEB_BASE_URL: "ftp://x/y", DISCORD_CLIENT_SECRET: secret },
+			{ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:8787/admin", DISCORD_CLIENT_SECRET: secret },
+			{ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:8787", DISCORD_CLIENT_SECRET: `${secret} x` },
+		])
+		{
+			const result = checkWebConfig(env);
+			assert.equal(result.status, "fail", JSON.stringify(env.WEB_BASE_URL));
+			assert.ok(!result.message.includes(secret), result.message);
+		}
 	});
 
 	test("LOG_LEVEL lạ: cảnh báo bot sẽ dùng info, không in lại giá trị (kể cả giá trị có xuống dòng hay mã ANSI)", () =>
@@ -302,7 +329,7 @@ describe("selfcheck: cấu hình", () =>
 			assert.equal(last.status, "warn");
 			assert.equal(last.message, "LOG_LEVEL không hợp lệ, bot sẽ dùng info. Dùng một trong: debug, info, warn, error.");
 		}
-		assert.equal(checkConfig(envFor(freshDir(), { LOG_LEVEL: "warn" })).results.length, 3);
+		assert.equal(checkConfig(envFor(freshDir(), { LOG_LEVEL: "warn" })).results.length, 4);
 	});
 
 	test("token quá ngắn: lỗi \"không giống token bot\", không in token hay độ dài", () =>

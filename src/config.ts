@@ -12,6 +12,24 @@ export interface BotConfig
 	backupDir: string;
 	/** Số bản sao lưu giữ lại. */
 	backupKeep: number;
+	/** Trang web quản trị (DEC-039); null = tắt (không đặt WEB_PORT). */
+	web: WebConfig | null;
+}
+
+/** Cấu hình trang web quản trị (DEC-039). */
+export interface WebConfig
+{
+	/** Cổng HTTP. */
+	port: number;
+	/** Địa chỉ lắng nghe; mặc định 0.0.0.0 để máy khác trong mạng nội bộ truy cập được. */
+	host: string;
+	/**
+	 * URL gốc admin mở trong trình duyệt, không có "/" ở cuối (ví dụ http://192.168.0.206:8787). Dùng cho redirect OAuth2
+	 * (`<baseUrl>/auth/callback`) và để kiểm tra Host/Origin của request.
+	 */
+	baseUrl: string;
+	/** Client Secret của Discord Application (OAuth2). Bí mật: không bao giờ log hay đưa vào thông báo lỗi. */
+	clientSecret: string;
 }
 
 // Discord snowflake: chuỗi số 17–20 chữ số.
@@ -39,7 +57,41 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig
 		databasePath: resolve(optionalEnv(env, "DATABASE_PATH") ?? join(PROJECT_ROOT, "data", "bot.db")),
 		backupDir: resolve(optionalEnv(env, "BACKUP_DIR") ?? join(PROJECT_ROOT, "data", "backups")),
 		backupKeep: integerEnv(env, "BACKUP_KEEP", 14, 1, 365),
+		web: loadWebConfig(env),
 	};
+}
+
+/**
+ * Cấu hình web quản trị: không đặt WEB_PORT thì trả về null (web tắt). Đặt WEB_PORT thì bắt buộc có WEB_BASE_URL (http/https,
+ * chỉ gồm scheme, host và cổng) và DISCORD_CLIENT_SECRET. Lỗi không bao giờ chứa giá trị secret.
+ */
+export function loadWebConfig(env: NodeJS.ProcessEnv = process.env): WebConfig | null
+{
+	if (optionalEnv(env, "WEB_PORT") === undefined) return null;
+	const port = integerEnv(env, "WEB_PORT", 0, 1024, 65535);
+	const baseUrl = parseBaseUrl(requireEnv(env, "WEB_BASE_URL"));
+	const clientSecret = requireEnv(env, "DISCORD_CLIENT_SECRET");
+	if (/\s/u.test(clientSecret)) throw new Error("DISCORD_CLIENT_SECRET có khoảng trắng hoặc xuống dòng ở giữa. Dán lại trên một dòng.");
+	return { port, host: optionalEnv(env, "WEB_HOST") ?? "0.0.0.0", baseUrl, clientSecret };
+}
+
+function parseBaseUrl(raw: string): string
+{
+	let url: URL;
+	try
+	{
+		url = new URL(raw);
+	}
+	catch
+	{
+		throw new Error("WEB_BASE_URL không phải URL hợp lệ. Ví dụ: http://192.168.0.206:8787");
+	}
+	const plain = (url.pathname === "/" || url.pathname === "") && url.search === "" && url.hash === "" && url.username === "" && url.password === "";
+	if ((url.protocol !== "http:" && url.protocol !== "https:") || !plain)
+	{
+		throw new Error("WEB_BASE_URL chỉ gồm http(s)://địa-chỉ:cổng, không có đường dẫn phía sau. Ví dụ: http://192.168.0.206:8787");
+	}
+	return url.origin;
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string

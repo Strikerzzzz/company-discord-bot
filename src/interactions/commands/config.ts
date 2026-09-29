@@ -4,14 +4,12 @@ import {
 	ChannelSelectMenuInteraction,
 	ChatInputCommandInteraction,
 	Guild,
-	GuildBasedChannel,
 	GuildMember,
 	MessageComponentInteraction,
 	MessageFlags,
 	ModalMessageModalSubmitInteraction,
 	ModalSubmitInteraction,
 	PermissionFlagsBits,
-	PermissionsBitField,
 	RoleSelectMenuInteraction,
 	SlashCommandBuilder,
 	SlashCommandSubcommandBuilder,
@@ -20,11 +18,19 @@ import {
 } from "discord.js";
 import Command from "../../classes/Command";
 import { channelMention, roleMention } from "../../discord/format";
+import {
+	assertBoardChannelAccess,
+	assertUsableRole,
+	botMemberOf,
+	DEFAULT_LIVE_BOARD_ACTIONS,
+	isBoardChannel,
+	LiveBoardActions,
+	moveLiveBoard,
+	turnOffLiveBoard,
+} from "../../discord/configOps";
 import { requireGuildId } from "../../discord/guards";
-import { deleteLiveBoardMessage, refreshLiveBoard } from "../../discord/liveBoard";
 import {
 	assignTierRole,
-	BOT_MEMBER_UNAVAILABLE,
 	callerManageRolesIssue,
 	callerRoleIssue,
 	clearTierRoleAssignment,
@@ -132,21 +138,6 @@ function adminRoleSetText(roleId: string): string
 	].join("\n");
 }
 
-type PermissionList = readonly (readonly [bigint, string])[];
-
-/** Quyền bot cần ở kênh Bảng vàng để đăng message kèm ảnh (DEC-030). */
-const BOARD_PERMISSIONS: PermissionList = [
-	[PermissionFlagsBits.ViewChannel, "View Channel"],
-	[PermissionFlagsBits.SendMessages, "Send Messages"],
-	[PermissionFlagsBits.AttachFiles, "Attach Files"],
-];
-
-/** Quyền người gọi phải tự có ở kênh Bảng vàng, để không mượn bot đăng vào kênh mình không được gửi tin (LL-013). */
-const BOARD_CALLER_PERMISSIONS: PermissionList = [
-	[PermissionFlagsBits.ViewChannel, "View Channel"],
-	[PermissionFlagsBits.SendMessages, "Send Messages"],
-];
-
 /** Lựa chọn bậc dạng trung tính "Bậc 3 (Lv 6+)", vì tên bậc đổi theo bộ và theo từng server (DEC-033); value là khoá bậc. */
 const TIER_CHOICES = TIER_KEYS.map((key, index) => ({ name: `Bậc ${index + 1} (Lv ${TIER_LEVELS[index]}+)`, value: key }));
 
@@ -229,12 +220,7 @@ const PANEL_ROLE_SETTINGS: Readonly<Record<PanelRoleKey, PanelRoleSetting>> = {
 	},
 };
 
-/** Thao tác với message Bảng vàng (tầng Discord, src/discord/liveBoard.ts). */
-export interface LiveBoardActions
-{
-	refresh: typeof refreshLiveBoard;
-	remove: typeof deleteLiveBoardMessage;
-}
+export type { LiveBoardActions } from "../../discord/configOps";
 
 interface SettingOption
 {
@@ -399,51 +385,6 @@ function requireCachedGuild(interaction: ChatInputCommandInteraction): ChatInput
 	return interaction;
 }
 
-function botMemberOf(guild: Guild): GuildMember
-{
-	const me = guild.members.me;
-	if (!me) throw new UserError(BOT_MEMBER_UNAVAILABLE);
-	return me;
-}
-
-/** Tên (in đậm) các quyền trong `list` mà `permissions` không có. */
-function missingPermissions(permissions: Readonly<PermissionsBitField>, list: PermissionList): string[]
-{
-	return list.filter(([flag]) => !permissions.has(flag)).map(([, name]) => `**${name}**`);
-}
-
-/** Phần của kênh cần để tính quyền theo kênh (kênh từ option của lệnh gõ, hoặc từ cache của server). */
-interface PermissionChannel
-{
-	id: string;
-	permissionsFor(member: GuildMember): Readonly<PermissionsBitField>;
-}
-
-/**
- * Kiểm tra trước khi đặt Bảng vàng ở `channel`, dùng chung cho `/config board` và bảng cấu hình: người gọi phải tự xem và
- * gửi được tin ở kênh đó (không mượn bot đăng vào kênh mình không được gửi, LL-013), bot phải đủ quyền đăng ảnh (DEC-030).
- */
-function assertBoardChannelAccess(channel: PermissionChannel, caller: GuildMember, bot: GuildMember): void
-{
-	const callerMissing = missingPermissions(channel.permissionsFor(caller), BOARD_CALLER_PERMISSIONS);
-	if (callerMissing.length > 0)
-	{
-		throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể đặt Bảng vàng ở kênh đó.`);
-	}
-	const missing = missingPermissions(channel.permissionsFor(bot), BOARD_PERMISSIONS);
-	if (missing.length > 0)
-	{
-		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
-	}
-}
-
-type BoardChannel = Extract<GuildBasedChannel, { type: (typeof BOARD_CHANNEL_TYPES)[number] }>;
-
-function isBoardChannel(channel: GuildBasedChannel): channel is BoardChannel
-{
-	return BOARD_CHANNEL_TYPES.some(type => type === channel.type);
-}
-
 /** customId thuộc bảng cấu hình chung (namespace `cfgui`); còn lại là bảng danh hiệu (`tierui`). */
 function isConfigPanelCustomId(customId: string): boolean
 {
@@ -565,13 +506,6 @@ function renameInput(set: TierSet, tierKey: TierKey, raw: string): TierRenameInp
 	};
 }
 
-/** Chặn @everyone và role do bot/integration quản lý (không gán được cho người dùng). */
-function assertAssignableRole(role: { id: string; managed: boolean }, guildId: string, purpose: string): void
-{
-	if (role.id === guildId) throw new UserError(`Không thể dùng @everyone ${purpose}.`);
-	if (role.managed) throw new UserError(`Không thể dùng role do bot hoặc integration quản lý ${purpose}.`);
-}
-
 function requireChange(patch: object): void
 {
 	if (Object.keys(patch).length === 0) throw new UserError(NO_CHANGE_MESSAGE);
@@ -585,7 +519,7 @@ export default class ConfigCmd extends Command
 	override buttonIds = [TIER_PANEL_NAMESPACE, CONFIG_PANEL_NAMESPACE];
 
 	/** Điểm inject để test thay bằng hàm giả; mặc định là các hàm thật của tầng Discord. */
-	liveBoardActions: LiveBoardActions = { refresh: refreshLiveBoard, remove: deleteLiveBoardMessage };
+	liveBoardActions: LiveBoardActions = DEFAULT_LIVE_BOARD_ACTIONS;
 
 	data = new SlashCommandBuilder()
 		.setName("config")
@@ -964,18 +898,7 @@ export default class ConfigCmd extends Command
 	 */
 	private assertUsableRole(guildId: string, role: { id: string; managed: boolean }, purpose: string): void
 	{
-		assertAssignableRole(role, guildId, purpose);
-		this.assertNotTierRole(guildId, role.id, purpose);
-	}
-
-	/** Role danh hiệu không được dùng vào việc khác: bot tự thêm và gỡ role danh hiệu theo level của từng người (DEC-031). */
-	private assertNotTierRole(guildId: string, roleId: string, purpose: string): void
-	{
-		const mapping = this.services.tierRoles.list(guildId).find(entry => entry.roleId === roleId);
-		if (!mapping) return;
-		const tier = tierByKey(mapping.tierKey, this.services.tierSets.current(guildId));
-		throw new UserError(`Không thể dùng ${roleMention(roleId)} ${purpose} vì role này đang là role của bậc danh hiệu ${tier.name}: `
-			+ "bot tự thêm và gỡ role danh hiệu theo level của từng người. Hãy chọn role khác, hoặc bỏ gán bằng `/config tier clear-role` trước.");
+		assertUsableRole(this.services, guildId, role, purpose);
 	}
 
 	// ---------- Danh hiệu (DEC-031, DEC-033) ----------
@@ -1250,32 +1173,15 @@ export default class ConfigCmd extends Command
 	 * Lưu kênh Bảng vàng (đã qua assertBoardChannelAccess), xoá message bảng cũ nếu có, rồi đăng bảng ở kênh mới ngay; trả về
 	 * phản hồi. Dùng chung cho `/config board` và bảng cấu hình; gọi sau khi đã defer vì có thể mất vài giây.
 	 */
-	private async moveLiveBoard(guildId: string, channelId: string, actorId: string): Promise<string>
+	private moveLiveBoard(guildId: string, channelId: string, actorId: string): Promise<string>
 	{
-		const { previous } = this.services.liveBoards.setChannel(guildId, channelId, actorId);
-		if (previous?.messageId) await this.liveBoardActions.remove(this.client, previous);
-		const posted = await this.liveBoardActions.refresh(this.client, guildId, { force: true });
-
-		const lines = [`Đã đặt Bảng vàng ở ${channelMention(channelId)}. Bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.`];
-		if (!posted)
-		{
-			lines.push("⚠️ Chưa đăng được bảng xếp hạng lên kênh này (xem log của bot). Bot sẽ thử lại ở lần cập nhật định kỳ tiếp theo.");
-		}
-		return lines.join("\n");
+		return moveLiveBoard(this.client, this.services, this.liveBoardActions, guildId, channelId, actorId);
 	}
 
 	/** Tắt Bảng vàng và xoá message bảng xếp hạng cũ nếu có; trả về phản hồi. Dùng chung cho `/config board tat` và bảng cấu hình. */
-	private async turnOffLiveBoard(guildId: string, actorId: string): Promise<string>
+	private turnOffLiveBoard(guildId: string, actorId: string): Promise<string>
 	{
-		const previous = this.services.liveBoards.disable(guildId, actorId);
-		if (!previous) return "Bảng vàng vốn đang tắt.";
-
-		const channel = channelMention(previous.channelId);
-		if (!previous.messageId) return `Đã tắt Bảng vàng ở ${channel}.`;
-		const deleted = await this.liveBoardActions.remove(this.client, previous);
-		return deleted
-			? `Đã tắt Bảng vàng và xoá message bảng xếp hạng ở ${channel}.`
-			: `Đã tắt Bảng vàng. Không xoá được message bảng xếp hạng cũ ở ${channel} (có thể đã bị xoá); nếu còn, bạn có thể tự xoá.`;
+		return turnOffLiveBoard(this.client, this.services, this.liveBoardActions, guildId, actorId);
 	}
 
 	// ---------- Bảng cấu hình chung `/config panel` (PROP-033, DEC-037) ----------

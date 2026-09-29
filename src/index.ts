@@ -1,3 +1,4 @@
+import { Events } from "discord.js";
 import DiscordClient from "./classes/DiscordClient";
 import ProcessManager from "./classes/ProcessManager";
 import { loadConfig } from "./config";
@@ -7,6 +8,8 @@ import { runMigrations } from "./db/migrations";
 import { createServices } from "./services";
 import { systemClock } from "./shared/clock";
 import { logger } from "./shared/logger";
+import { DEFAULT_LIVE_BOARD_ACTIONS } from "./discord/configOps";
+import { startWebServer, WebServerHandle } from "./web/server";
 
 // Lưới an toàn cuối cùng: lỗi async không có ai bắt thì chỉ ghi log, không để process thoát (LL-001).
 process.on("unhandledRejection", (reason) =>
@@ -28,7 +31,33 @@ async function main(): Promise<void>
 	const stopBackups = startBackupSchedule(services.backup);
 	const client = new DiscordClient(services, config.guildIds);
 
+	// Trang web quản trị (DEC-039): chỉ mở khi có WEB_PORT, sau khi bot sẵn sàng (cần cache server, role, kênh).
+	let web: WebServerHandle | null = null;
+	const webConfig = config.web;
+	if (webConfig)
+	{
+		client.once(Events.ClientReady, () =>
+		{
+			startWebServer({
+				client,
+				services,
+				guildIds: config.guildIds,
+				config: webConfig,
+				fetch: (input, init) => fetch(input, init),
+				clock: systemClock,
+				liveBoardActions: DEFAULT_LIVE_BOARD_ACTIONS,
+			})
+				.then(handle =>
+				{
+					web = handle;
+					logger.info(`Trang web quản trị: ${webConfig.baseUrl} (lắng nghe ${webConfig.host}:${handle.port}).`);
+				})
+				.catch((error: unknown) => logger.error("Không mở được trang web quản trị (bot vẫn chạy bình thường):", error));
+		});
+	}
+
 	new ProcessManager([
+		() => web?.close(),
 		() => stopBackups(),
 		() => client.destroy(),
 		() => db.close(),

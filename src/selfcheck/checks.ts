@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { loadConfig } from "../config";
+import { loadConfig, loadWebConfig } from "../config";
 
 /*
  * Các bước tự kiểm tra môi trường (`npm run selfcheck`, DEC-034). Mỗi hàm trả về kết quả thay vì in ra hay throw,
@@ -164,6 +164,20 @@ function guildIdsFailure(value: string | undefined): CheckResult
 }
 
 /**
+ * Cấu hình trang web quản trị (DEC-039), đọc bằng đúng loadWebConfig của bot. Không in Client Secret (chỉ báo "có"); lỗi của
+ * loadWebConfig chỉ nêu tên biến, không nêu giá trị.
+ */
+export function checkWebConfig(env: NodeJS.ProcessEnv): CheckResult
+{
+	const web = attempt(() => loadWebConfig(env));
+	if (!web.ok) return fail("config", `Trang web quản trị: ${web.error}`);
+	if (web.value === null) return ok("config", "Trang web quản trị: tắt (không đặt WEB_PORT).");
+	const { port, host, baseUrl } = web.value;
+	return ok("config", `Trang web quản trị: bật, lắng nghe ${host}:${port}, địa chỉ ${baseUrl}; DISCORD_CLIENT_SECRET: có. `
+		+ `Redirect cần đăng ký trên Developer Portal (OAuth2 → Redirects): ${baseUrl}/auth/callback`);
+}
+
+/**
  * Đọc cấu hình bằng đúng loadConfig của bot. Token luôn được thay bằng chuỗi giả trước khi gọi loadConfig, nên token thật
  * không thể lọt vào thông báo lỗi. Guild ID và các biến còn lại được kiểm tra riêng để một lần chạy báo đủ các lỗi.
  * Giá trị sai của biến cấu hình không được in lại (có thể là secret dán nhầm chỗ, hoặc chứa ký tự xuống dòng tạo dòng giả).
@@ -178,10 +192,11 @@ export function checkConfig(env: NodeJS.ProcessEnv): ConfigCheck
 		? ok("config", `DISCORD_GUILD_IDS: ${guilds.value.length} guild hợp lệ (${guilds.value.join(", ")}).`)
 		: guildIdsFailure(env.DISCORD_GUILD_IDS));
 
-	const rest = attempt(() => loadConfig({ ...base, DISCORD_GUILD_IDS: PLACEHOLDER_GUILD }));
+	const rest = attempt(() => loadConfig({ ...base, DISCORD_GUILD_IDS: PLACEHOLDER_GUILD, WEB_PORT: undefined }));
 	results.push(rest.ok
 		? ok("config", `Database: ${rest.value.databasePath} · Backup: ${rest.value.backupDir} (giữ ${rest.value.backupKeep} bản).`)
 		: fail("config", rest.error));
+	results.push(checkWebConfig(env));
 
 	const logLevel = env.LOG_LEVEL;
 	if (logLevel && !LOG_LEVELS.includes(logLevel))
