@@ -553,7 +553,7 @@ describe("định nghĩa /admin và /config", () =>
 		assert.deepEqual(names(children(optionAt(adminJson.options, "contribution"))), ["adjust", "remove", "reset", "reset-all"]);
 		assert.deepEqual(
 			names(configJson.options ?? []),
-			["view", "xp", "channel", "team", "admin-role", "poll", "contribution", "tier", "board"],
+			["view", "panel", "xp", "channel", "team", "admin-role", "poll", "contribution", "tier", "board"],
 		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "channel"))), ["set", "reset", "list", "mode"]);
 		const modeOption = optionAt(configJson.options, "channel", "mode", "che-do");
