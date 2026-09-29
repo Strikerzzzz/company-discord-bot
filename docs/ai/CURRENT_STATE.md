@@ -18,6 +18,7 @@
     - 857 test pass.
   - 4 agent đang làm song song: tổng quan/kênh/team; cài đặt/quyền/Bảng vàng/nhật ký; danh hiệu; tài liệu.
   - Chưa bật trên server: cần `WEB_PORT`, `WEB_BASE_URL`, `DISCORD_CLIENT_SECRET`, và redirect trên Developer Portal.
+  - Firewall `ufw` trên server đang chặn cổng 8787 (đã thử ngày 2026-09-29); cổng 8765 của dịch vụ khác thì mở. Khi bật web phải thêm luật `ufw` cho 8787, chỉ trong mạng nội bộ.
 - **Phase 15 (DEC-037) đã merge vào `main`** (DEC-038). Bản `2a84410` đã build sẵn ở `~/deploy/src` trên server, **chờ người phụ trách chạy `install.sh` và `start.sh`** (server vẫn chạy `38238e8`):
   - `/config panel`: bảng cấu hình 6 trang (PROP-033);
   - chế độ kênh "chỉ kênh được bật" (migration 5, `/config channel mode`).
