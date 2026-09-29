@@ -161,7 +161,7 @@
 - [ ] Trang **XP**, bấm "✏️ Sửa số" → form 4 ô điền sẵn giá trị hiện tại. Chỉ đổi ô XP mỗi tin nhắn thành 15, lưu → trang XP hiện 15, ba số còn lại giữ nguyên.
 - [ ] Hai admin cùng mở form: A và B cùng bấm "✏️ Sửa số" (cả hai form đang hiện 15 XP). A đổi XP mỗi tin nhắn thành 20 rồi lưu. Sau đó B chỉ đổi cooldown thành 30 rồi lưu → kết quả: XP mỗi tin nhắn **20** (B không đè về 15), cooldown 30.
 - [ ] Nhập sai ở ô XP mỗi tin nhắn (cho phép 0 đến 1000): `abc`, `-5`, `1001`, `10 XP` → mỗi lần bị từ chối, thông báo nêu tên ô và khoảng hợp lệ; mở lại trang XP: không số nào đổi.
-- [ ] Dấu chấm, dấu phẩy và khoảng trắng được bỏ qua như dấu ngăn cách hàng nghìn: nhập `1.000` ở ô cooldown → lưu 1000 giây.
+- [ ] Ô số chỉ nhận chữ số: nhập `1.000` hoặc `2,5` → bị từ chối ("chỉ gồm chữ số"); nhập `1 000` (có khoảng trắng) ở ô cooldown → lưu 1000 giây.
 - [ ] Nút bật/tắt thông báo lên level → dòng "Thông báo lên level" trên trang đổi theo; `/config view` khớp.
 - [ ] Trả lại mặc định trước khi sang phần tiếp: 10 XP mỗi tin, cooldown 60 giây, thông báo lên level bật.
 

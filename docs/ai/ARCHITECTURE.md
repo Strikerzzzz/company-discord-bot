@@ -125,9 +125,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
   - bỏ trùng; rỗng hoặc quá `MAX_BULK_CHANNELS` (25, bằng số lựa chọn tối đa của ChannelSelect) → `UserError`;
   - một transaction, đọc chế độ bên trong transaction;
   - channel đã đúng trạng thái → `unchanged`, không ghi, không audit;
-  - channel không có XP/cooldown riêng mà trạng thái mới trùng mặc định của chế độ → **xoá** dòng thay vì ghi, để `channel_settings` chỉ chứa channel khác mặc định. Channel có XP/cooldown riêng giữ các giá trị đó;
+  - channel đổi trạng thái → ghi dòng (như `setChannel`), giữ XP/cooldown riêng nếu có. Trạng thái admin đặt vì vậy giữ nguyên khi đổi chế độ về sau;
   - mỗi channel đổi trạng thái có một audit `channel.set` với `{ xpEnabled }`.
-- Hệ quả của việc xoá dòng: trạng thái tường minh chỉ được lưu khi khác mặc định của chế độ **lúc thao tác**. Ví dụ ở `all`, bật bằng bảng một channel chưa có dòng là `unchanged` (không tạo dòng); ở `selected`, tắt bằng bảng thì xoá dòng. Đổi chế độ sau đó thì các channel này theo chế độ mới. Ngược lại, `setChannel` (`/config channel set`) luôn ghi dòng, kể cả khi chỉ đặt XP hay cooldown riêng: khi đó trạng thái bật/tắt hiện hành (có thể đến từ chế độ) được lưu cứng vào dòng.
+- Hệ quả: channel vốn đã đúng trạng thái theo chế độ **lúc thao tác** thì không có dòng. Ví dụ ở `all`, bật bằng bảng một channel chưa có dòng là `unchanged`; đổi sang `selected` sau đó thì channel này không tính XP. `setChannel` (`/config channel set`) luôn ghi dòng, kể cả khi chỉ đặt XP hay cooldown riêng: khi đó trạng thái bật/tắt hiện hành (có thể đến từ chế độ) được lưu cứng vào dòng.
 - Hiển thị: `xpChannelModeLabel` (views/admin.ts) cho `/config view`, chân `/config channel list` và audit (`xpChannelMode`).
 
 ### 3.3 Contribution (DEC-025)
