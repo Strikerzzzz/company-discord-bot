@@ -2,7 +2,8 @@
 // luôn cùng quy tắc. Lỗi hiển thị cho người dùng là UserError; nội dung dùng markdown/mention của Discord (web tự chuyển).
 import { GuildBasedChannel, Guild, GuildMember, PermissionFlagsBits, PermissionsBitField } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
-import { tierByKey } from "../modules/activity/tiers";
+import { TIER_SETS, TierKey, tierByKey, TierSet } from "../modules/activity/tiers";
+import { parseTierDisplayName, TierRenameInput } from "../modules/gamification/TierSetService";
 import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
 import { channelMention, roleMention } from "./format";
@@ -110,6 +111,27 @@ export function assertUsableRole(
 {
 	assertAssignableRole(role, guildId, purpose);
 	assertNotTierRole(services, guildId, role.id, purpose);
+}
+
+function collapseSpaces(text: string): string
+{
+	return text.replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * Chuỗi admin nhập cho một bậc ("🟡 Kim Đan", chỉ tên, chỉ emoji, hoặc rỗng) thành thay đổi để lưu. Phần trùng với
+ * mặc định của bộ lưu là null (dùng mặc định), để ô điền sẵn mà admin không sửa không biến thành tên tuỳ chỉnh.
+ * Dùng chung cho `/config tier rename`, form đổi tên của bảng danh hiệu và trang web; kiểm tra hợp lệ do TierSetService.rename làm.
+ */
+export function renameInput(set: TierSet, tierKey: TierKey, raw: string): TierRenameInput
+{
+	const parsed = parseTierDisplayName(raw);
+	const base = tierByKey(tierKey, TIER_SETS[set.key]);
+	return {
+		tierKey,
+		name: parsed.name !== null && collapseSpaces(parsed.name) === base.name ? null : parsed.name,
+		emoji: parsed.emoji === base.emoji ? null : parsed.emoji,
+	};
 }
 
 /**

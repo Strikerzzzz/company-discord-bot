@@ -26,6 +26,7 @@ import {
 	isBoardChannel,
 	LiveBoardActions,
 	moveLiveBoard,
+	renameInput,
 	turnOffLiveBoard,
 } from "../../discord/configOps";
 import { requireGuildId } from "../../discord/guards";
@@ -98,10 +99,8 @@ import {
 	TIER_SETS,
 	TierKey,
 	tierByKey,
-	TierSet,
 	TierSetKey,
 } from "../../modules/activity/tiers";
-import { parseTierDisplayName, TierRenameInput } from "../../modules/gamification/TierSetService";
 import { TierRoleMapping } from "../../modules/gamification/types";
 import { BulkChannelResult } from "../../modules/guild-config/GuildConfigService";
 import {
@@ -484,26 +483,6 @@ function assignmentNotes(roleId: string, assignment: TierRoleAssignment): string
 	}
 	if (!assignment.botCanManageRoles) notes.push(MANAGE_ROLES_WARNING);
 	return notes;
-}
-
-function collapseSpaces(text: string): string
-{
-	return text.replace(/\s+/gu, " ").trim();
-}
-
-/**
- * Chuỗi admin nhập cho một bậc ("🟡 Kim Đan", chỉ tên, chỉ emoji, hoặc rỗng) thành thay đổi để lưu. Phần trùng với
- * mặc định của bộ lưu là null (dùng mặc định), để ô điền sẵn mà admin không sửa không biến thành tên tuỳ chỉnh.
- */
-function renameInput(set: TierSet, tierKey: TierKey, raw: string): TierRenameInput
-{
-	const parsed = parseTierDisplayName(raw);
-	const base = tierByKey(tierKey, TIER_SETS[set.key]);
-	return {
-		tierKey,
-		name: parsed.name !== null && collapseSpaces(parsed.name) === base.name ? null : parsed.name,
-		emoji: parsed.emoji === base.emoji ? null : parsed.emoji,
-	};
 }
 
 function requireChange(patch: object): void
