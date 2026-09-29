@@ -1,5 +1,9 @@
 // Hàm thuần dựng bảng điều khiển cấu hình chung `/config panel` (PROP-033, DEC-037): Components V2, form sửa số, mã hoá customId.
 import {
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	ChannelSelectMenuBuilder,
 	ChannelType,
 	ContainerBuilder,
 	InteractionReplyOptions,
@@ -7,13 +11,28 @@ import {
 	LabelBuilder,
 	MessageFlags,
 	ModalBuilder,
+	RoleSelectMenuBuilder,
+	SeparatorBuilder,
+	SeparatorSpacingSize,
+	StringSelectMenuBuilder,
 	TextDisplayBuilder,
 	TextInputBuilder,
 	TextInputStyle,
 } from "discord.js";
 import { TierSet } from "../../modules/activity/tiers";
-import { ChannelSettings, GuildSettings, isXpChannelMode, NumericSettingKey, SETTING_LIMITS, XpChannelMode } from "../../modules/guild-config/types";
+import {
+	ChannelSettings,
+	DEFAULT_GUILD_SETTINGS,
+	GuildSettings,
+	isXpChannelMode,
+	NumericSettingKey,
+	SETTING_LIMITS,
+	XpChannelMode,
+} from "../../modules/guild-config/types";
+import { MAX_TEAMS } from "../../modules/team/TeamService";
 import { UserError } from "../../shared/errors";
+import { channelMention, COLORS, fitLines, formatNumber, roleMention, truncate } from "../format";
+import { describeChannelSettings, settingLine, xpChannelModeLabel } from "./admin";
 
 // ---------- Hợp đồng chung (nền móng Phase 15): namespace, trang, thao tác, customId ----------
 
@@ -228,17 +247,378 @@ export interface ConfigPanelData
 	notice?: string | null;
 }
 
-// ---------- Dựng giao diện (agent giao diện hoàn thiện; bản tối thiểu dưới đây chỉ để handler và test chạy được) ----------
+// ---------- Dựng giao diện ----------
+
+/** Tổng số ký tự tối đa của mọi TextDisplay trong một tin nhắn Components V2 (UTF-16). */
+const TEXT_TOTAL_MAX = 4000;
+/**
+ * Độ dài tối đa của notice (UTF-16). Notice do handler tạo, thường một vài câu nên luôn hiện nguyên văn; notice dài hơn mức này
+ * (không nên có) bị cắt, để bảng không vượt giới hạn chữ của Discord.
+ */
+export const CONFIG_PANEL_NOTICE_MAX = 1500;
+/** Cảnh báo khi đang ở chế độ "chỉ kênh được bật" mà chưa bật kênh nào (trang tổng quan và trang kênh). */
+export const NO_XP_CHANNEL_WARNING = "⚠️ Chưa bật kênh nào, hiện không ai được XP từ tin nhắn.";
+/** Trần độ dài một danh sách kênh hoặc team (UTF-16), để bảng không quá dài; phần còn lại gộp thành "… và N … khác". */
+const LIST_MAX = 1500;
+/** Số lựa chọn tối đa của một menu chọn. */
+const SELECT_MAX_VALUES = 25;
+/** Giới hạn mô tả của một ô trong form (UTF-16). */
+const LABEL_DESCRIPTION_MAX = 100;
+/** Độ dài tối đa của ô số trong form (parseFormNumber nhận tối đa 9 chữ số sau khi bỏ dấu ngăn cách). */
+const NUMBER_INPUT_MAX = 9;
+
+interface PageInfo
+{
+	emoji: string;
+	label: string;
+	/** Mô tả trong menu chọn trang (≤ 100 ký tự). */
+	description: string;
+}
+
+const PAGE_INFO: Readonly<Record<ConfigPanelPage, PageInfo>> = {
+	home: { emoji: "🏠", label: "Tổng quan", description: "Tóm tắt toàn bộ cấu hình" },
+	channels: { emoji: "📺", label: "Kênh tính XP", description: "Chế độ kênh, bật hoặc tắt tính XP cho từng kênh" },
+	teams: { emoji: "👥", label: "Team", description: "Thêm hoặc bỏ role team" },
+	xp: { emoji: "⭐", label: "Activity XP", description: "XP mỗi tin, cooldown, chống spam, thông báo lên level" },
+	poll: { emoji: "🗳️", label: "Vote và contribution", description: "XP khi vote, giới hạn mỗi ngày, điểm ghi nhận, role tạo vote" },
+	board: { emoji: "🏆", label: "Bảng vàng và quyền", description: "Kênh Bảng vàng, role admin bot, bảng danh hiệu" },
+};
+
+const XP_SETTING_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"] as const;
+const POLL_SETTING_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints", "pollCreatorRoleId"] as const;
+
+const MODE_BUTTON_LABELS: Readonly<Record<XpChannelMode, string>> = {
+	all: "🌐 Tất cả kênh",
+	selected: "🎯 Chỉ kênh được bật",
+};
+
+const MODE_DETAILS: Readonly<Record<XpChannelMode, string>> = {
+	all: "Mọi kênh bot xem được đều tính XP, kể cả kênh tạo mới sau này; chỉ kênh bị tắt riêng là không tính.",
+	selected: "Chỉ kênh được bật riêng mới tính XP; kênh chưa bật, kể cả kênh tạo mới sau này, không tính.",
+};
+
+const HOME_NOTE = "-# Chọn mục ở menu trên để sửa. Các lệnh gõ tay `/config …` vẫn dùng được.";
+
+const CHANNELS_NOTE = [
+	"-# Tin trong thread và bài trong forum tính theo kênh cha. Mỗi lần chọn được tối đa 25 kênh.",
+	"-# XP hoặc cooldown riêng của từng kênh chỉnh bằng `/config channel set`; `/config channel reset` đưa kênh về theo chế độ.",
+].join("\n");
+
+const TEAMS_NOTE = "-# Điểm team chỉ tính từ lúc role được thêm làm team; bỏ team thì điểm lịch sử vẫn giữ. Không dùng role danh hiệu làm team.";
+
+const XP_NOTE = [
+	"-# Cooldown là thời gian chờ giữa hai lần một người được XP từ tin nhắn. Tin ngắn hơn độ dài tối thiểu, hoặc trùng tin trước đó "
+		+ "của cùng người trong khoảng chống trùng, không được XP.",
+	"-# XP hoặc cooldown riêng của từng kênh chỉnh bằng `/config channel set`.",
+].join("\n");
+
+const POLL_NOTE = "-# XP mặc định dùng khi admin không đặt XP riêng lúc tạo vote. Giới hạn XP từ vote tính theo ngày giờ Việt Nam; "
+	+ "0 là không giới hạn. Điểm ghi nhận cộng cho tác giả contribution. Admin luôn tạo được vote.";
+
+const ADMIN_NOTE = "-# Người có quyền Manage Server luôn là admin. Role admin muốn dùng lệnh thì cần được cho phép trong "
+	+ "**Server Settings → Integrations**.";
+
+function textDisplay(content: string): TextDisplayBuilder
+{
+	return new TextDisplayBuilder().setContent(content);
+}
+
+function separator(): SeparatorBuilder
+{
+	return new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
+}
+
+type PanelRowComponent = ButtonBuilder | ChannelSelectMenuBuilder | RoleSelectMenuBuilder | StringSelectMenuBuilder;
+
+function row<T extends PanelRowComponent>(...components: T[]): ActionRowBuilder<T>
+{
+	return new ActionRowBuilder<T>().addComponents(...components);
+}
+
+function button(action: ConfigPanelAction, label: string, style: ButtonStyle): ButtonBuilder
+{
+	return new ButtonBuilder().setCustomId(configPanelId(action)).setLabel(label).setStyle(style);
+}
+
+/** Một danh sách có tiêu đề in đậm; các dòng cắt vừa `max` ký tự (luôn giữ tiêu đề), phần bị cắt gộp thành "… và N {unit} khác". */
+function listSection(head: string, lines: readonly string[], empty: string, max: number, unit: string): string
+{
+	const title = `**${head}**`;
+	const body = lines.length === 0
+		? empty
+		: fitLines(lines, Math.max(0, max - title.length - 1), hidden => `… và ${formatNumber(hidden)} ${unit} khác`);
+	return `${title}\n${body}`;
+}
+
+function settingLines(settings: GuildSettings, keys: readonly (keyof GuildSettings)[]): string[]
+{
+	return keys.map(key => settingLine(key, settings[key]));
+}
+
+/** Kênh có XP hoặc cooldown riêng (khác giá trị chung của server). */
+function hasOwnXp(channel: ChannelSettings): boolean
+{
+	return channel.xpPerMessage !== null || channel.xpCooldownSeconds !== null;
+}
+
+function tierSummary({ tierSet, tierRoleCount }: ConfigPanelData): string
+{
+	return `bộ **${tierSet.name}** · role đã gán **${formatNumber(tierRoleCount)}/${formatNumber(tierSet.tiers.length)}**`;
+}
+
+// ---------- Khung chung: tiêu đề, notice, menu chọn trang ----------
+
+function navSelect(page: ConfigPanelPage): StringSelectMenuBuilder
+{
+	return new StringSelectMenuBuilder()
+		.setCustomId(configPanelId({ type: "nav" }))
+		.setPlaceholder("Chọn mục cấu hình")
+		.setMinValues(1)
+		.setMaxValues(1)
+		.addOptions(CONFIG_PANEL_PAGES.map(key => ({
+			label: PAGE_INFO[key].label,
+			value: key,
+			description: PAGE_INFO[key].description,
+			emoji: { name: PAGE_INFO[key].emoji },
+			default: key === page,
+		})));
+}
+
+// ---------- Trang tổng quan ----------
+
+function homeText(data: ConfigPanelData): string
+{
+	const { settings, channels, teams, boardChannelId } = data;
+	const mode = settings.xpChannelMode;
+	const enabled = channels.filter(channel => channel.xpEnabled).length;
+	const custom = channels.filter(channel => channel.xpEnabled && hasOwnXp(channel)).length;
+	const channelLines = [
+		"**📺 Kênh tính XP**",
+		`• Chế độ: **${xpChannelModeLabel(mode)}**`,
+		mode === "all"
+			? `• Kênh đang tắt riêng: **${formatNumber(channels.length - enabled)}**`
+			: `• Kênh đang bật: **${formatNumber(enabled)}**`,
+	];
+	if (custom > 0) channelLines.push(`• Kênh có XP hoặc cooldown riêng: **${formatNumber(custom)}**`);
+	if (mode === "selected" && enabled === 0) channelLines.push(NO_XP_CHANNEL_WARNING);
+
+	const sections = [
+		channelLines,
+		["**⭐ Activity XP**", ...settingLines(settings, XP_SETTING_KEYS)],
+		["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS)],
+		[
+			"**👥 Team, 🏆 Bảng vàng và 🔐 quyền**",
+			`• Team: **${formatNumber(teams.length)}/${formatNumber(MAX_TEAMS)}**`,
+			`• Bảng vàng: ${boardChannelId === null ? "**đang tắt**" : channelMention(boardChannelId)}`,
+			settingLine("adminRoleId", settings.adminRoleId),
+			`• Danh hiệu: ${tierSummary(data)}`,
+		],
+	];
+	return sections.map(lines => lines.join("\n")).join("\n\n");
+}
+
+function addHomePage(container: ContainerBuilder, data: ConfigPanelData): void
+{
+	container.addTextDisplayComponents(textDisplay(homeText(data)), textDisplay(HOME_NOTE));
+}
+
+// ---------- Trang kênh tính XP ----------
+
+/** "• #kênh", kèm mô tả nếu kênh đang bật XP và có XP hoặc cooldown riêng. */
+function channelLine(channel: ChannelSettings, settings: GuildSettings): string
+{
+	const mention = channelMention(channel.channelId);
+	return channel.xpEnabled && hasOwnXp(channel) ? `• ${mention}: ${describeChannelSettings(channel, settings)}` : `• ${mention}`;
+}
 
 /**
- * Bảng cấu hình của một trang (Components V2). Mọi trang có menu chọn trang (`nav`, điền sẵn trang hiện tại) và hiện `notice`
- * nguyên văn nếu có. Tổng số component (tính cả lồng nhau) ≤ 40, mọi customId từ configPanelId.
+ * Danh sách kênh theo chế độ, gọn trong `max` ký tự: chế độ selected liệt kê kênh đang tính XP (cảnh báo nếu chưa có kênh nào);
+ * chế độ all liệt kê kênh đang tắt XP, rồi kênh đang bật có XP hoặc cooldown riêng (nếu có).
+ */
+function channelListText({ settings, channels }: ConfigPanelData, max: number): string
+{
+	const line = (channel: ChannelSettings): string => channelLine(channel, settings);
+	if (settings.xpChannelMode === "selected")
+	{
+		const enabled = channels.filter(channel => channel.xpEnabled).map(line);
+		const empty = `${NO_XP_CHANNEL_WARNING} Chọn kênh ở ô ➕ bên dưới để bật.`;
+		return listSection(`Kênh đang tính XP (${formatNumber(enabled.length)})`, enabled, empty, max, "kênh");
+	}
+
+	const disabled = channels.filter(channel => !channel.xpEnabled).map(line);
+	const disabledHead = `Kênh đang tắt XP (${formatNumber(disabled.length)})`;
+	const custom = channels.filter(channel => channel.xpEnabled && hasOwnXp(channel)).map(line);
+	if (custom.length === 0) return listSection(disabledHead, disabled, "Không có kênh nào bị tắt.", max, "kênh");
+
+	const gap = "\n\n";
+	const customHead = `Kênh có XP hoặc cooldown riêng (${formatNumber(custom.length)})`;
+	const customNeed = customHead.length + 5 + custom.join("\n").length;
+	const reserve = Math.min(Math.floor(max / 2), customNeed) + gap.length;
+	const first = listSection(disabledHead, disabled, "Không có kênh nào bị tắt.", max - reserve, "kênh");
+	return first + gap + listSection(customHead, custom, "", max - first.length - gap.length, "kênh");
+}
+
+function modeButton(mode: XpChannelMode, current: XpChannelMode): ButtonBuilder
+{
+	const active = mode === current;
+	const label = active ? `${MODE_BUTTON_LABELS[mode]} · đang dùng` : MODE_BUTTON_LABELS[mode];
+	return button({ type: "mode", mode }, label, active ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(active);
+}
+
+function channelsSelect(enabled: boolean): ChannelSelectMenuBuilder
+{
+	return new ChannelSelectMenuBuilder()
+		.setCustomId(configPanelId({ type: "channels", enabled }))
+		.setPlaceholder(enabled ? "➕ Bật tính XP cho kênh…" : "➖ Tắt tính XP cho kênh…")
+		.setChannelTypes(...XP_CHANNEL_TYPES)
+		.setMinValues(1)
+		.setMaxValues(SELECT_MAX_VALUES);
+}
+
+function addChannelsPage(container: ContainerBuilder, data: ConfigPanelData, budget: number): void
+{
+	const mode = data.settings.xpChannelMode;
+	const modeText = `**Chế độ hiện tại: ${xpChannelModeLabel(mode)}**\n${MODE_DETAILS[mode]}`;
+	const listMax = Math.min(LIST_MAX, budget - modeText.length - CHANNELS_NOTE.length);
+	container
+		.addTextDisplayComponents(textDisplay(modeText))
+		.addActionRowComponents(row(modeButton("all", mode), modeButton("selected", mode)))
+		.addSeparatorComponents(separator())
+		.addTextDisplayComponents(textDisplay(channelListText(data, listMax)))
+		.addActionRowComponents(row(channelsSelect(true)), row(channelsSelect(false)))
+		.addTextDisplayComponents(textDisplay(CHANNELS_NOTE));
+}
+
+// ---------- Trang team ----------
+
+/** Ô chọn role thêm hoặc bỏ team; khoá lại khi đã đủ MAX_TEAMS team (thêm) hoặc chưa có team nào (bỏ). */
+function teamSelect(add: boolean, teamCount: number): RoleSelectMenuBuilder
+{
+	const full = teamCount >= MAX_TEAMS;
+	const none = teamCount === 0;
+	let placeholder = add ? "➕ Thêm team…" : "➖ Bỏ team…";
+	if (add && full) placeholder = `Đã đủ ${formatNumber(MAX_TEAMS)} team, hãy bỏ bớt trước khi thêm`;
+	if (!add && none) placeholder = "Chưa có team nào để bỏ";
+	return new RoleSelectMenuBuilder()
+		.setCustomId(configPanelId({ type: "teams", add }))
+		.setPlaceholder(placeholder)
+		.setMinValues(1)
+		.setMaxValues(Math.min(SELECT_MAX_VALUES, MAX_TEAMS))
+		.setDisabled(add ? full : none);
+}
+
+function addTeamsPage(container: ContainerBuilder, { teams }: ConfigPanelData, budget: number): void
+{
+	const lines = teams.map((roleId, index) => `${index + 1}. ${roleMention(roleId)}`);
+	const head = `Team đang có (${formatNumber(teams.length)}/${formatNumber(MAX_TEAMS)})`;
+	const empty = "Chưa có team nào. Chọn role ở ô ➕ bên dưới để thêm.";
+	const listMax = Math.min(LIST_MAX, budget - TEAMS_NOTE.length);
+	container
+		.addTextDisplayComponents(textDisplay(listSection(head, lines, empty, listMax, "team")))
+		.addActionRowComponents(row(teamSelect(true, teams.length)), row(teamSelect(false, teams.length)))
+		.addTextDisplayComponents(textDisplay(TEAMS_NOTE));
+}
+
+// ---------- Trang Activity XP ----------
+
+function addXpPage(container: ContainerBuilder, { settings }: ConfigPanelData): void
+{
+	const announce = settings.levelUpAnnouncements;
+	container
+		.addTextDisplayComponents(textDisplay(["**⭐ Activity XP và chống spam**", ...settingLines(settings, XP_SETTING_KEYS), XP_NOTE].join("\n")))
+		.addActionRowComponents(row(
+			button({ type: "xpForm" }, "✏️ Sửa số", ButtonStyle.Primary),
+			button(
+				{ type: "announce", enabled: !announce },
+				announce ? "🔕 Tắt thông báo lên level" : "🔔 Bật thông báo lên level",
+				ButtonStyle.Secondary,
+			),
+		));
+}
+
+// ---------- Trang vote và contribution ----------
+
+/** Ô chọn một role, cho phép bỏ chọn; điền sẵn role hiện tại nếu có. */
+function singleRoleSelect(action: ConfigPanelAction, placeholder: string, roleId: string | null): RoleSelectMenuBuilder
+{
+	const select = new RoleSelectMenuBuilder()
+		.setCustomId(configPanelId(action))
+		.setPlaceholder(placeholder)
+		.setMinValues(0)
+		.setMaxValues(1);
+	return roleId === null ? select : select.setDefaultRoles(roleId);
+}
+
+function addPollPage(container: ContainerBuilder, { settings }: ConfigPanelData): void
+{
+	const roleId = settings.pollCreatorRoleId;
+	container
+		.addTextDisplayComponents(textDisplay(["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS), POLL_NOTE].join("\n")))
+		.addActionRowComponents(row(button({ type: "pollForm" }, "✏️ Sửa số", ButtonStyle.Primary)))
+		.addActionRowComponents(row(singleRoleSelect({ type: "pollRole", drawnRoleId: roleId }, "Role được tạo vote (bỏ chọn = chỉ admin)", roleId)));
+}
+
+// ---------- Trang Bảng vàng và quyền ----------
+
+function boardSelect(boardChannelId: string | null): ChannelSelectMenuBuilder
+{
+	const select = new ChannelSelectMenuBuilder()
+		.setCustomId(configPanelId({ type: "board" }))
+		.setPlaceholder(boardChannelId === null ? "Chọn kênh đặt Bảng vàng…" : "Chuyển Bảng vàng sang kênh khác…")
+		.setChannelTypes(...BOARD_CHANNEL_TYPES)
+		.setMinValues(1)
+		.setMaxValues(1);
+	return boardChannelId === null ? select : select.setDefaultChannels(boardChannelId);
+}
+
+function addBoardPage(container: ContainerBuilder, data: ConfigPanelData): void
+{
+	const { settings, boardChannelId } = data;
+	const boardText = boardChannelId === null
+		? "Đang tắt. Chọn kênh bên dưới để bật."
+		: `Đang đặt ở ${channelMention(boardChannelId)}; bot giữ một message bảng xếp hạng ở đó và tự cập nhật định kỳ.`;
+	const adminRoleId = settings.adminRoleId;
+	container
+		.addTextDisplayComponents(textDisplay(`**🏆 Bảng vàng**\n${boardText}`))
+		.addActionRowComponents(row(boardSelect(boardChannelId)))
+		.addActionRowComponents(row(button({ type: "boardOff" }, "Tắt Bảng vàng", ButtonStyle.Danger).setDisabled(boardChannelId === null)))
+		.addSeparatorComponents(separator())
+		.addTextDisplayComponents(textDisplay(["**🔐 Quyền admin bot**", settingLine("adminRoleId", adminRoleId), ADMIN_NOTE].join("\n")))
+		.addActionRowComponents(row(singleRoleSelect(
+			{ type: "adminRole", drawnRoleId: adminRoleId },
+			"Role admin bot (bỏ chọn = chỉ người có Manage Server)",
+			adminRoleId,
+		)))
+		.addSeparatorComponents(separator())
+		.addTextDisplayComponents(textDisplay(`**🏅 Danh hiệu:** ${tierSummary(data)}`))
+		.addActionRowComponents(row(button({ type: "tierPanel" }, "🏅 Mở bảng danh hiệu", ButtonStyle.Secondary)));
+}
+
+/**
+ * Bảng cấu hình của một trang (Components V2, màu nhấn COLORS.primary): tiêu đề kèm tên trang, `notice` nguyên văn nếu có
+ * (dài quá CONFIG_PANEL_NOTICE_MAX thì cắt), menu chọn trang (`nav`, điền sẵn trang hiện tại), rồi nội dung trang.
+ * Trang nhiều nhất (board) có 19 component tính cả lồng nhau, dưới giới hạn 40; danh sách kênh và team cắt bằng fitLines để
+ * tổng chữ của mọi TextDisplay ≤ 4.000. Mọi customId từ configPanelId.
  */
 export function buildConfigPanel(page: ConfigPanelPage, data: ConfigPanelData): ContainerBuilder
 {
-	const container = new ContainerBuilder();
-	if (data.notice) container.addTextDisplayComponents(new TextDisplayBuilder().setContent(data.notice));
-	return container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ⚙️ Cấu hình bot · ${page}`));
+	const title = `## ⚙️ Bảng cấu hình bot · ${PAGE_INFO[page].label}`;
+	const notice = data.notice ? truncate(data.notice, CONFIG_PANEL_NOTICE_MAX) : null;
+	const container = new ContainerBuilder().setAccentColor(COLORS.primary).addTextDisplayComponents(textDisplay(title));
+	if (notice) container.addTextDisplayComponents(textDisplay(notice));
+	container.addActionRowComponents(row(navSelect(page))).addSeparatorComponents(separator());
+
+	const budget = TEXT_TOTAL_MAX - title.length - (notice?.length ?? 0);
+	switch (page)
+	{
+	case "home": addHomePage(container, data); break;
+	case "channels": addChannelsPage(container, data, budget); break;
+	case "teams": addTeamsPage(container, data, budget); break;
+	case "xp": addXpPage(container, data); break;
+	case "poll": addPollPage(container, data); break;
+	case "board": addBoardPage(container, data); break;
+	}
+	return container;
 }
 
 /** Phản hồi mở bảng: trả lời riêng, Components V2. */
@@ -253,17 +633,40 @@ export function configPanelUpdate(page: ConfigPanelPage, data: ConfigPanelData):
 	return { components: [buildConfigPanel(page, data)], flags: MessageFlags.IsComponentsV2 };
 }
 
+// ---------- Form sửa số ----------
+
+interface FormField
+{
+	/** Nhãn ô (≤ 45 ký tự). */
+	label: string;
+	/** Ý nghĩa, đứng đầu mô tả ô; mô tả còn ghi khoảng hợp lệ theo SETTING_LIMITS. */
+	hint: string;
+}
+
+const FORM_FIELDS: Readonly<Record<NumericSettingKey, FormField>> = {
+	xpPerMessage: { label: "XP mỗi tin nhắn", hint: "XP cho mỗi tin nhắn hợp lệ" },
+	xpCooldownSeconds: { label: "Cooldown (giây)", hint: "Thời gian chờ giữa hai lần một người được XP từ tin nhắn" },
+	minMessageLength: { label: "Độ dài tin tối thiểu (ký tự)", hint: "Tin ngắn hơn số ký tự này không được XP" },
+	duplicateWindowSeconds: { label: "Khoảng chống trùng (giây)", hint: "Tin trùng tin trước đó của cùng người trong khoảng này không được XP" },
+	defaultPollXp: { label: "XP mặc định khi vote", hint: "XP cho mỗi người tham gia, khi admin không đặt riêng lúc tạo vote" },
+	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", hint: "XP tối đa một người nhận từ vote mỗi ngày; 0 = không giới hạn" },
+	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", hint: "Điểm cộng cho tác giả contribution mỗi lượt ghi nhận" },
+};
+
+/** Ô số bắt buộc, customId là khoá cấu hình, điền sẵn giá trị hiện tại; mô tả ghi ý nghĩa và khoảng hợp lệ. */
 function numberInput(key: NumericSettingKey, value: number): LabelBuilder
 {
-	const limit = SETTING_LIMITS[key];
+	const { min, max } = SETTING_LIMITS[key];
+	const field = FORM_FIELDS[key];
 	return new LabelBuilder()
-		.setLabel(limit.label)
-		.setDescription(`Số nguyên từ ${limit.min} đến ${limit.max}`)
+		.setLabel(field.label)
+		.setDescription(truncate(`${field.hint}. Từ ${formatNumber(min)} đến ${formatNumber(max)}.`, LABEL_DESCRIPTION_MAX))
 		.setTextInputComponent(new TextInputBuilder()
 			.setCustomId(key)
 			.setStyle(TextInputStyle.Short)
 			.setRequired(true)
-			.setMaxLength(9)
+			.setMaxLength(NUMBER_INPUT_MAX)
+			.setPlaceholder(`Mặc định: ${formatNumber(DEFAULT_GUILD_SETTINGS[key])}`)
 			.setValue(String(value)));
 }
 
@@ -276,7 +679,7 @@ export function buildXpSettingsModal(settings: GuildSettings): ModalBuilder
 		minMessageLength: settings.minMessageLength,
 		duplicateWindowSeconds: settings.duplicateWindowSeconds,
 	};
-	const modal = new ModalBuilder().setCustomId(configPanelId({ type: "xpSave", drawn })).setTitle("Activity XP và chống spam");
+	const modal = new ModalBuilder().setCustomId(configPanelId({ type: "xpSave", drawn })).setTitle("⭐ Activity XP và chống spam");
 	for (const key of XP_FORM_KEYS) modal.addLabelComponents(numberInput(key, drawn[key]));
 	return modal;
 }
@@ -289,7 +692,7 @@ export function buildPollSettingsModal(settings: GuildSettings): ModalBuilder
 		pollXpDailyCap: settings.pollXpDailyCap,
 		contributionVotePoints: settings.contributionVotePoints,
 	};
-	const modal = new ModalBuilder().setCustomId(configPanelId({ type: "pollSave", drawn })).setTitle("Vote và contribution");
+	const modal = new ModalBuilder().setCustomId(configPanelId({ type: "pollSave", drawn })).setTitle("🗳️ Vote và contribution");
 	for (const key of POLL_FORM_KEYS) modal.addLabelComponents(numberInput(key, drawn[key]));
 	return modal;
 }
