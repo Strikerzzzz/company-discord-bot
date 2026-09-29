@@ -25,7 +25,7 @@
 | 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **Đã merge vào `main`** (DEC-034) | DEC-033 |
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
 | 15 | Bảng cấu hình chung, chế độ kênh tính XP | **Đã merge vào `main`** (DEC-038) | DEC-037 |
-| 16 | Trang web quản trị (mạng nội bộ, đăng nhập Discord) | **ĐANG LÀM** trên `phase-16/web-admin` | DEC-039 |
+| 16 | Trang web quản trị (mạng nội bộ, đăng nhập Discord) | **Đã merge vào `main`** (DEC-040) | DEC-039 |
 
 ## Chi tiết
 
@@ -144,3 +144,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-29 | DEC-037: thêm Phase 15 (`/config panel`, chế độ kênh "chỉ kênh được bật") |
 | 2026-09-29 | DEC-038: merge Phase 15 vào `main` |
 | 2026-09-29 | DEC-039: thêm Phase 16 (trang web quản trị) |
+| 2026-09-29 | DEC-040: merge Phase 16 vào `main` |

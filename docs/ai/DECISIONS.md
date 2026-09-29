@@ -371,6 +371,15 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Trang: tổng quan; kênh (toàn bộ kênh, không giới hạn 25); team; cài đặt điểm (XP, vote, contribution); quyền (role admin, role tạo vote); Bảng vàng; danh hiệu (bộ, tên bậc, role); nhật ký quản trị. Mọi thao tác ghi audit với người thao tác là tài khoản Discord đã đăng nhập.
   - Làm ở Phase 16, branch `phase-16/web-admin`, có review bảo mật riêng trước khi merge.
 
+### DEC-040 — Duyệt Phase 16
+
+- **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 duyệt")
+- **Nội dung:**
+  - merge `phase-16/web-admin` vào `main` (fast-forward tới `1f35bee`): trang web quản trị 8 trang, sửa lỗi của 2 review độc lập (LL-022), 939 test pass trên bản sạch ở server Linux;
+  - bản cài lên server gồm cả Phase 15 và Phase 16;
+  - bật web cần: biến `WEB_*` và `DISCORD_CLIENT_SECRET` trong `.env`, redirect trên Developer Portal, luật `ufw` mở cổng 8787 trong mạng nội bộ.
+  - PROP-034, 035, 036 vẫn PROPOSED.
+
 ---
 
 ## Đang chờ quyết định

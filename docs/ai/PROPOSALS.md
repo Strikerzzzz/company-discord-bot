@@ -46,7 +46,7 @@
 | PROP-034 | Chặn admin tự khoá quyền khi đổi hoặc bỏ role admin bot | MEDIUM | PROPOSED |
 | PROP-035 | Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server | LOW | PROPOSED |
 | PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
-| PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | APPROVED |
+| PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | IMPLEMENTED |
 
 ---
 
@@ -1489,4 +1489,4 @@ HIGH (người phụ trách yêu cầu)
 
 ### Trạng thái
 
-APPROVED (2026-09-29, DEC-039): chỉ mạng công ty/VPN, đăng nhập bằng tài khoản Discord. Làm ở Phase 16.
+IMPLEMENTED (2026-09-29, DEC-039, merge theo DEC-040): chỉ mạng công ty/VPN, đăng nhập bằng tài khoản Discord.

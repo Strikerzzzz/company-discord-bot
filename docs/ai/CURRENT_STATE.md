@@ -10,7 +10,7 @@
 - Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, bản `38238e8`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
 - Việc đang làm: cấu hình ban đầu trong Discord (DEPLOY mục 7) và kiểm theo `docs/TEST-PLAN.md` trên server thật.
 - Bot **chưa có quyền Manage Roles**: người mời bot không có quyền này. Role danh hiệu chờ chủ server bật quyền cho role của bot.
-- **Phase 16 (DEC-039) đang làm** trên branch `phase-16/web-admin`: trang web quản trị trong process bot, chỉ mạng nội bộ, đăng nhập bằng Discord.
+- **Phase 16 (DEC-039) đã merge vào `main`** (DEC-040): trang web quản trị trong process bot, chỉ mạng nội bộ, đăng nhập bằng Discord. **Chưa cài lên server**; bản cài sẽ gồm cả Phase 15 và 16.
   - Nền móng (`bee039e`) đã xong:
     - `src/web/`: server, OAuth2, phiên, CSRF, Host/Origin, CSP, layout;
     - `src/discord/configOps.ts` dùng chung với `/config`;
