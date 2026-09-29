@@ -1,9 +1,9 @@
 // Trang "Nhật ký quản trị" của web quản trị (DEC-039): các thao tác quản trị mới nhất (AuditService.list), như `/admin audit`
 // nhưng hiện tên kênh, role, người thay cho mention, và thời gian theo giờ Việt Nam.
 import { Guild } from "discord.js";
-import { auditActionLabel, auditTargetKind, formatAuditDetails } from "../../discord/views/admin";
+import { auditActionLabel, auditTargetKind } from "../../discord/views/admin";
 import { AuditEntry } from "../../modules/audit/AuditService";
-import { channelLabel, discordText, roleLabel, userLabel } from "../format";
+import { auditDetailsHtml, channelLabel, roleLabel, userLabel } from "../format";
 import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { guildUrl, renderPage } from "../layout";
@@ -46,24 +46,15 @@ function targetCell(guild: Guild, entry: AuditEntry): RawHtml
 	}
 }
 
-/**
- * Bỏ dấu `\` mà escapeMarkdown (qua inlineText) chèn trước ký tự markdown trong chữ người dùng nhập, để web hiện đúng chữ gốc
- * ("a_b" thay vì "a\_b"). Chỉ đổi cách hiển thị: discordText vẫn escape HTML toàn bộ trước khi đổi `**đậm**` và `` `mã` ``.
- */
-function withoutMarkdownEscapes(text: string): string
-{
-	return text.replace(/\\([\\*_`~|])/gu, "$1");
-}
-
 function entryRow(guild: Guild, entry: AuditEntry): RawHtml
 {
-	const details = formatAuditDetails(entry.details, entry.action);
+	const details = auditDetailsHtml(guild, entry.action, entry.details);
 	return html`<tr>
 <td class="au-time">${TIME_FORMAT.format(entry.createdAt)}</td>
 <td>${userCell(guild, entry.actorId)}</td>
 <td>${auditActionLabel(entry.action)}</td>
 <td>${targetCell(guild, entry)}</td>
-<td class="au-details">${details === null ? html`<span class="muted">—</span>` : discordText(guild, withoutMarkdownEscapes(details))}</td>
+<td class="au-details">${details ?? html`<span class="muted">—</span>`}</td>
 </tr>`;
 }
 

@@ -1,6 +1,8 @@
 // Hiển thị dữ liệu Discord trên web (DEC-039): tên kênh/role thay cho ID, chuyển phần markdown/mention kiểu Discord trong
 // thông báo của service và configOps sang HTML (sau khi đã escape).
 import { ChannelType, Guild, Role } from "discord.js";
+import { auditTargetKind, formatAuditDetails } from "../discord/views/admin";
+import { AuditAction } from "../modules/audit/AuditService";
 import { escapeHtml, html, raw, RawHtml } from "./html";
 
 /** "#tên-kênh", hoặc ghi rõ kênh không còn (bot không thấy) kèm ID. */
@@ -40,6 +42,29 @@ export function userLabel(guild: Guild, userId: string): string
 {
 	const member = guild.members.cache.get(userId);
 	return member ? `@${member.displayName}` : `người dùng ${userId}`;
+}
+
+/** Tên đối tượng của một mục audit (kênh, role, người) theo loại hành động; ID khác trả nguyên văn; null nếu không có. */
+export function auditTargetLabel(guild: Guild, action: AuditAction, targetId: string | null): string | null
+{
+	if (targetId === null) return null;
+	switch (auditTargetKind(action))
+	{
+	case "user": return userLabel(guild, targetId);
+	case "role": return roleLabel(guild, targetId);
+	case "channel": return channelLabel(guild, targetId);
+	case "none": return targetId;
+	}
+}
+
+/**
+ * Chi tiết của một mục audit dạng HTML; null nếu không có. formatAuditDetails escape markdown kiểu Discord (chèn `\` trước
+ * `_`, `*`...) cho tin nhắn Discord; trên web bỏ các dấu đó để hiện đúng chữ gốc ("a_b"), rồi discordText vẫn escape HTML toàn bộ.
+ */
+export function auditDetailsHtml(guild: Guild, action: AuditAction, details: Record<string, unknown> | null): RawHtml | null
+{
+	const text = formatAuditDetails(details, action);
+	return text === null ? null : discordText(guild, text.replace(/\\([\\*_`~|])/gu, "$1"));
 }
 
 /**

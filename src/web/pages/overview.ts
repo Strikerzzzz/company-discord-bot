@@ -1,12 +1,12 @@
 // Trang "Tổng quan" của web quản trị (DEC-039): tóm tắt mọi cấu hình (như trang tổng quan của `/config panel`), vài số liệu từ
 // StatisticsService và các thao tác quản trị gần đây. Chỉ đọc; mỗi thẻ có link tới trang sửa tương ứng.
-import { channelMention, formatNumber, roleMention, userMention } from "../../discord/format";
-import { auditActionLabel, formatAuditDetails, settingLine } from "../../discord/views/admin";
+import { channelMention, formatNumber, roleMention } from "../../discord/format";
+import { auditActionLabel, settingLine } from "../../discord/views/admin";
 import { NO_XP_CHANNEL_WARNING } from "../../discord/views/configPanel";
 import { AuditEntry } from "../../modules/audit/AuditService";
 import { GuildSettings } from "../../modules/guild-config/types";
 import { MAX_TEAMS } from "../../modules/team/TeamService";
-import { discordText, userLabel } from "../format";
+import { auditDetailsHtml, auditTargetLabel, discordText, userLabel } from "../format";
 import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { guildUrl, renderPage } from "../layout";
@@ -107,26 +107,15 @@ function statsRow(ctx: GuildPageContext): RawHtml
 	return html`<div class="grid ov-stats">${tiles.map(([label, value]) => html`<div class="stat"><div class="label">${label}</div><div class="value">${formatNumber(value)}</div></div>`)}</div>`;
 }
 
-/** Đối tượng của một mục audit dạng mention (web tự đổi sang tên), theo nhóm hành động; null nếu không có. */
-function auditTarget(entry: AuditEntry): string | null
-{
-	if (entry.targetId === null) return null;
-	const group = entry.action.split(".", 1)[0];
-	if (group === "channel" || group === "board") return channelMention(entry.targetId);
-	if (group === "team" || group === "tier_role") return roleMention(entry.targetId);
-	if (group === "xp" || group === "contribution") return userMention(entry.targetId);
-	return null;
-}
-
 function auditRow(ctx: GuildPageContext, entry: AuditEntry): RawHtml
 {
-	const target = auditTarget(entry);
-	const details = formatAuditDetails(entry.details, entry.action);
+	const target = auditTargetLabel(ctx.guild, entry.action, entry.targetId);
+	const details = auditDetailsHtml(ctx.guild, entry.action, entry.details);
 	return html`<tr>
 <td class="ov-time">${VN_TIME.format(entry.createdAt)}</td>
 <td>${userLabel(ctx.guild, entry.actorId)}</td>
-<td><strong>${auditActionLabel(entry.action)}</strong>${target === null ? "" : html` · ${discordText(ctx.guild, target)}`}</td>
-<td>${details === null ? html`<span class="muted">—</span>` : discordText(ctx.guild, details)}</td>
+<td><strong>${auditActionLabel(entry.action)}</strong>${target === null ? "" : html` · <span class="mention">${target}</span>`}</td>
+<td>${details ?? html`<span class="muted">—</span>`}</td>
 </tr>`;
 }
 
