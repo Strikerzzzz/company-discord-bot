@@ -180,10 +180,10 @@ export class GuildConfigService
 
 	/**
 	 * Bật hoặc tắt XP cho nhiều channel cùng lúc (bảng điều khiển, DEC-037), trong một transaction. Kênh đã đúng trạng thái
-	 * thì bỏ qua (không ghi, không audit). Kênh không có XP/cooldown riêng mà trạng thái mới trùng mặc định của chế độ kênh
-	 * thì xoá cấu hình riêng thay vì ghi, để bảng channel_settings chỉ chứa kênh khác mặc định; kênh có XP/cooldown riêng
-	 * giữ nguyên các giá trị đó. Mỗi kênh đổi trạng thái có một dòng audit `channel.set` với `xpEnabled`.
-	 * UserError nếu danh sách rỗng hoặc quá MAX_BULK_CHANNELS kênh (sau khi bỏ trùng).
+	 * thì bỏ qua (không ghi, không audit). Kênh đổi trạng thái được lưu thành cấu hình riêng (như `/config channel set`),
+	 * giữ nguyên XP/cooldown riêng nếu có, nên trạng thái admin đặt vẫn giữ khi đổi chế độ kênh về sau. Mỗi kênh đổi trạng
+	 * thái có một dòng audit `channel.set` với `xpEnabled`. UserError nếu danh sách rỗng hoặc quá MAX_BULK_CHANNELS kênh
+	 * (sau khi bỏ trùng).
 	 */
 	setChannelsXpEnabled(guildId: string, channelIds: readonly string[], enabled: boolean, actorId: string): BulkChannelResult
 	{
@@ -195,7 +195,6 @@ export class GuildConfigService
 		{
 			const mode = this.getSettings(guildId).xpChannelMode;
 			const result: BulkChannelResult = { changed: [], unchanged: [] };
-			const remove = this.db.prepare("DELETE FROM channel_settings WHERE guild_id = ? AND channel_id = ?");
 			for (const channelId of unique)
 			{
 				const row = this.channelRow(guildId, channelId);
@@ -205,10 +204,7 @@ export class GuildConfigService
 					result.unchanged.push(channelId);
 					continue;
 				}
-				const next: ChannelSettings = { ...current, xpEnabled: enabled };
-				const matchesDefault = next.xpPerMessage === null && next.xpCooldownSeconds === null && enabled === (mode === "all");
-				if (matchesDefault) remove.run(guildId, channelId);
-				else this.writeChannel(guildId, next);
+				this.writeChannel(guildId, { ...current, xpEnabled: enabled });
 				this.audit.record(guildId, actorId, "channel.set", channelId, { xpEnabled: enabled });
 				result.changed.push(channelId);
 			}

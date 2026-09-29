@@ -67,11 +67,13 @@ describe("hợp đồng customId của bảng cấu hình (PROP-033)", () =>
 		assert.equal(pageOfAction({ type: "adminRole", drawnRoleId: null }), "board");
 	});
 
-	test("đọc ô số trong form: bỏ khoảng trắng và dấu ngăn cách, kiểm tra giới hạn", () =>
+	test("đọc ô số trong form: bỏ khoảng trắng, chỉ nhận chữ số, kiểm tra giới hạn", () =>
 	{
 		assert.equal(parseFormNumber(" 15 ", "xpPerMessage"), 15);
-		assert.equal(parseFormNumber("1.000", "pollXpDailyCap"), 1000);
+		assert.equal(parseFormNumber("1 000", "pollXpDailyCap"), 1000);
 		assert.equal(parseFormNumber("0", "pollXpDailyCap"), 0);
+		assert.throws(() => parseFormNumber("1.000", "pollXpDailyCap"), /chỉ gồm chữ số/);
+		assert.throws(() => parseFormNumber("2,5", "xpPerMessage"), UserError);
 		assert.throws(() => parseFormNumber("-1", "xpPerMessage"), /XP mỗi tin nhắn/);
 		assert.throws(() => parseFormNumber("1001", "xpPerMessage"), UserError);
 		assert.throws(() => parseFormNumber("abc", "xpCooldownSeconds"), /Cooldown/);

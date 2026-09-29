@@ -92,7 +92,7 @@ describe("GuildConfigService", () =>
 		assert.equal(deps.audit.list(GUILD, 5).length, 0);
 	});
 
-	test("bật/tắt hàng loạt: bỏ qua kênh đã đúng trạng thái, xoá cấu hình trùng mặc định, giữ XP riêng, audit từng kênh", () =>
+	test("bật/tắt hàng loạt: bỏ qua kênh đã đúng trạng thái, lưu trạng thái thành cấu hình riêng, giữ XP riêng, audit từng kênh", () =>
 	{
 		const { deps } = createTestContext();
 		const C3 = "700000000000000099";
@@ -114,8 +114,11 @@ describe("GuildConfigService", () =>
 		const disabled = deps.guildConfig.setChannelsXpEnabled(GUILD, [CHANNEL_GENERAL, C3], false, ADMIN);
 		assert.deepEqual(disabled.changed, [CHANNEL_GENERAL, C3]);
 		const rows = new Map(deps.guildConfig.listChannels(GUILD).map(channel => [channel.channelId, channel]));
-		assert.equal(rows.has(CHANNEL_GENERAL), false, "tắt về đúng mặc định của chế độ selected thì xoá cấu hình riêng");
+		assert.deepEqual(rows.get(CHANNEL_GENERAL), { channelId: CHANNEL_GENERAL, xpEnabled: false, xpPerMessage: null, xpCooldownSeconds: null });
 		assert.deepEqual(rows.get(C3), { channelId: C3, xpEnabled: false, xpPerMessage: 20, xpCooldownSeconds: null });
+
+		deps.guildConfig.updateSettings(GUILD, { xpChannelMode: "all" }, ADMIN);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL).enabled, false, "kênh admin đã tắt vẫn tắt khi đổi chế độ");
 
 		assert.throws(() => deps.guildConfig.setChannelsXpEnabled(GUILD, [], true, ADMIN), UserError);
 		const tooMany = Array.from({ length: MAX_BULK_CHANNELS + 1 }, (_, index) => `7000000000000001${String(index).padStart(2, "0")}`);

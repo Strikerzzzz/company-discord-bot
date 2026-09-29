@@ -212,17 +212,18 @@ export function parseConfigPanelId(customId: string): ConfigPanelAction
 }
 
 /**
- * Đọc một ô số trong form: bỏ khoảng trắng và dấu chấm/phẩy ngăn cách hàng nghìn ("1.000" = 1000), phải là số nguyên trong
- * SETTING_LIMITS; UserError tiếng Việt kèm nhãn nếu sai.
+ * Đọc một ô số trong form: bỏ khoảng trắng, chỉ nhận chữ số (không nhận dấu chấm/phẩy, vì "2,5" hay "1.000" dễ bị hiểu
+ * nhầm), phải là số nguyên trong SETTING_LIMITS; UserError tiếng Việt kèm nhãn nếu sai.
  */
 export function parseFormNumber(raw: string, key: NumericSettingKey): number
 {
 	const limit = SETTING_LIMITS[key];
-	const text = raw.replace(/[\s.,]/gu, "");
+	const text = raw.replace(/\s/gu, "");
 	const value = /^\d{1,9}$/u.test(text) ? Number(text) : Number.NaN;
 	if (!Number.isInteger(value) || value < limit.min || value > limit.max)
 	{
-		throw new UserError(`${limit.label} phải là số nguyên từ ${limit.min} đến ${limit.max} (bạn nhập "${raw.trim().slice(0, 20)}").`);
+		throw new UserError(`${limit.label} phải là số nguyên từ ${limit.min} đến ${limit.max}, chỉ gồm chữ số `
+			+ `(bạn nhập "${raw.trim().slice(0, 20)}").`);
 	}
 	return value;
 }
