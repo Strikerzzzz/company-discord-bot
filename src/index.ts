@@ -7,7 +7,7 @@ import { openDatabase } from "./db/connection";
 import { runMigrations } from "./db/migrations";
 import { createServices } from "./services";
 import { systemClock } from "./shared/clock";
-import { logger } from "./shared/logger";
+import { logger, registerSecret } from "./shared/logger";
 import { DEFAULT_LIVE_BOARD_ACTIONS } from "./discord/configOps";
 import { startWebServer, WebServerHandle } from "./web/server";
 
@@ -21,6 +21,8 @@ process.on("unhandledRejection", (reason) =>
 async function main(): Promise<void>
 {
 	const config = loadConfig();
+	registerSecret(config.token);
+	if (config.web) registerSecret(config.web.clientSecret);
 
 	// Database mở và migrate TRƯỚC khi login Discord (LL-007).
 	const db = openDatabase(config.databasePath);

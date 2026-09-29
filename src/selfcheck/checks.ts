@@ -173,6 +173,13 @@ export function checkWebConfig(env: NodeJS.ProcessEnv): CheckResult
 	if (!web.ok) return fail("config", `Trang web quản trị: ${web.error}`);
 	if (web.value === null) return ok("config", "Trang web quản trị: tắt (không đặt WEB_PORT).");
 	const { port, host, baseUrl } = web.value;
+	const url = new URL(baseUrl);
+	const urlPort = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
+	if (urlPort !== port)
+	{
+		return warn("config", `Trang web quản trị: cổng trong WEB_BASE_URL (${urlPort}) khác WEB_PORT (${port}). Chỉ đúng khi có proxy chuyển `
+			+ `tiếp từ cổng ${urlPort} sang ${port}; nếu không, trình duyệt sẽ không mở được trang và đăng nhập Discord sẽ lỗi. Sửa cho hai số khớp nhau.`);
+	}
 	return ok("config", `Trang web quản trị: bật, lắng nghe ${host}:${port}, địa chỉ ${baseUrl}; DISCORD_CLIENT_SECRET: có. `
 		+ `Redirect cần đăng ký trên Developer Portal (OAuth2 → Redirects): ${baseUrl}/auth/callback`);
 }

@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { logger, redact } from "../src/shared/logger";
+import { logger, redact, registerSecret } from "../src/shared/logger";
 
 describe("redact", () =>
 {
@@ -10,6 +10,17 @@ describe("redact", () =>
 		const output = redact(`login với ${token} thất bại`);
 		assert.ok(!output.includes(token));
 		assert.ok(output.includes("[REDACTED_TOKEN]"));
+	});
+
+	test("che secret đã đăng ký theo giá trị (Client Secret của web, DEC-039); chuỗi quá ngắn không đăng ký", () =>
+	{
+		const secret = "Zk3-test-client-secret-VALUE_42";
+		registerSecret(secret);
+		registerSecret("abc");
+		const output = redact(`đổi code thất bại với secret=${secret} và lại ${secret}; abc giữ nguyên`);
+		assert.ok(!output.includes(secret));
+		assert.equal(output.split("[REDACTED_SECRET]").length, 3);
+		assert.ok(output.includes("abc giữ nguyên"));
 	});
 
 	test("che token trong URL interaction/webhook", () =>

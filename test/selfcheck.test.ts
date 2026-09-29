@@ -306,6 +306,11 @@ describe("selfcheck: cấu hình", () =>
 		assert.match(on.message, /http:\/\/192\.168\.0\.206:8787\/auth\/callback/);
 		assert.ok(!on.message.includes(secret));
 
+		const mismatch = checkWebConfig({ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:9000", DISCORD_CLIENT_SECRET: secret });
+		assert.equal(mismatch.status, "warn");
+		assert.match(mismatch.message, /9000.*8787/u);
+		assert.equal(checkWebConfig({ WEB_PORT: "8443", WEB_BASE_URL: "https://admin.example", DISCORD_CLIENT_SECRET: secret }).status, "warn", "https không ghi cổng = 443");
+
 		for (const env of [
 			{ WEB_PORT: "8787", WEB_BASE_URL: "http://192.168.0.206:8787" },
 			{ WEB_PORT: "80", WEB_BASE_URL: "http://192.168.0.206", DISCORD_CLIENT_SECRET: secret },

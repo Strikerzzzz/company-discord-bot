@@ -10,9 +10,21 @@ const REDACTIONS: [RegExp, string][] = [
 	[/(\/(?:interactions|webhooks)\/\d+\/)[\w.-]+/g, "$1[REDACTED]"],
 ];
 
+// Secret cụ thể đã biết (Client Secret của web quản trị, DEC-039): không có dạng nhận ra bằng regex nên che theo giá trị.
+const secrets = new Set<string>();
+const MIN_SECRET_LENGTH = 8;
+
+/** Đăng ký một secret để mọi dòng log che giá trị này (gọi ngay sau khi đọc cấu hình). Chuỗi quá ngắn bị bỏ qua. */
+export function registerSecret(value: string): void
+{
+	if (value.length >= MIN_SECRET_LENGTH) secrets.add(value);
+}
+
 export function redact(text: string): string
 {
-	return REDACTIONS.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), text);
+	let result = REDACTIONS.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), text);
+	for (const secret of secrets) result = result.split(secret).join("[REDACTED_SECRET]");
+	return result;
 }
 
 function parseLevel(value: string | undefined): LogLevel
