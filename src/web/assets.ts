@@ -63,10 +63,16 @@ input[type=checkbox], input[type=radio] { width: 17px; height: 17px; accent-colo
 .mention { background: #e6e8fd; color: var(--brand-dark); padding: 0 4px; border-radius: 4px; font-weight: 600; }
 .login { max-width: 460px; margin: 10vh auto; text-align: center; }
 .login .card { padding: 32px 28px; }
+main { min-width: 0; }
+.card { overflow-x: auto; }
+table.table input[type=number] { width: 100%; max-width: 120px; }
 @media (max-width: 760px) {
+	.topbar { flex-wrap: wrap; padding: 10px 16px; }
 	.shell { flex-direction: column; }
 	.sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; }
 	.sidebar .guild { width: 100%; }
-	main { padding: 16px; }
+	main { padding: 16px; max-width: 100vw; }
+	table.table th, table.table td { padding: 6px; }
+	table.table input[type=number] { min-width: 64px; }
 }
 `;
