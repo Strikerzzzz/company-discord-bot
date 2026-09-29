@@ -4,7 +4,7 @@ import { isTierKey, isTierSetKey, TIER_SETS, tierByKey, tierForLevel, tierIndex,
 import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activity/types";
 import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
 import { TierRoleMapping } from "../../modules/gamification/types";
-import { ChannelSettings, GuildSettings } from "../../modules/guild-config/types";
+import { ChannelSettings, GuildSettings, isXpChannelMode, XpChannelMode } from "../../modules/guild-config/types";
 import { GuildStatistics } from "../../modules/statistics/types";
 import { MAX_TEAMS } from "../../modules/team/TeamService";
 import {
@@ -62,6 +62,12 @@ function seconds(value: number): string
 	return `${formatNumber(value)} giây`;
 }
 
+/** Nhãn chế độ kênh tính XP (DEC-037). */
+export function xpChannelModeLabel(mode: XpChannelMode): string
+{
+	return mode === "all" ? "tất cả kênh (trừ kênh đã tắt)" : "chỉ kênh được bật";
+}
+
 // ---------- Cấu hình ----------
 
 interface SettingDisplay<T>
@@ -78,6 +84,7 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 	minMessageLength: { label: "Độ dài tối thiểu", format: value => `${formatNumber(value)} ký tự` },
 	duplicateWindowSeconds: { label: "Chống trùng", format: seconds },
 	levelUpAnnouncements: { label: "Thông báo lên level", format: onOff },
+	xpChannelMode: { label: "Kênh tính XP", format: xpChannelModeLabel },
 	defaultPollXp: { label: "XP mặc định khi vote", format: value => `${formatNumber(value)} XP` },
 	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP` },
 	pollCreatorRoleId: { label: "Role tạo vote", format: value => value === null ? "chưa đặt (chỉ admin)" : roleMention(value) },
@@ -86,6 +93,7 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 };
 
 const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
+	"xpChannelMode",
 	"xpPerMessage",
 	"xpCooldownSeconds",
 	"minMessageLength",
@@ -198,7 +206,7 @@ export function buildConfigEmbed(
 		: "Chưa có team nào. Dùng `/config team add` để thêm.";
 	const channelText = channels.length > 0
 		? fitLines(channelLines(channels, settings), EMBED_FIELD_MAX, hidden => `… và ${hidden} channel khác (xem \`/config channel list\`)`)
-		: "Không có. Mọi channel dùng cấu hình chung.";
+		: noChannelText(settings.xpChannelMode);
 	const boardText = gamification.boardChannelId === null
 		? "Đang tắt. Dùng `/config board` để bật."
 		: `${channelMention(gamification.boardChannelId)} (tự cập nhật định kỳ)`;
@@ -209,7 +217,10 @@ export function buildConfigEmbed(
 		.setColor(COLORS.primary)
 		.setTitle("⚙️ Cấu hình bot")
 		.addFields(
-			{ name: "⭐ Activity XP", value: settingLines(settings, ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"]) },
+			{
+				name: "⭐ Activity XP",
+				value: settingLines(settings, ["xpChannelMode", "xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"]),
+			},
 			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleId"]) },
 			{ name: "🤝 Contribution", value: settingLines(settings, ["contributionVotePoints"]) },
 			{ name: "🔐 Quyền admin", value: `${settingLines(settings, ["adminRoleId"])}\nNgười có quyền Manage Server luôn là admin.` },
@@ -220,17 +231,51 @@ export function buildConfigEmbed(
 		);
 }
 
+/** Chữ khi không có channel nào có cấu hình riêng, theo chế độ kênh (DEC-037). */
+function noChannelText(mode: XpChannelMode): string
+{
+	return mode === "all"
+		? "Không có. Mọi channel bot xem được đều tính XP theo cấu hình chung."
+		: "⚠️ Chưa bật kênh nào, nên hiện **không kênh nào tính XP**. Bật kênh bằng `/config panel` hoặc `/config channel set`.";
+}
+
+/** Phản hồi sau khi đổi chế độ kênh tính XP (lệnh `/config channel mode` và bảng điều khiển): chế độ mới và hệ quả. */
+export function channelModeChangedText(mode: XpChannelMode, channels: readonly ChannelSettings[]): string
+{
+	if (mode === "selected")
+	{
+		const enabled = channels.filter(channel => channel.xpEnabled).length;
+		return [
+			"Đã chuyển sang chế độ **chỉ kênh được bật**: kênh chưa được bật riêng, kể cả kênh tạo mới sau này, không tính XP.",
+			enabled === 0
+				? "⚠️ Hiện chưa bật kênh nào, nên chưa ai được XP từ tin nhắn. Bật kênh bằng `/config panel` hoặc `/config channel set kenh:<kênh> bat-xp:True`."
+				: `Đang bật **${formatNumber(enabled)}** kênh (xem \`/config channel list\`).`,
+		].join("\n");
+	}
+	const disabled = channels.filter(channel => !channel.xpEnabled).length;
+	return [
+		"Đã chuyển sang chế độ **tất cả kênh**: mọi kênh bot xem được đều tính XP, trừ kênh đã tắt riêng.",
+		disabled === 0 ? "Hiện không có kênh nào bị tắt." : `Đang tắt **${formatNumber(disabled)}** kênh (xem \`/config channel list\`).`,
+	].join("\n");
+}
+
 export function buildChannelListEmbed(channels: readonly ChannelSettings[], settings: GuildSettings): EmbedBuilder
 {
 	const description = channels.length > 0
 		? fitLines(channelLines(channels, settings), EMBED_DESCRIPTION_MAX, hidden => `… và ${hidden} channel khác`)
-		: "Không có channel nào có cấu hình riêng. Mọi channel dùng cấu hình chung.";
+		: noChannelText(settings.xpChannelMode);
+	const modeNote = settings.xpChannelMode === "all"
+		? "Kênh không có trong danh sách: tính XP."
+		: "Kênh không có trong danh sách: không tính XP.";
 
 	return new EmbedBuilder()
 		.setColor(COLORS.primary)
 		.setTitle("📺 Channel có cấu hình riêng")
 		.setDescription(description)
-		.setFooter({ text: `Cấu hình chung: ${formatNumber(settings.xpPerMessage)} XP/tin, cooldown ${seconds(settings.xpCooldownSeconds)}.` });
+		.setFooter({
+			text: `Chế độ: ${xpChannelModeLabel(settings.xpChannelMode)}. ${modeNote} `
+				+ `Cấu hình chung: ${formatNumber(settings.xpPerMessage)} XP/tin, cooldown ${seconds(settings.xpCooldownSeconds)}.`,
+		});
 }
 
 export function buildTeamListEmbed(teams: readonly string[]): EmbedBuilder
@@ -526,6 +571,7 @@ function detailValue(key: string, value: unknown, action: AuditAction | null): s
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);
 	if (typeof value === "string")
 	{
+		if (key === "xpChannelMode" && isXpChannelMode(value)) return xpChannelModeLabel(value);
 		const tier = key === "tierKey" ? tierNumber(value) : null;
 		if (tier !== null) return `Bậc ${tier}`;
 		if ((key === "setKey" || key === "from" || key === "to") && isTierSetKey(value)) return TIER_SETS[value].name;

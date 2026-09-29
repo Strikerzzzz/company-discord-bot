@@ -20,7 +20,7 @@
 | 8 | Voting và Contribution Score | **Đã merge vào `main`**, kèm vote/bầu cử (DEC-026) | DEC-025, DEC-026 |
 | 9 | Contribution Leaderboards (cá nhân và team) | **Đã merge vào `main`** | DEC-024 |
 | 10 | Admin nâng cao và Statistics | **Đã merge vào `main`** | — |
-| 11 | Security review và Deployment | **Review code xong**; chờ server Linux (thứ 2) để chạy thật | PEND-005 |
+| 11 | Security review và Deployment | **Đã cài và chạy thật** trên `192.168.0.206` (DEC-036); đang kiểm theo `docs/TEST-PLAN.md` | DEC-036 |
 | 12 | Gamification và giao diện ảnh | **Đã merge vào `main`** (DEC-032) | DEC-028…032 |
 | 13 | Bộ danh hiệu chọn được, bảng điều khiển role | **Đã merge vào `main`** (DEC-034) | DEC-033 |
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
@@ -138,3 +138,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-27 | DEC-033: thêm Phase 13 (5 bộ danh hiệu, bot tự tạo role, bảng điều khiển trực quan) |
 | 2026-09-27 | DEC-034: merge Phase 13 vào `main`; thêm Phase 14 (hoàn tất trước khi chạy thật) |
 | 2026-09-27 | DEC-035: merge Phase 14 vào `main`; còn Phase 11 (chạy thật trên server) |
+| 2026-09-29 | DEC-036: Phase 11 đã cài và chạy thật trên server `192.168.0.206` |

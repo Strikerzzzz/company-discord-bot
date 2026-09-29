@@ -238,3 +238,10 @@ Format mỗi mục:
 - **Bài học:**
   - Công cụ chẩn đoán không được mở database thật bằng SQLite, kể cả read-only. Phải có test xác nhận file thật giữ nguyên hash và không sinh file phụ.
   - Kết quả đọc file của một tiến trình đang ghi không đáng tin; không được đưa lời khuyên phá dữ liệu (khôi phục backup) dựa trên một lần đọc.
+
+## LL-021 — Pipe của PowerShell chèn BOM và CRLF khi chép dữ liệu lên server
+
+- **Phát hiện:** 2026-09-29 (lần cài đầu tiên lên server) · **Mức độ:** Trung bình · **Trạng thái:** Đã xử lý
+- **Hiện tượng:** Chép public key lên server bằng `Get-Content id_ed25519.pub | ssh ... "cat >> ~/.ssh/authorized_keys"` trong PowerShell. Server vẫn hỏi mật khẩu. `cat -A` cho thấy đầu dòng có BOM UTF-8 (`M-oM-;M-?`) và cuối dòng có `^M`, nên sshd không nhận ra loại key.
+- **Xử lý:** xoá BOM và CR bằng `sed -i '1s/^\xEF\xBB\xBF//; s/\r$//'`. Mọi lệnh chép dữ liệu lên server (kể cả `git archive | ssh ... tar -x`, dữ liệu nhị phân) chạy qua **Git Bash**. Script viết bằng Write rồi chép bằng redirect (`ssh ... "cat > file" < file`), sau đó kiểm tra không có CR và BOM.
+- **Bài học:** PowerShell coi dữ liệu qua pipe tới lệnh ngoài là văn bản và tự đổi encoding và xuống dòng. Không dùng pipe của PowerShell để chép file hay dữ liệu nhị phân sang Linux.

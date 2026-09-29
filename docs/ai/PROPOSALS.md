@@ -42,6 +42,7 @@
 | PROP-030 | Đưa riêng từng giá trị của channel về mặc định | LOW | IMPLEMENTED |
 | PROP-031 | Rút rồi ghi nhận lại không được xoá hình phạt của admin | MEDIUM | IMPLEMENTED |
 | PROP-032 | `/config admin-role` chỉ người có Manage Server đặt được | MEDIUM | REJECTED |
+| PROP-033 | Bảng điều khiển cấu hình chung `/config panel` | MEDIUM | APPROVED |
 
 ---
 
@@ -1322,3 +1323,47 @@ MEDIUM
 ### Trạng thái
 
 REJECTED (2026-09-27, DEC-034): người phụ trách chỉ có role admin bot, nên giữ quyền đổi role admin cho role này.
+
+## PROP-033 — Bảng điều khiển cấu hình chung `/config panel`
+
+### Vấn đề
+
+Người phụ trách yêu cầu "có giao diện setup". Hiện mới có giao diện cho bộ danh hiệu và role (`/config tier panel`, DEC-033). Các cấu hình còn lại vẫn phải gõ từng slash command: team, channel tính XP, XP và chống spam, vote, contribution, Bảng vàng, role admin. Người không quen lệnh khó nhớ tên option và khó thấy tổng thể.
+
+### Đề xuất
+
+Thêm `/config panel`: một bảng Components V2 trả lời riêng cho admin, cùng kiểu với `/config tier panel`. Bảng có các trang chọn bằng menu hoặc nút:
+
+- **Tổng quan:** tóm tắt cấu hình như `/config view`.
+- **Kênh:** menu chọn nhiều channel để tắt XP, và menu chọn channel để bật lại; danh sách channel đang tắt XP hoặc có cấu hình riêng.
+- **Team:** menu chọn nhiều role làm team (chọn thêm, bỏ chọn là gỡ).
+- **XP và chống spam:** nút mở form nhập XP mỗi tin, cooldown, độ dài tối thiểu, khoảng chống trùng; công tắc thông báo lên level.
+- **Vote và contribution:** form nhập XP mặc định khi vote, giới hạn XP từ vote mỗi ngày, điểm mỗi 👍; menu chọn role được tạo vote.
+- **Bảng vàng và admin:** menu chọn kênh Bảng vàng (kèm nút tắt); menu chọn role admin bot.
+- Nút mở `/config tier panel`.
+
+Mọi thao tác đi qua đúng service và kiểm tra như lệnh gõ tay: quyền hai lớp, chặn role danh hiệu làm team hoặc admin, kiểm tra quyền kênh Bảng vàng. Mọi thao tác ghi audit log. customId mang trạng thái lúc vẽ, để không ghi đè thay đổi mới hơn (như tier panel ở Phase 13). Các lệnh gõ tay giữ nguyên.
+
+### Lý do
+
+Admin cấu hình bằng chuột, thấy ngay tổng thể, không cần nhớ tên option. Dùng lại khung đã kiểm chứng của `/config tier panel`, gồm dispatcher, `adminOnly` cho component và renderGate.
+
+### Tác động
+
+- **Code:** view mới `src/discord/views/configPanel.ts`, handler trong `config.ts` (namespace component mới), test cho view và luồng.
+- **Database:** Không đổi schema, dùng service có sẵn.
+- **Security:** Không thêm quyền hay intent. Bề mặt mới là các component, được kiểm tra `adminOnly` như tier panel.
+- **UX:** Thêm một cách cấu hình trực quan.
+- **Infrastructure:** Không. Sau khi merge, cập nhật server bằng quy trình ở DEC-036.
+
+### Độ ưu tiên
+
+MEDIUM
+
+### Rủi ro
+
+Giới hạn của Discord: một menu chọn tối đa 25 mục, một message tối đa 40 component, form tối đa 5 ô. Vì vậy bảng phải chia trang. Không đổi business rule nào.
+
+### Trạng thái
+
+APPROVED (2026-09-29, DEC-037), kèm chế độ "chỉ kênh được bật". Đang làm ở Phase 15.

@@ -555,7 +555,10 @@ describe("định nghĩa /admin và /config", () =>
 			names(configJson.options ?? []),
 			["view", "xp", "channel", "team", "admin-role", "poll", "contribution", "tier", "board"],
 		);
-		assert.deepEqual(names(children(optionAt(configJson.options, "channel"))), ["set", "reset", "list"]);
+		assert.deepEqual(names(children(optionAt(configJson.options, "channel"))), ["set", "reset", "list", "mode"]);
+		const modeOption = optionAt(configJson.options, "channel", "mode", "che-do");
+		assert.equal(modeOption.type, ApplicationCommandOptionType.String);
+		assert.deepEqual(("choices" in modeOption ? modeOption.choices ?? [] : []).map(choice => choice.value), ["all", "selected"]);
 		assert.deepEqual(names(children(optionAt(configJson.options, "team"))), ["add", "remove", "list"]);
 		assert.deepEqual(
 			names(children(optionAt(configJson.options, "tier"))),
@@ -828,6 +831,7 @@ describe("views quản trị", () =>
 		const embed = buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollCreatorRoleId: ROLE_OTHER }, [ROLE_BACKEND, ROLE_FRONTEND], channels, gamification).toJSON();
 		const text = embedText(embed);
 		for (const expected of [
+			"Kênh tính XP: **tất cả kênh (trừ kênh đã tắt)**",
 			"XP mỗi tin nhắn: **10 XP**",
 			"Cooldown: **60 giây**",
 			"Độ dài tối thiểu: **5 ký tự**",
@@ -854,7 +858,14 @@ describe("views quản trị", () =>
 
 		const empty = embedText(buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollXpDailyCap: 0 }, [], [], { boardChannelId: null, tierRoles: [], tierSet: DEFAULT_TIER_SET }).toJSON());
 		assert.ok(empty.includes("Chưa có team nào"));
-		assert.ok(empty.includes("Mọi channel dùng cấu hình chung"));
+		assert.ok(empty.includes("Mọi channel bot xem được đều tính XP theo cấu hình chung"));
+		const selected = embedText(buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, xpChannelMode: "selected" }, [], [], {
+			boardChannelId: null,
+			tierRoles: [],
+			tierSet: DEFAULT_TIER_SET,
+		}).toJSON());
+		assert.ok(selected.includes("Kênh tính XP: **chỉ kênh được bật**"));
+		assert.ok(selected.includes("không kênh nào tính XP"));
 		assert.ok(empty.includes("Giới hạn XP từ vote mỗi ngày: **không giới hạn**"));
 		assert.ok(empty.includes("Đang tắt. Dùng `/config board` để bật."));
 		assert.ok(empty.includes(`Chưa gán role nào. ${TIER_PANEL_HINT}`));

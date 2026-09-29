@@ -125,7 +125,7 @@ describe("migrations", () =>
 		insert.run("g1", "do-kiep", "r8");
 		insert.run("g2", "khoa-la", "r9");
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 4)), 1);
 		assert.equal(currentSchemaVersion(db), 4);
 		const rows = db.prepare<[], { guild_id: string; tier_key: string; role_id: string; created_by_bot: number }>(
 			"SELECT guild_id, tier_key, role_id, created_by_bot FROM tier_roles ORDER BY guild_id, role_id").all();
@@ -137,6 +137,22 @@ describe("migrations", () =>
 		]);
 		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tier_set_config', 'tier_name_overrides') ORDER BY name").all();
 		assert.deepEqual(tables.map(table => table.name), ["tier_name_overrides", "tier_set_config"]);
+	});
+
+	test("DB đang ở version 4 có cấu hình guild: migration 5 thêm chế độ kênh 'all' (giữ hành vi cũ), CHECK chặn giá trị lạ (DEC-037)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 4));
+		db.prepare(`
+			INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
+				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 5);
+		assert.deepEqual(db.prepare("SELECT xp_channel_mode FROM guild_settings WHERE guild_id = 'g1'").get(), { xp_channel_mode: "all" });
+		db.prepare("UPDATE guild_settings SET xp_channel_mode = 'selected' WHERE guild_id = 'g1'").run();
+		assert.throws(() => db.prepare("UPDATE guild_settings SET xp_channel_mode = 'khac' WHERE guild_id = 'g1'").run(), /CHECK/);
 	});
 
 	test("từ chối database mới hơn code", () =>

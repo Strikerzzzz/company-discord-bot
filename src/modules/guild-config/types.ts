@@ -1,3 +1,13 @@
+/** Chế độ kênh tính XP (DEC-037): "all" = mọi kênh trừ kênh đã tắt; "selected" = chỉ kênh admin bật riêng. */
+export type XpChannelMode = "all" | "selected";
+
+export const XP_CHANNEL_MODES: readonly XpChannelMode[] = ["all", "selected"];
+
+export function isXpChannelMode(value: unknown): value is XpChannelMode
+{
+	return value === "all" || value === "selected";
+}
+
 export interface GuildSettings
 {
 	/** XP cho mỗi tin nhắn hợp lệ (DEC-022). */
@@ -9,6 +19,8 @@ export interface GuildSettings
 	/** Tin trùng với tin trước đó của cùng người trong khoảng này không được XP (DEC-023). */
 	duplicateWindowSeconds: number;
 	levelUpAnnouncements: boolean;
+	/** Kênh chưa có cấu hình riêng có tính XP không: "all" = có, "selected" = không (DEC-037). */
+	xpChannelMode: XpChannelMode;
 	/** XP mặc định cho người tham gia vote (DEC-026). */
 	defaultPollXp: number;
 	/** XP tối đa một người nhận từ vote trong một ngày giờ Việt Nam; 0 = không giới hạn (DEC-028). */
@@ -29,6 +41,7 @@ export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	minMessageLength: 5,
 	duplicateWindowSeconds: 300,
 	levelUpAnnouncements: true,
+	xpChannelMode: "all",
 	defaultPollXp: 5,
 	pollXpDailyCap: 25,
 	contributionVotePoints: 1,

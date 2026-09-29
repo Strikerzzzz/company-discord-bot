@@ -1,7 +1,6 @@
 import {
 	AnySelectMenuInteraction,
 	ButtonInteraction,
-	ChannelType,
 	ChatInputCommandInteraction,
 	Guild,
 	GuildMember,
@@ -36,12 +35,14 @@ import {
 	buildChannelListEmbed,
 	buildConfigEmbed,
 	buildTeamListEmbed,
+	channelModeChangedText,
 	describeChannelSettings,
 	describeSettingsPatch,
 	ephemeral,
 	ephemeralEmbed,
 	settingLine,
 } from "../../discord/views/admin";
+import { BOARD_CHANNEL_TYPES, XP_CHANNEL_TYPES } from "../../discord/views/configPanel";
 import {
 	buildTierRenameModal,
 	buildTierRoleListEmbed,
@@ -75,7 +76,14 @@ import {
 } from "../../modules/activity/tiers";
 import { parseTierDisplayName, TierRenameInput } from "../../modules/gamification/TierSetService";
 import { TierRoleMapping } from "../../modules/gamification/types";
-import { ChannelSettings, GuildSettings, NumericSettingKey, SETTING_LIMITS } from "../../modules/guild-config/types";
+import {
+	ChannelSettings,
+	GuildSettings,
+	isXpChannelMode,
+	NumericSettingKey,
+	SETTING_LIMITS,
+	XP_CHANNEL_MODES,
+} from "../../modules/guild-config/types";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
@@ -89,19 +97,6 @@ const NO_CHANGE_MESSAGE = "Hãy chọn ít nhất một giá trị để thay đ
 const ADMIN_ROLE_INTEGRATION_HINT = "⚠️ Lưu ý: `/admin` và `/config` mặc định chỉ dành cho người có quyền Manage Server; "
 	+ "Discord chặn những người khác trước khi lệnh tới bot. Để role này dùng được, vào **Server Settings → Integrations → chọn bot** "
 	+ "rồi cho phép role này dùng `/admin` và `/config`.";
-
-/** Loại channel có tin nhắn tính XP (kể cả chat trong kênh voice/stage và bài đăng trong kênh media). */
-const XP_CHANNEL_TYPES = [
-	ChannelType.GuildText,
-	ChannelType.GuildAnnouncement,
-	ChannelType.GuildForum,
-	ChannelType.GuildVoice,
-	ChannelType.GuildStageVoice,
-	ChannelType.GuildMedia,
-] as const;
-
-/** Loại channel đặt được Bảng vàng: kênh chữ thường và kênh thông báo. */
-const BOARD_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement] as const;
 
 type PermissionList = readonly (readonly [bigint, string])[];
 
@@ -130,6 +125,12 @@ const TIER_SET_CHOICES = TIER_SET_KEYS.map(key =>
 
 /** Độ dài tối đa của option tên bậc (emoji + tên); kiểm tra chi tiết do TierSetService làm. */
 const TIER_NAME_OPTION_MAX = 60;
+
+/** Lựa chọn chế độ kênh tính XP (DEC-037); value là XpChannelMode. */
+const XP_CHANNEL_MODE_CHOICES = XP_CHANNEL_MODES.map(mode => ({
+	name: mode === "all" ? "Tất cả kênh (trừ kênh đã tắt)" : "Chỉ kênh được bật (kênh mới không tính XP)",
+	value: mode,
+}));
 
 const CHANNEL_USE_GUILD_XP = "dung-chung-xp";
 const CHANNEL_USE_GUILD_COOLDOWN = "dung-chung-cooldown";
@@ -428,7 +429,15 @@ export default class ConfigCmd extends Command
 				.setDescription("Xoá cấu hình riêng, channel dùng lại cấu hình chung"), "Channel cần xoá cấu hình riêng"))
 			.addSubcommand(sub => sub
 				.setName("list")
-				.setDescription("Xem các channel có cấu hình riêng")))
+				.setDescription("Xem các channel có cấu hình riêng"))
+			.addSubcommand(sub => sub
+				.setName("mode")
+				.setDescription("Chọn kênh nào tính XP: tất cả kênh (trừ kênh tắt), hoặc chỉ kênh được bật")
+				.addStringOption(option => option
+					.setName("che-do")
+					.setDescription("Chế độ kênh tính XP")
+					.setRequired(true)
+					.addChoices(...XP_CHANNEL_MODE_CHOICES))))
 		.addSubcommandGroup(group => group
 			.setName("team")
 			.setDescription("Quản lý team (mỗi team là một Discord Role)")
@@ -522,6 +531,9 @@ export default class ConfigCmd extends Command
 			break;
 		case "list":
 			await this.listChannels(context);
+			break;
+		case "mode":
+			await this.setChannelMode(context);
 			break;
 		default:
 			throw new Error(`Subcommand không hợp lệ: /config channel ${subcommand}`);
@@ -647,6 +659,22 @@ export default class ConfigCmd extends Command
 		await interaction.reply(ephemeral(removed
 			? `Đã xoá cấu hình riêng của ${channelMention(channel.id)}. Channel này dùng lại cấu hình chung.`
 			: `${channelMention(channel.id)} vốn không có cấu hình riêng.`));
+	}
+
+	/** Đổi chế độ kênh tính XP (DEC-037); chế độ không đổi thì chỉ báo lại, không ghi audit. */
+	private async setChannelMode(context: ConfigContext): Promise<void>
+	{
+		const { interaction, guildId } = context;
+		const mode = interaction.options.getString("che-do", true);
+		if (!isXpChannelMode(mode)) throw new UserError("Chế độ kênh tính XP không hợp lệ.");
+		const { guildConfig } = this.services;
+		if (guildConfig.getSettings(guildId).xpChannelMode === mode)
+		{
+			await interaction.reply(ephemeral(`Server đang dùng chế độ này rồi: ${settingLine("xpChannelMode", mode)}`));
+			return;
+		}
+		this.updateSettings(context, { xpChannelMode: mode });
+		await interaction.reply(ephemeral(channelModeChangedText(mode, guildConfig.listChannels(guildId))));
 	}
 
 	private async listChannels({ interaction, guildId }: ConfigContext): Promise<void>

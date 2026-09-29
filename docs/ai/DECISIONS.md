@@ -332,6 +332,28 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 - **Ngày:** 2026-09-27 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("duyệt vào main nhé")
 - **Nội dung:** merge `phase-14/hoan-tat` vào `main` (fast-forward tới `3495946`). Toàn bộ code đã sẵn sàng cho lần chạy thật; việc tiếp theo là cài trên server Linux theo `docs/DEPLOY.md` và kiểm theo `docs/TEST-PLAN.md`.
 
+### DEC-036 — Server chạy thật và process manager (trả lời PEND-005)
+
+- **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT (riêng phần Node: tạm thời) · **Nguồn:** IT cấp server theo yêu cầu của người phụ trách; bản Node do Claude chọn khi cài và đã báo người phụ trách
+- **Nội dung:**
+  - Bot chạy trên máy Linux nội bộ **dùng chung** `192.168.0.206` (Ubuntu 22.04.5, 6 vCPU, 11 GB RAM, systemd 249; trên máy còn dịch vụ khác của IT). Process manager là **systemd** với unit `deploy/company-discord-bot.service`, cài theo `docs/DEPLOY.md` mục 3–4 (code thuộc root trong `/opt/company-discord-bot`, `data/` thuộc user `discordbot`, `.env` root 600).
+  - **Node:** dùng Node 22.23.2 có sẵn trên máy (gói nodesource, `/usr/bin/node`), đúng bản đã chạy toàn bộ test, thay vì cài thêm Node 24. Lý do: không đổi runtime dùng chung của máy, Node 22 vẫn được cập nhật bảo mật qua apt. Selfcheck báo ⚠️ là bình thường. Nâng lên Node 24 khi máy có sẵn Node 24 hoặc khi chuyển sang máy riêng (DEC-016 vẫn là mục tiêu).
+  - **Cách đưa code lên:** chưa có remote git (DEC-013, PEND-004) nên chép bằng `git archive`, cài dependency, build và chạy `npm run check` trong thư mục staging của tài khoản quản trị, rồi mới chép sang `/opt/company-discord-bot` bằng script. Bản đang chạy ghi trong `/opt/company-discord-bot/REVISION`.
+  - Lần chạy đầu 2026-09-29 với bản `38238e8`: 782/782 test pass trên chính server; selfcheck trong sandbox của service 12 ✅, 2 ⚠️ (Node 22, database chưa có), 0 ❌; bot đăng ký 8 command cho guild và báo sẵn sàng.
+  - Lúc mời bot, người mời chưa có quyền Manage Roles ở server nên bot **chưa có Manage Roles**. Role danh hiệu chỉ hoạt động sau khi chủ server bật quyền này cho role của bot (DEPLOY mục 2, 7.1).
+
+### DEC-037 — Bảng điều khiển cấu hình chung và chế độ "chỉ kênh được bật"
+
+- **Ngày:** 2026-09-29 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("có làm giao diện cho nhiều phần setup nữa nhé", "đánh tất cả các kênh là không tính điểm, sau này thêm kênh nào thì kênh đấy có tính điểm"; chọn "Chỉ kênh admin bật")
+- **Nội dung:**
+  - Duyệt **PROP-033**: thêm `/config panel`, bảng điều khiển Components V2 cho các cấu hình còn lại (kênh tính XP, team, XP và chống spam, vote và contribution, Bảng vàng, role admin), mở được bảng danh hiệu. Các lệnh gõ tay giữ nguyên. Làm ở Phase 15, branch `phase-15/config-panel`.
+  - **Chế độ kênh tính XP** (business rule mới, do người phụ trách quyết): mỗi server chọn một trong hai chế độ:
+    - `all` ("tất cả kênh"): cách hiện tại. Mọi kênh bot xem được đều tính XP, trừ kênh admin tắt.
+    - `selected` ("chỉ kênh được bật"): kênh chỉ tính XP khi admin bật riêng. Kênh chưa có cấu hình riêng, **kể cả kênh tạo mới sau này**, đều không tính XP.
+  - Cấu hình riêng của một kênh (bật hay tắt, XP và cooldown riêng) luôn thắng chế độ. Xoá cấu hình riêng (`/config channel reset`) thì kênh theo chế độ. Tin trong thread và bài trong forum theo kênh cha, như trước.
+  - Mặc định vẫn là `all`, để không đổi hành vi của server đang chạy khi cập nhật. Server ezOne sẽ chuyển sang `selected` sau khi cập nhật, và reset toàn bộ điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`.
+  - Schema: migration 5 thêm cột `guild_settings.xp_channel_mode` (`'all'` hoặc `'selected'`, mặc định `'all'`). Backup cũ khôi phục vào code mới thì tự migrate; code cũ gặp DB mới thì từ chối chạy, như mọi migration.
+
 ---
 
 ## Đang chờ quyết định
@@ -339,7 +361,6 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 | Mã | Câu hỏi | Ảnh hưởng tới | Liên quan |
 | --- | --- | --- | --- |
 | PEND-004 | URL remote git nội bộ là gì, và khi nào publish? | Khi cần publish (hiện chưa cần, DEC-013) | CHƯA XÁC ĐỊNH |
-| PEND-005 | Máy chủ Linux cụ thể (sẽ cấp ngày thứ 2) và process manager (đề xuất systemd) | Chạy thật, Phase 11 | DEC-016, PROP-018 |
 | PEND-013 | Thời gian giữ ledger và audit log (tạm thời: giữ vĩnh viễn; không lưu nội dung tin nhắn theo DEC-023) | Vận hành lâu dài | PROP-014 |
 
-**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 (một phần: OS, Node version) → DEC-016 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028 · PEND-019, PEND-021 → DEC-032.
+**Đã giải quyết:** PEND-001, PEND-002 → DEC-014 · PEND-003 → DEC-015 · PEND-005 → DEC-016, DEC-036 · PEND-006 → DEC-023 · PEND-007 → DEC-024 · PEND-008 → DEC-022, DEC-024, DEC-025 · PEND-009 → DEC-025 · PEND-010 → DEC-027 · PEND-011, PEND-012 → DEC-021 · PEND-014 → DEC-020 · PEND-015, PEND-016, PEND-017, PEND-018, PEND-020 → DEC-028 · PEND-019, PEND-021 → DEC-032.

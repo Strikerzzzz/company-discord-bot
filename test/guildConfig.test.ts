@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_GUILD_SETTINGS } from "../src/modules/guild-config/types";
 import { canCreatePoll, isAdmin } from "../src/modules/guild-config/permissions";
+import { MAX_BULK_CHANNELS } from "../src/modules/guild-config/GuildConfigService";
 import { MAX_TEAMS } from "../src/modules/team/TeamService";
 import { UserError } from "../src/shared/errors";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, OTHER_GUILD, ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER } from "./helpers";
@@ -53,6 +54,72 @@ describe("GuildConfigService", () =>
 		assert.equal(deps.guildConfig.resetChannel(GUILD, CHANNEL_BOT, ADMIN), false);
 		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_BOT).enabled, true);
 		assert.throws(() => deps.guildConfig.setChannel(GUILD, CHANNEL_GENERAL, { xpCooldownSeconds: 999999 }, ADMIN), UserError);
+	});
+
+	test("chế độ 'selected': kênh chưa cấu hình (kể cả kênh mới) không tính XP; kênh bật riêng tính; reset quay về không tính (DEC-037)", () =>
+	{
+		const { deps } = createTestContext();
+		const NEW_CHANNEL = "700000000000000099";
+		deps.guildConfig.setChannel(GUILD, CHANNEL_BOT, { xpEnabled: false }, ADMIN);
+		deps.guildConfig.updateSettings(GUILD, { xpChannelMode: "selected" }, ADMIN);
+
+		assert.equal(deps.guildConfig.getSettings(GUILD).xpChannelMode, "selected");
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, NEW_CHANNEL).enabled, false);
+		assert.equal(deps.guildConfig.getChannel(GUILD, NEW_CHANNEL).xpEnabled, false);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_BOT).enabled, false);
+
+		deps.guildConfig.setChannel(GUILD, CHANNEL_GENERAL, { xpEnabled: true }, ADMIN);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL).enabled, true);
+		deps.guildConfig.setChannel(GUILD, NEW_CHANNEL, { xpPerMessage: 20 }, ADMIN);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, NEW_CHANNEL).enabled, false, "đặt XP riêng không tự bật kênh");
+
+		deps.guildConfig.resetChannel(GUILD, CHANNEL_GENERAL, ADMIN);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL).enabled, false);
+
+		deps.guildConfig.updateSettings(GUILD, { xpChannelMode: "all" }, ADMIN);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_GENERAL).enabled, true);
+		assert.equal(deps.guildConfig.effectiveChannelXp(GUILD, CHANNEL_BOT).enabled, false, "kênh tắt riêng vẫn tắt khi về chế độ all");
+		assert.equal(deps.guildConfig.getSettings(OTHER_GUILD).xpChannelMode, "all");
+	});
+
+	test("chế độ kênh không hợp lệ bị từ chối, không ghi gì", () =>
+	{
+		const { deps } = createTestContext();
+		const bad: unknown = "khac";
+		// Cố ý ép kiểu sai để thử kiểm tra lúc chạy (giá trị từ nguồn không kiểm soát được, như DB sửa tay).
+		const patch = { xpChannelMode: bad } as Partial<Parameters<typeof deps.guildConfig.updateSettings>[1]>;
+		assert.throws(() => deps.guildConfig.updateSettings(GUILD, patch, ADMIN), /Chế độ kênh/);
+		assert.equal(deps.audit.list(GUILD, 5).length, 0);
+	});
+
+	test("bật/tắt hàng loạt: bỏ qua kênh đã đúng trạng thái, xoá cấu hình trùng mặc định, giữ XP riêng, audit từng kênh", () =>
+	{
+		const { deps } = createTestContext();
+		const C3 = "700000000000000099";
+		deps.guildConfig.updateSettings(GUILD, { xpChannelMode: "selected" }, ADMIN);
+		deps.guildConfig.setChannel(GUILD, C3, { xpPerMessage: 20 }, ADMIN);
+		const auditBefore = deps.audit.list(GUILD, 50).length;
+
+		const enabled = deps.guildConfig.setChannelsXpEnabled(GUILD, [CHANNEL_GENERAL, C3, CHANNEL_GENERAL], true, ADMIN);
+		assert.deepEqual(enabled, { changed: [CHANNEL_GENERAL, C3], unchanged: [] });
+		assert.deepEqual(deps.guildConfig.effectiveChannelXp(GUILD, C3), { enabled: true, xpPerMessage: 20, cooldownSeconds: 60 });
+		assert.equal(deps.audit.list(GUILD, 50).length, auditBefore + 2);
+		assert.deepEqual(deps.audit.list(GUILD, 1)[0].details, { xpEnabled: true });
+
+		assert.deepEqual(deps.guildConfig.setChannelsXpEnabled(GUILD, [CHANNEL_GENERAL, CHANNEL_BOT], true, ADMIN), {
+			changed: [CHANNEL_BOT],
+			unchanged: [CHANNEL_GENERAL],
+		});
+
+		const disabled = deps.guildConfig.setChannelsXpEnabled(GUILD, [CHANNEL_GENERAL, C3], false, ADMIN);
+		assert.deepEqual(disabled.changed, [CHANNEL_GENERAL, C3]);
+		const rows = new Map(deps.guildConfig.listChannels(GUILD).map(channel => [channel.channelId, channel]));
+		assert.equal(rows.has(CHANNEL_GENERAL), false, "tắt về đúng mặc định của chế độ selected thì xoá cấu hình riêng");
+		assert.deepEqual(rows.get(C3), { channelId: C3, xpEnabled: false, xpPerMessage: 20, xpCooldownSeconds: null });
+
+		assert.throws(() => deps.guildConfig.setChannelsXpEnabled(GUILD, [], true, ADMIN), UserError);
+		const tooMany = Array.from({ length: MAX_BULK_CHANNELS + 1 }, (_, index) => `7000000000000001${String(index).padStart(2, "0")}`);
+		assert.throws(() => deps.guildConfig.setChannelsXpEnabled(GUILD, tooMany, true, ADMIN), UserError);
 	});
 });
 

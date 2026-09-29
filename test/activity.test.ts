@@ -191,6 +191,16 @@ describe("ActivityService.handleMessage", () =>
 		assert.equal(outcome(activity.handleMessage(message())), "awarded");
 	});
 
+	test("chế độ 'selected': tin ở kênh chưa bật không được XP; bật kênh thì được (DEC-037)", () =>
+	{
+		const { activity, deps } = setup();
+		deps.guildConfig.updateSettings(GUILD, { xpChannelMode: "selected" }, ADMIN);
+		assert.deepEqual(activity.handleMessage(message()), { awarded: false, reason: "channel_disabled" });
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 0);
+		deps.guildConfig.setChannelsXpEnabled(GUILD, [message().channelId], true, ADMIN);
+		assert.equal(outcome(activity.handleMessage(message())), "awarded");
+	});
+
 	test("tin trùng (sau chuẩn hoá) trong window: duplicate", () =>
 	{
 		const { activity, clock } = setup();

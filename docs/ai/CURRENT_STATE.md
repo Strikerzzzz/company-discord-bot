@@ -1,15 +1,15 @@
 # CURRENT STATE
 
 > Đọc file này đầu tiên ở mỗi phiên. Cập nhật sau mỗi phase hoặc task đáng kể.
-> Cập nhật lần cuối: **2026-09-27**
+> Cập nhật lần cuối: **2026-09-29**
 
 ## 1. Phase hiện tại
 
-**Code đã hoàn tất, chờ chạy thật.** `main` có đủ Phase 0–14 (Phase 14 merge theo DEC-035). Không còn branch nào đang dở.
+**Bot đã chạy thật** (Phase 11), từ 2026-09-29 (DEC-036). `main` có đủ Phase 0–14. Không còn branch nào đang dở.
 
-- Việc tiếp theo: cài trên server Linux theo `docs/DEPLOY.md` (có `npm run selfcheck`), rồi kiểm theo `docs/TEST-PLAN.md`.
-- Phase 14 gồm: PROP-030 (đưa riêng XP/cooldown của channel về giá trị chung), ảnh bảng Contribution/team theo bộ danh hiệu, lệnh `npm run selfcheck`, checklist `docs/TEST-PLAN.md`.
-- **Chưa chạy thật trên Discord.** Server Linux cấp ngày thứ 2. Lần chạy thật gộp Phase 1 bước 6, Phase 11 và kiểm Phase 12.
+- Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, bản `38238e8`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
+- Việc đang làm: cấu hình ban đầu trong Discord (DEPLOY mục 7) và kiểm theo `docs/TEST-PLAN.md` trên server thật.
+- Bot **chưa có quyền Manage Roles**: người mời bot không có quyền này. Role danh hiệu chờ chủ server bật quyền cho role của bot.
 
 ## 2. Tính năng đã có
 
@@ -44,11 +44,11 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 
 ## 4. Việc tiếp theo
 
-1. **Ngày thứ 2, chạy thật** theo `docs/DEPLOY.md`:
-   - tạo Discord Application (tắt Public Bot, bật Message Content Intent);
-   - mời bot bằng link có permissions `275146394624` (gồm Attach Files và Manage Roles);
-   - tạo role cảnh giới mới riêng, kéo role của bot lên ngay trên chúng;
-   - cài trên server Linux với systemd, rồi smoke test ảnh (`/rank`, `/leaderboard`) và xem `journalctl` không có lỗi canvas/SIGSYS.
+1. **Đã cài và bật** (2026-09-29, DEC-036). Còn:
+   - smoke test ảnh (`/rank`, `/leaderboard`) và xem `journalctl` không có lỗi canvas hay SIGSYS;
+   - cấu hình ban đầu (DEPLOY mục 7);
+   - chủ server bật Manage Roles cho role "ezOne Bot", rồi tạo role danh hiệu.
+   - Cập nhật phiên bản: upload `git archive` mới vào `~/deploy/src` của tài khoản quản trị bằng Git Bash (LL-021), chạy `npm ci && npm run check`, rồi `sudo bash ~/deploy/install.sh` và `sudo bash ~/deploy/start.sh`.
 2. Những điểm cần kiểm trên Discord thật:
    - context menu (defer → REST lấy member → editReply);
    - thay ảnh khi bấm nút (`files` + `attachments: []`), kể cả message ephemeral; người khác bấm nút thì nhận bảng riêng;
@@ -59,7 +59,8 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 
 ## 5. Đang chờ người phụ trách quyết định
 
-- PEND-004: remote git nội bộ. PEND-005: máy chủ cụ thể và process manager (đề xuất systemd). PEND-013: thời gian giữ dữ liệu.
+- PEND-004: remote git nội bộ. PEND-013: thời gian giữ dữ liệu. (PEND-005 đã giải quyết ở DEC-036.)
+- Nơi chép bản sao lưu ra khỏi server (DEPLOY mục 6): cần IT chỉ định.
 
 ## 6. Cách làm việc với repo
 
@@ -82,3 +83,4 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-27 | Phase 13 (DEC-033): nền móng + 3 agent (vẽ ảnh; bảng điều khiển và role; giọng văn), 3 agent review độc lập, 2 agent sửa lỗi. 725 test. |
 | 2026-09-27 | DEC-034: merge Phase 13, không làm PROP-032. Phase 14: 2 agent (PROP-030 + ảnh bảng; selfcheck), checklist chạy thật, 1 review độc lập, 1 agent sửa lỗi. |
 | 2026-09-27 | DEC-035: merge Phase 14 vào `main` (782 test). Code hoàn tất, chờ chạy thật. |
+| 2026-09-29 | DEC-036: cài lên server `192.168.0.206` (systemd, Node 22.23.2). 782/782 test pass trên server, selfcheck 0 ❌, bot online ở server ezOne. LL-021 (pipe PowerShell chèn BOM/CRLF). |

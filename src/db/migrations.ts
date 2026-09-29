@@ -316,6 +316,15 @@ export const MIGRATIONS: readonly Migration[] = [
 			);
 		`,
 	},
+	{
+		version: 5,
+		name: "xp_channel_mode",
+		sql: `
+			-- Chế độ kênh tính XP (DEC-037): 'all' = mọi kênh trừ kênh đã tắt; 'selected' = chỉ kênh admin bật riêng.
+			-- Cấu hình riêng của kênh (channel_settings) luôn thắng chế độ.
+			ALTER TABLE guild_settings ADD COLUMN xp_channel_mode TEXT NOT NULL DEFAULT 'all' CHECK (xp_channel_mode IN ('all', 'selected'));
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number
