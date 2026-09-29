@@ -13,7 +13,12 @@
 - **Phase 15 (DEC-037) đang làm** trên branch `phase-15/config-panel`, chưa merge vào `main`:
   - `/config panel`: bảng cấu hình 6 trang (PROP-033);
   - chế độ kênh "chỉ kênh được bật" (migration 5, `/config channel mode`).
-  - Tiến độ: nền móng và 3 agent (giao diện, handler, tài liệu) đã gộp; test tích hợp giữa giao diện và handler; 838 test pass. Đang review độc lập.
+  - Tiến độ:
+    - nền móng và 3 agent (giao diện, handler, tài liệu) đã gộp; có test tích hợp giữa giao diện và handler;
+    - 2 review độc lập (tính đúng đắn và API Discord; bảo mật) không có lỗi CAO. Mọi lỗi TRUNG BÌNH và THẤP đã sửa; góp ý ngoài phạm vi ghi thành PROP-034, 035, 036;
+    - kiểm chứng trên bản copy sạch ngay trên server Linux: `npm ci` OK, 844/844 test pass;
+    - **chờ người phụ trách duyệt merge**.
+  - Cập nhật server: `git archive` vào `~/deploy/src`, `npm ci && npm run check`, rồi `sudo bash ~/deploy/install.sh` và `sudo bash ~/deploy/start.sh`. Hai script giờ nằm trong `deploy/` của repo.
   - Sau khi merge và cập nhật server: server ezOne chuyển sang "chỉ kênh được bật", rồi reset điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`.
 
 ## 2. Tính năng đã có
