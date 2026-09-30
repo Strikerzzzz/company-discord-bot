@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import path from "path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { boardStyle, renderLeaderboardCard } from "../src/discord/cards/leaderboardCard";
-import { renderRankCard, streakHint } from "../src/discord/cards/rankCard";
+import { readableOnDark, renderRankCard, streakHint } from "../src/discord/cards/rankCard";
 import { cleanDisplayName, colorForName, decodeAvatar, fitList, fitText, graphemes, hashString, initialOf, MAX_AVATAR_SIDE, mulberry32, sniffImageSize } from "../src/discord/cards/draw";
 import { hasTierEmblem } from "../src/discord/cards/emblems";
 import { ensureFonts, findFontDir, font } from "../src/discord/cards/fonts";
 import { cardStyle } from "../src/discord/cards/styles";
-import { cardTexts, drawTierPill, isTopTier, measureTierPill, NEUTRAL_TEXTS, tierPosition, tierSetKeyOf } from "../src/discord/cards/theme";
+import { cardTexts, drawTierPill, isTopTier, measureTierPill, NEUTRAL_TEXTS, tierBorderColor, tierPosition, tierSetKeyOf, tierTextColor } from "../src/discord/cards/theme";
 import { LeaderboardCardData, LeaderboardCardRow, RankCardData, RenderedCard } from "../src/discord/cards/types";
 import { LevelInfo, levelInfo, totalXpForLevel } from "../src/modules/activity/levels";
 import { applyTierOverrides, DEFAULT_TIER_SET, nextTier, Tier, tierForLevel, TIER_SET_KEYS, TIER_SETS, TierSet, TIERS } from "../src/modules/activity/tiers";
@@ -390,11 +390,48 @@ describe("bộ danh hiệu trên ảnh thẻ", () =>
 		const short: Tier = TIER_SETS["rank-game"].tiers[0];
 		assert.equal(measureTierPill(ctx, short, 38, 400), measureTierPill(ctx, short, 38));
 	});
+
+	test("bậc có textColor vẽ thành chip nền màu bậc; bậc không có (hoặc màu sai định dạng) giữ nền tối như cũ", () =>
+	{
+		ensureFonts();
+		const sample = (tier: Tier): [number, number, number] =>
+		{
+			const ctx = createCanvas(600, 60).getContext("2d");
+			const width = drawTierPill(ctx, tier, 0, 30, 38);
+			const [r, g, b] = ctx.getImageData(Math.round(width) - 7, 30, 1, 1).data;
+			return [r, g, b];
+		};
+		for (const tier of TIER_SETS["mobile-legends"].tiers)
+		{
+			assert.equal(tierTextColor(tier), tier.textColor);
+			const expected = [1, 3, 5].map(offset => Number.parseInt(tier.color.slice(offset, offset + 2), 16));
+			const actual = sample(tier);
+			actual.forEach((channel, index) => assert.ok(Math.abs(channel - expected[index]) <= 28, `${tier.name}: nền chip ${actual.join(",")} lệch màu bậc ${tier.color}`));
+		}
+		const dark = sample(TIER_SETS["rank-game"].tiers[2]);
+		assert.ok(dark.every(channel => channel < 140), `nền tối ${dark.join(",")}`);
+		const broken: Tier = { ...TIER_SETS["mobile-legends"].tiers[2], textColor: "white", borderColor: "red" };
+		assert.equal(tierTextColor(broken), null);
+		assert.equal(tierBorderColor(broken), null);
+		assert.ok(sample(broken).every(channel => channel < 170), "textColor sai định dạng thì không vẽ chip");
+		assert.equal(tierBorderColor(TIER_SETS["mobile-legends"].tiers[7]), "#e0364b");
+		assert.equal(tierBorderColor(TIER_SETS["mobile-legends"].tiers[6]), null);
+	});
+
+	test("chữ màu bậc trên nền tối: màu quá tối được pha sáng cho đủ tương phản, màu sáng giữ nguyên", () =>
+	{
+		assert.equal(readableOnDark("#e3a62b"), "#e3a62b");
+		assert.equal(readableOnDark("#8a9bb0"), "#8a9bb0");
+		const violet = readableOnDark("#7b3fe4");
+		assert.notEqual(violet, "#7b3fe4");
+		const channels = [1, 3, 5].map(offset => Number.parseInt(violet.slice(offset, offset + 2), 16));
+		assert.ok(channels[0] > 0x7b && channels[1] > 0x3f && channels[2] >= 0xe4, violet);
+	});
 });
 
 describe("renderRankCard", () =>
 {
-	test("vẽ được mọi bộ × mọi bậc (40 trường hợp), mỗi ảnh dưới 1 giây", async () =>
+	test("vẽ được mọi bộ × mọi bậc (48 trường hợp), mỗi ảnh không chậm bất thường", async () =>
 	{
 		let count = 0;
 		for (const key of TIER_SET_KEYS)
@@ -408,7 +445,33 @@ describe("renderRankCard", () =>
 				count++;
 			}
 		}
-		assert.equal(count, 40);
+		assert.equal(count, TIER_SET_KEYS.length * 8);
+	});
+
+	test("Mobile Legends: viền riêng của bậc cao nhất (borderColor) đổi khung thẻ; huy hiệu bậc vẽ ở chân avatar theo từng bậc", async () =>
+	{
+		const set = TIER_SETS["mobile-legends"];
+		const top = set.tiers[7];
+		assert.equal(top.borderColor, "#e0364b");
+		const withBorder = await renderRankCard(tierRankData(set, top));
+		const { borderColor: _removed, ...plain } = top;
+		const withoutBorder = await renderRankCard(tierRankData(set, plain));
+		assert.ok(!withBorder.png.equals(withoutBorder.png), "khung thẻ bậc 8 dùng viền đỏ");
+
+		const canvas = createCanvas(1000, 460);
+		const ctx = canvas.getContext("2d");
+		const image = await loadImage(withBorder.png);
+		ctx.drawImage(image, 0, 0);
+		const [r, g, b] = ctx.getImageData(500, 3, 1, 1).data;
+		assert.ok(r > 170 && g < 140 && b < 150, `viền trên của thẻ phải ngả đỏ, nhận rgb(${r}, ${g}, ${b})`);
+
+		const badges = new Set<string>();
+		for (const tier of set.tiers.slice(0, 7))
+		{
+			const card = await renderRankCard(tierRankData(set, { ...tier, color: "#60a5fa", gradient: ["#1e3a8a", "#93c5fd"], name: "Cùng Tên" }, { displayName: "Cùng người" }));
+			badges.add(card.png.toString("base64"));
+		}
+		assert.equal(badges.size, 7, "mỗi bậc một huy hiệu và khung khác nhau dù cùng màu, cùng tên");
 	});
 
 	test("cùng vị trí bậc nhưng khác bộ thì ảnh khác nhau (trang trí theo bộ)", async () =>

@@ -1,5 +1,5 @@
 import { isTierSetKey, TierSetKey } from "../../modules/activity/tiers";
-import { Ctx, drawGlow, fillCircle, Gradient, linearGradient, mix, rgba, strokeCircle, TAU } from "./draw";
+import { Ctx, drawGlow, fillCircle, Gradient, linearGradient, mix, Paint, rgba, strokeCircle, TAU } from "./draw";
 import { boltPath, drawCrown, drawFlame, drawFlower, drawLeaf, drawOrb, drawPlanet, drawSparkle, drawSword, drawWings, starPath } from "./icons";
 
 /*
@@ -777,12 +777,744 @@ function vuTruUniverse(ctx: Ctx, x: number, y: number, size: number, color: stri
 	drawSparkle(ctx, x, y, s * 0.42, "#ffffff");
 }
 
+/*
+ * Bộ Mobile Legends: huy hiệu cách điệu theo từng rank (khiên và đầu thú vẽ bằng path, không dùng ảnh gốc của game).
+ * Các hàm dưới đây vẽ trong hệ toạ độ đơn vị (xem inUnit): ô biểu tượng là [-1, 1] × [-1, 1], trục y hướng xuống.
+ */
+
+const MLBB_GOLD = "#f7c85a";
+const MLBB_SILVER = "#e6edf5";
+const MLBB_BLUE = "#3fa9f5";
+const MLBB_SAPPHIRE = "#2563eb";
+const MLBB_PURPLE = "#a855f7";
+const MLBB_RED = "#ef4444";
+/** Viền đỏ của Vinh Quang (Mythical Glory), cùng mã với `borderColor` của bậc 8. */
+const MLBB_GLORY_RED = "#e0364b";
+const MLBB_IVORY = "#fff3d6";
+
+type UnitPoint = readonly [number, number];
+/** Đoạn của một path: điểm cuối [x, y] (thẳng), [cx, cy, x, y] (cong bậc hai) hoặc [c1x, c1y, c2x, c2y, x, y] (cong bậc ba). */
+type UnitSegment = UnitPoint | readonly [number, number, number, number] | readonly [number, number, number, number, number, number];
+
+/** Vẽ trong hệ toạ độ đơn vị: tâm (x, y), cạnh ô `size` ứng với đoạn [-1, 1] trên cả hai trục; `edge` là độ dày nét viền. */
+function inUnit(ctx: Ctx, x: number, y: number, size: number, draw: (edge: number) => void): void
+{
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.scale(size / 2, size / 2);
+	draw(Math.max(0.035, 1.8 / Math.max(1, size)));
+	ctx.restore();
+}
+
+/** Vẽ một hình ở nửa phải rồi lặp lại, lật qua trục x = 0 cho nửa trái. */
+function mirrored(ctx: Ctx, draw: () => void): void
+{
+	draw();
+	ctx.save();
+	ctx.scale(-1, 1);
+	draw();
+	ctx.restore();
+}
+
+function segmentEnd(segment: UnitSegment): UnitPoint
+{
+	if (segment.length === 2) return segment;
+	if (segment.length === 4) return [segment[2], segment[3]];
+	return [segment[4], segment[5]];
+}
+
+function traceSegment(ctx: Ctx, segment: UnitSegment): void
+{
+	if (segment.length === 2) ctx.lineTo(segment[0], segment[1]);
+	else if (segment.length === 4) ctx.quadraticCurveTo(segment[0], segment[1], segment[2], segment[3]);
+	else ctx.bezierCurveTo(segment[0], segment[1], segment[2], segment[3], segment[4], segment[5]);
+}
+
+/** Path mở theo các đoạn, bắt đầu từ `start`. */
+function tracePath(ctx: Ctx, start: UnitPoint, segments: readonly UnitSegment[]): void
+{
+	ctx.beginPath();
+	ctx.moveTo(start[0], start[1]);
+	for (const segment of segments) traceSegment(ctx, segment);
+}
+
+/**
+ * Path khép kín đối xứng qua trục x = 0: `start` (trên trục) và các đoạn của nửa phải từ trên xuống; nửa trái vẽ ngược lại,
+ * lật dấu x, nên chỉ cần mô tả một nửa hình.
+ */
+function mirrorPath(ctx: Ctx, start: UnitPoint, segments: readonly UnitSegment[]): void
+{
+	tracePath(ctx, start, segments);
+	const last = segments.length > 0 ? segmentEnd(segments[segments.length - 1]) : start;
+	if (last[0] !== 0) ctx.lineTo(-last[0], last[1]);
+	for (let index = segments.length - 1; index >= 0; index--)
+	{
+		const segment = segments[index];
+		const [tx, ty] = index > 0 ? segmentEnd(segments[index - 1]) : start;
+		if (segment.length === 2) ctx.lineTo(-tx, ty);
+		else if (segment.length === 4) ctx.quadraticCurveTo(-segment[0], segment[1], -tx, ty);
+		else ctx.bezierCurveTo(-segment[2], segment[3], -segment[0], segment[1], -tx, ty);
+	}
+	ctx.closePath();
+}
+
+/** Nước kim loại theo chiều dọc: sáng ở trên, một dải tối rồi hắt sáng ở đáy. */
+function metalPaint(ctx: Ctx, color: string, top: number, bottom: number): Gradient
+{
+	return linearGradient(ctx, 0, top, 0, bottom, [mix(color, "#ffffff", 0.6), color, mix(color, "#000000", 0.35), mix(color, "#ffffff", 0.1)]);
+}
+
+function inkOf(color: string): string
+{
+	return mix(color, "#000000", 0.8);
+}
+
+/** Tô path hiện tại rồi viền tối (nét viền giúp hình tách khỏi nền tối khi vẽ nhỏ). */
+function fillOutlined(ctx: Ctx, paint: Paint, color: string, edge: number): void
+{
+	ctx.fillStyle = paint;
+	ctx.fill();
+	ctx.strokeStyle = rgba(inkOf(color), 0.92);
+	ctx.lineWidth = edge;
+	ctx.stroke();
+}
+
+/** Viên đá bầu dục có ổ kim loại và chấm sáng. */
+function mlbbStone(ctx: Ctx, x: number, y: number, rx: number, ry: number, stone: string, setting: string, edge: number): void
+{
+	ctx.beginPath();
+	ctx.ellipse(x, y, rx + edge * 1.2, ry + edge * 1.2, 0, 0, TAU);
+	fillOutlined(ctx, mix(setting, "#ffffff", 0.2), setting, edge * 0.8);
+	const gradient = ctx.createRadialGradient(x - rx * 0.35, y - ry * 0.4, 0, x, y, Math.max(rx, ry));
+	gradient.addColorStop(0, mix(stone, "#ffffff", 0.75));
+	gradient.addColorStop(0.45, stone);
+	gradient.addColorStop(1, mix(stone, "#000000", 0.45));
+	ctx.beginPath();
+	ctx.ellipse(x, y, rx, ry, 0, 0, TAU);
+	ctx.fillStyle = gradient;
+	ctx.fill();
+	ctx.beginPath();
+	ctx.ellipse(x - rx * 0.32, y - ry * 0.38, rx * 0.28, ry * 0.2, -0.5, 0, TAU);
+	ctx.fillStyle = rgba("#ffffff", 0.85);
+	ctx.fill();
+}
+
+/** Mắt xếch phát sáng (đặt ở nửa phải; dùng cùng mirrored). */
+function mlbbEye(ctx: Ctx, x: number, y: number, width: number, glow: string, edge: number): void
+{
+	ctx.beginPath();
+	ctx.moveTo(x - width * 0.55, y + width * 0.12);
+	ctx.quadraticCurveTo(x, y - width * 0.42, x + width * 0.55, y - width * 0.3);
+	ctx.quadraticCurveTo(x + width * 0.1, y + width * 0.32, x - width * 0.55, y + width * 0.12);
+	ctx.closePath();
+	ctx.fillStyle = glow;
+	ctx.fill();
+	ctx.strokeStyle = rgba(INK, 0.9);
+	ctx.lineWidth = edge * 0.8;
+	ctx.stroke();
+}
+
+interface WingShape
+{
+	/** Gốc cánh ở nửa phải. */
+	root: UnitPoint;
+	feathers: number;
+	/** Góc của lông trên cùng và dưới cùng (radian, 0 = sang phải, âm = chếch lên). */
+	from: number;
+	to: number;
+	/** Độ dài lông trên cùng và dưới cùng. */
+	longest: number;
+	shortest: number;
+	/** Bề rộng lông. */
+	width: number;
+}
+
+/** Cánh lông vũ ở nửa phải: lông dưới vẽ trước, lông trên đè lên; màu lông xen sáng/tối. */
+function featherWing(ctx: Ctx, color: string, shape: WingShape, edge: number): void
+{
+	const steps = Math.max(1, shape.feathers - 1);
+	const [rx, ry] = shape.root;
+	for (let index = shape.feathers - 1; index >= 0; index--)
+	{
+		const t = index / steps;
+		const angle = shape.from + (shape.to - shape.from) * t;
+		const length = shape.longest + (shape.shortest - shape.longest) * t;
+		const tipX = rx + Math.cos(angle) * length;
+		const tipY = ry + Math.sin(angle) * length;
+		const nx = -Math.sin(angle);
+		const ny = Math.cos(angle);
+		const mx = (rx + tipX) / 2;
+		const my = (ry + tipY) / 2;
+		const w = shape.width;
+		ctx.beginPath();
+		ctx.moveTo(rx - nx * w * 0.35, ry - ny * w * 0.35);
+		ctx.quadraticCurveTo(mx - nx * w * 0.9, my - ny * w * 0.9, tipX, tipY);
+		ctx.quadraticCurveTo(mx + nx * w * 0.75, my + ny * w * 0.75, rx + nx * w * 0.45, ry + ny * w * 0.45);
+		ctx.closePath();
+		const shade = index % 2 === 0 ? mix(color, "#ffffff", 0.25) : mix(color, "#000000", 0.18);
+		fillOutlined(ctx, linearGradient(ctx, rx, ry, tipX, tipY, [mix(shade, "#000000", 0.15), shade, mix(shade, "#ffffff", 0.35)]), color, edge);
+	}
+}
+
+/** Vương miện năm đỉnh, tâm đáy vành ở (x, y), rộng 2 × `half`, cao `height`, viên đá ở giữa vành. */
+function mlbbCrown(ctx: Ctx, x: number, y: number, half: number, height: number, color: string, stone: string, edge: number): void
+{
+	ctx.beginPath();
+	ctx.moveTo(x - half, y);
+	ctx.lineTo(x - half * 1.08, y - height * 0.72);
+	ctx.lineTo(x - half * 0.55, y - height * 0.34);
+	ctx.lineTo(x - half * 0.3, y - height * 0.8);
+	ctx.lineTo(x, y - height);
+	ctx.lineTo(x + half * 0.3, y - height * 0.8);
+	ctx.lineTo(x + half * 0.55, y - height * 0.34);
+	ctx.lineTo(x + half * 1.08, y - height * 0.72);
+	ctx.lineTo(x + half, y);
+	ctx.closePath();
+	fillOutlined(ctx, metalPaint(ctx, color, y - height, y), color, edge);
+	ctx.beginPath();
+	ctx.roundRect(x - half * 1.02, y - height * 0.22, half * 2.04, height * 0.3, height * 0.08);
+	fillOutlined(ctx, mix(color, "#000000", 0.25), color, edge * 0.8);
+	for (const tip of [-1.08, 1.08]) fillCircle(ctx, x + half * tip, y - height * 0.74, height * 0.1, mix(color, "#ffffff", 0.6));
+	fillCircle(ctx, x, y - height * 1.02, height * 0.11, mix(color, "#ffffff", 0.6));
+	mlbbStone(ctx, x, y - height * 0.07, height * 0.13, height * 0.11, stone, color, edge * 0.7);
+}
+
+/** Đầu đại bàng nhìn nghiêng (mỏ quặp sang trái), đặt trên đỉnh khiên. */
+function eagleHead(ctx: Ctx, color: string, edge: number): void
+{
+	const feather = mix(color, "#ffffff", 0.55);
+	tracePath(ctx, [0.2, -0.24], [
+		[0.26, -0.5, 0.2, -0.8, -0.02, -0.88],
+		[-0.16, -0.92, -0.28, -0.84, -0.31, -0.72],
+		[-0.27, -0.54],
+		[-0.2, -0.46, -0.16, -0.36, -0.15, -0.24],
+		[-0.06, -0.32],
+		[0.02, -0.22],
+		[0.1, -0.32],
+	]);
+	ctx.closePath();
+	fillOutlined(ctx, linearGradient(ctx, 0, -0.9, 0, -0.24, [mix(feather, "#ffffff", 0.4), feather, mix(color, "#000000", 0.1)]), color, edge);
+	tracePath(ctx, [-0.29, -0.76], [
+		[-0.46, -0.8, -0.56, -0.62],
+		[-0.54, -0.52],
+		[-0.5, -0.6, -0.42, -0.58],
+		[-0.27, -0.54],
+	]);
+	ctx.closePath();
+	fillOutlined(ctx, linearGradient(ctx, -0.56, -0.8, -0.3, -0.5, [mix(MLBB_GOLD, "#ffffff", 0.3), MLBB_GOLD, mix(MLBB_GOLD, "#b45309", 0.5)]), color, edge);
+	ctx.strokeStyle = rgba(INK, 0.9);
+	ctx.lineWidth = edge * 1.3;
+	ctx.beginPath();
+	ctx.moveTo(-0.24, -0.76);
+	ctx.lineTo(-0.02, -0.7);
+	ctx.stroke();
+	fillCircle(ctx, -0.11, -0.66, 0.055, INK);
+}
+
+/** Warrior: đại bàng đồng xoè cánh, ngực là tấm khiên có một vạch cấp. */
+function mlbbWarrior(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		mirrored(ctx, () => featherWing(ctx, color, { root: [0.18, 0], feathers: 4, from: -1.2, to: -0.12, longest: 0.84, shortest: 0.62, width: 0.3 }, edge));
+		shieldPath(ctx, 0, 0.24, 0.44, 0.68);
+		fillOutlined(ctx, metalPaint(ctx, color, -0.44, 0.92), color, edge);
+		ctx.strokeStyle = rgba(inkOf(color), 0.85);
+		ctx.lineWidth = Math.max(edge * 1.6, 0.1);
+		ctx.beginPath();
+		ctx.moveTo(-0.24, 0.42);
+		ctx.lineTo(0, 0.24);
+		ctx.lineTo(0.24, 0.42);
+		ctx.stroke();
+		eagleHead(ctx, color, edge);
+	});
+}
+
+/** Sừng cừu xoắn ốc ở nửa phải: vẽ viền tối trước rồi thân sừng có vân sáng tối, thêm các ngấn ngang. */
+function ramHorn(ctx: Ctx, color: string, edge: number): void
+{
+	const cx = 0.5;
+	const cy = -0.14;
+	const steps = 44;
+	const points: [number, number, number][] = [];
+	for (let step = 0; step <= steps; step++)
+	{
+		const t = step / steps;
+		const angle = -2.5 + t * 5.5;
+		const radius = 0.44 - t * 0.3;
+		points.push([cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, 0.3 - t * 0.19]);
+	}
+	ctx.lineCap = "round";
+	for (const outline of [true, false])
+	{
+		for (let index = 0; index < steps; index++)
+		{
+			const [x0, y0, width] = points[index];
+			const [x1, y1] = points[index + 1];
+			const t = index / steps;
+			ctx.strokeStyle = outline ? rgba(inkOf(color), 0.95) : mix(mix(color, "#ffffff", 0.35), mix(color, "#000000", 0.3), Math.abs(Math.sin(t * Math.PI * 1.6)));
+			ctx.lineWidth = outline ? width + edge * 2 : width;
+			ctx.beginPath();
+			ctx.moveTo(x0, y0);
+			ctx.lineTo(x1, y1);
+			ctx.stroke();
+		}
+	}
+	ctx.strokeStyle = rgba(inkOf(color), 0.6);
+	ctx.lineWidth = edge * 0.8;
+	for (let index = 3; index < steps - 2; index += 4)
+	{
+		const [x0, y0, width] = points[index];
+		const [x1, y1] = points[index + 1];
+		const length = Math.hypot(x1 - x0, y1 - y0) || 1;
+		const nx = -(y1 - y0) / length;
+		const ny = (x1 - x0) / length;
+		ctx.beginPath();
+		ctx.moveTo(x0 - nx * width * 0.42, y0 - ny * width * 0.42);
+		ctx.lineTo(x0 + nx * width * 0.42, y0 + ny * width * 0.42);
+		ctx.stroke();
+	}
+}
+
+/** Elite: đầu cừu bạc xanh nhìn thẳng, hai sừng xoắn lớn, chỏm lông xoăn trên trán. */
+function mlbbElite(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		mirrored(ctx, () => ramHorn(ctx, color, edge));
+		mirrorPath(ctx, [0, -0.6], [
+			[0.18, -0.62, 0.3, -0.46],
+			[0.38, -0.34, 0.35, -0.08, 0.26, 0.14],
+			[0.2, 0.32, 0.18, 0.52, 0.13, 0.64],
+			[0.08, 0.76, 0, 0.76],
+		]);
+		fillOutlined(ctx, metalPaint(ctx, mix(color, "#ffffff", 0.15), -0.6, 0.76), color, edge);
+		ctx.strokeStyle = rgba("#ffffff", 0.55);
+		ctx.lineWidth = edge * 1.2;
+		ctx.beginPath();
+		ctx.moveTo(0, -0.28);
+		ctx.lineTo(0, 0.42);
+		ctx.stroke();
+		const wool: [number, number, number][] = [[-0.16, -0.5, 0.11], [0.16, -0.5, 0.11], [0, -0.56, 0.13]];
+		for (const [wx, wy, wr] of wool)
+		{
+			ctx.beginPath();
+			ctx.arc(wx, wy, wr, 0, TAU);
+			fillOutlined(ctx, mix(color, "#ffffff", 0.6), color, edge * 0.8);
+		}
+		mirrored(ctx, () => mlbbEye(ctx, 0.17, -0.1, 0.2, mix(MLBB_BLUE, "#ffffff", 0.35), edge));
+		mirrored(ctx, () =>
+		{
+			ctx.beginPath();
+			ctx.ellipse(0.07, 0.57, 0.035, 0.055, 0.3, 0, TAU);
+			ctx.fillStyle = rgba(INK, 0.85);
+			ctx.fill();
+		});
+	});
+}
+
+/** Bờm sư tử: vòng các mũi bờm uốn như lửa quanh tâm (cx, cy). */
+function manePath(ctx: Ctx, cx: number, cy: number, inner: number, outer: number, spikes: number, rotation: number, swirl: number): void
+{
+	const step = TAU / spikes;
+	const middle = (inner + outer) / 2;
+	const at = (angle: number, radius: number): UnitPoint => [cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius];
+	ctx.beginPath();
+	for (let index = 0; index < spikes; index++)
+	{
+		const angle = rotation + index * step;
+		const [vx, vy] = at(angle - step / 2, inner);
+		const [c1x, c1y] = at(angle - step * 0.15, middle * 1.08);
+		const [tx, ty] = at(angle + swirl, outer);
+		const [c2x, c2y] = at(angle + step * 0.3, middle * 0.98);
+		const [ex, ey] = at(angle + step / 2, inner);
+		if (index === 0) ctx.moveTo(vx, vy);
+		ctx.quadraticCurveTo(c1x, c1y, tx, ty);
+		ctx.quadraticCurveTo(c2x, c2y, ex, ey);
+	}
+	ctx.closePath();
+}
+
+function manePaint(ctx: Ctx, color: string, cy: number, radius: number, light: number): Gradient
+{
+	const gradient = ctx.createRadialGradient(0, cy, radius * 0.2, 0, cy, radius);
+	gradient.addColorStop(0, mix(color, "#ffffff", light));
+	gradient.addColorStop(0.6, color);
+	gradient.addColorStop(1, mix(color, "#000000", 0.4));
+	return gradient;
+}
+
+/** Mặt sư tử (nhìn thẳng); `roar` = há miệng gầm với nanh, ngược lại miệng khép. */
+function lionFace(ctx: Ctx, color: string, edge: number, roar: boolean): void
+{
+	const skin = mix(color, "#ffffff", 0.25);
+	mirrored(ctx, () =>
+	{
+		ctx.beginPath();
+		ctx.arc(0.34, -0.44, 0.12, 0, TAU);
+		fillOutlined(ctx, mix(color, "#000000", 0.1), color, edge);
+	});
+	mirrorPath(ctx, [0, -0.52], [
+		[0.22, -0.54, 0.36, -0.4],
+		[0.48, -0.26, 0.46, -0.02],
+		[0.45, 0.2, 0.3, 0.34],
+		[0.18, 0.56, 0, 0.6],
+	]);
+	fillOutlined(ctx, metalPaint(ctx, skin, -0.52, 0.6), color, edge);
+	ctx.fillStyle = rgba("#ffffff", 0.35);
+	ctx.beginPath();
+	ctx.moveTo(-0.07, -0.42);
+	ctx.lineTo(0.07, -0.42);
+	ctx.lineTo(0.1, 0.02);
+	ctx.lineTo(-0.1, 0.02);
+	ctx.closePath();
+	ctx.fill();
+	const ink = inkOf(color);
+	mirrored(ctx, () =>
+	{
+		ctx.beginPath();
+		ctx.moveTo(0.05, -0.15);
+		ctx.lineTo(0.36, roar ? -0.3 : -0.24);
+		ctx.lineTo(0.36, -0.18);
+		ctx.lineTo(0.1, -0.07);
+		ctx.closePath();
+		ctx.fillStyle = ink;
+		ctx.fill();
+		fillCircle(ctx, 0.22, -0.11, 0.045, mix(color, "#ffffff", 0.8));
+	});
+	ctx.beginPath();
+	ctx.moveTo(-0.13, 0.01);
+	ctx.lineTo(0.13, 0.01);
+	ctx.quadraticCurveTo(0.11, 0.12, 0, 0.15);
+	ctx.quadraticCurveTo(-0.11, 0.12, -0.13, 0.01);
+	ctx.closePath();
+	ctx.fillStyle = ink;
+	ctx.fill();
+	if (roar)
+	{
+		ctx.beginPath();
+		ctx.moveTo(-0.22, 0.2);
+		ctx.quadraticCurveTo(0, 0.14, 0.22, 0.2);
+		ctx.quadraticCurveTo(0.2, 0.5, 0, 0.53);
+		ctx.quadraticCurveTo(-0.2, 0.5, -0.22, 0.2);
+		ctx.closePath();
+		ctx.fillStyle = mix(MLBB_RED, "#000000", 0.55);
+		ctx.fill();
+		ctx.strokeStyle = ink;
+		ctx.lineWidth = edge;
+		ctx.stroke();
+		mirrored(ctx, () =>
+		{
+			ctx.fillStyle = MLBB_IVORY;
+			ctx.beginPath();
+			ctx.moveTo(0.07, 0.19);
+			ctx.lineTo(0.18, 0.2);
+			ctx.lineTo(0.12, 0.36);
+			ctx.closePath();
+			ctx.fill();
+			ctx.beginPath();
+			ctx.moveTo(0.05, 0.5);
+			ctx.lineTo(0.14, 0.47);
+			ctx.lineTo(0.08, 0.38);
+			ctx.closePath();
+			ctx.fill();
+		});
+		return;
+	}
+	ctx.strokeStyle = ink;
+	ctx.lineWidth = edge * 1.2;
+	ctx.beginPath();
+	ctx.moveTo(0, 0.15);
+	ctx.lineTo(0, 0.26);
+	ctx.moveTo(-0.16, 0.3);
+	ctx.quadraticCurveTo(-0.08, 0.34, 0, 0.26);
+	ctx.quadraticCurveTo(0.08, 0.34, 0.16, 0.3);
+	ctx.stroke();
+}
+
+/** Master: sư tử vàng gầm, bờm hai lớp như lửa. */
+function mlbbMaster(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		manePath(ctx, 0, 0.02, 0.62, 0.98, 14, -Math.PI / 2, 0.16);
+		fillOutlined(ctx, manePaint(ctx, mix(color, "#b45309", 0.3), 0.02, 0.98, 0.2), color, edge);
+		manePath(ctx, 0, 0.04, 0.5, 0.8, 12, -Math.PI / 2 + Math.PI / 12, 0.12);
+		fillOutlined(ctx, manePaint(ctx, color, 0.04, 0.8, 0.45), color, edge);
+		lionFace(ctx, color, edge, true);
+	});
+}
+
+/** Grandmaster: đầu sói trắng bạc trên khiên màu bậc (xanh), mắt xanh băng, viên đá xanh trên trán. */
+function mlbbGrandmaster(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		const navy = mix(color, "#0b1a3a", 0.45);
+		shieldPath(ctx, 0, 0.12, 0.68, 0.84);
+		fillOutlined(ctx, linearGradient(ctx, 0, -0.72, 0, 0.96, [mix(color, "#ffffff", 0.15), navy, mix(navy, "#000000", 0.45)]), color, edge);
+		shieldPath(ctx, 0, 0.12, 0.6, 0.76);
+		ctx.strokeStyle = MLBB_SILVER;
+		ctx.lineWidth = edge * 1.4;
+		ctx.stroke();
+		const fur = MLBB_SILVER;
+		mirrorPath(ctx, [0, -0.42], [
+			[0.12, -0.48],
+			[0.22, -0.72, 0.42, -0.97],
+			[0.52, -0.64, 0.52, -0.36],
+			[0.74, -0.16],
+			[0.54, -0.08],
+			[0.7, 0.14],
+			[0.44, 0.16],
+			[0.3, 0.42, 0.14, 0.66],
+			[0.08, 0.8, 0, 0.8],
+		]);
+		fillOutlined(ctx, metalPaint(ctx, fur, -0.97, 0.8), navy, edge);
+		mirrored(ctx, () =>
+		{
+			tracePath(ctx, [0.18, -0.52], [[0.26, -0.7, 0.38, -0.84], [0.44, -0.62, 0.42, -0.44]]);
+			ctx.closePath();
+			ctx.fillStyle = mix(navy, "#000000", 0.2);
+			ctx.fill();
+		});
+		ctx.beginPath();
+		ctx.moveTo(-0.34, -0.34);
+		ctx.lineTo(0, 0.02);
+		ctx.lineTo(0.34, -0.34);
+		ctx.lineTo(0.14, -0.4);
+		ctx.lineTo(0, -0.26);
+		ctx.lineTo(-0.14, -0.4);
+		ctx.closePath();
+		ctx.fillStyle = rgba("#64748b", 0.6);
+		ctx.fill();
+		mirrorPath(ctx, [0, -0.02], [[0.14, 0.04, 0.2, 0.2], [0.14, 0.48, 0.1, 0.62], [0.05, 0.7, 0, 0.7]]);
+		ctx.fillStyle = mix(fur, "#ffffff", 0.5);
+		ctx.fill();
+		mirrored(ctx, () => mlbbEye(ctx, 0.2, -0.1, 0.22, mix(MLBB_BLUE, "#ffffff", 0.3), edge));
+		ctx.beginPath();
+		ctx.moveTo(-0.1, 0.6);
+		ctx.quadraticCurveTo(0, 0.54, 0.1, 0.6);
+		ctx.quadraticCurveTo(0.06, 0.7, 0, 0.72);
+		ctx.quadraticCurveTo(-0.06, 0.7, -0.1, 0.6);
+		ctx.closePath();
+		ctx.fillStyle = INK;
+		ctx.fill();
+		mlbbStone(ctx, 0, -0.36, 0.09, 0.11, MLBB_SAPPHIRE, MLBB_SILVER, edge);
+	});
+}
+
+/** Epic: đầu tê giác bọc giáp xanh ngọc viền vàng, sừng lớn giữa mặt, trên tấm khiên lục giác. */
+function mlbbEpic(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		const gold = MLBB_GOLD;
+		const plate = mix(color, "#04121a", 0.72);
+		mirrorPath(ctx, [0, -0.9], [[0.74, -0.52], [0.74, 0.38], [0, 0.96]]);
+		fillOutlined(ctx, linearGradient(ctx, 0, -0.9, 0, 0.96, [mix(plate, "#ffffff", 0.12), plate]), color, edge);
+		mirrorPath(ctx, [0, -0.8], [[0.64, -0.46], [0.64, 0.33], [0, 0.85]]);
+		ctx.strokeStyle = gold;
+		ctx.lineWidth = edge * 1.5;
+		ctx.stroke();
+		mirrored(ctx, () =>
+		{
+			tracePath(ctx, [0.3, -0.42], [[0.46, -0.78, 0.66, -0.8], [0.62, -0.56, 0.48, -0.32]]);
+			ctx.closePath();
+			fillOutlined(ctx, metalPaint(ctx, color, -0.8, -0.32), color, edge);
+		});
+		mirrorPath(ctx, [0, -0.6], [
+			[0.3, -0.62, 0.46, -0.42],
+			[0.58, -0.2, 0.52, 0.1],
+			[0.44, 0.34, 0.3, 0.5],
+			[0.22, 0.72, 0, 0.74],
+		]);
+		fillOutlined(ctx, metalPaint(ctx, color, -0.62, 0.74), color, edge);
+		ctx.strokeStyle = gold;
+		ctx.lineWidth = Math.max(edge * 1.6, 0.07);
+		ctx.beginPath();
+		ctx.moveTo(-0.44, -0.3);
+		ctx.quadraticCurveTo(0, -0.52, 0.44, -0.3);
+		ctx.moveTo(-0.5, 0.02);
+		ctx.quadraticCurveTo(-0.36, -0.08, -0.26, 0.04);
+		ctx.moveTo(0.5, 0.02);
+		ctx.quadraticCurveTo(0.36, -0.08, 0.26, 0.04);
+		ctx.stroke();
+		mirrored(ctx, () => mlbbEye(ctx, 0.33, -0.12, 0.16, mix(gold, "#ffffff", 0.3), edge));
+		tracePath(ctx, [-0.2, 0.48], [[-0.2, -0.1, 0.05, -0.86], [0.12, -0.2, 0.2, 0.48], [0, 0.58, -0.2, 0.48]]);
+		ctx.closePath();
+		fillOutlined(ctx, linearGradient(ctx, 0, -0.86, 0, 0.5, [MLBB_IVORY, mix(MLBB_IVORY, gold, 0.5), mix(gold, "#92400e", 0.35)]), color, edge);
+		mirrored(ctx, () =>
+		{
+			ctx.beginPath();
+			ctx.ellipse(0.2, 0.58, 0.05, 0.035, 0.4, 0, TAU);
+			ctx.fillStyle = rgba(INK, 0.85);
+			ctx.fill();
+		});
+	});
+}
+
+/** Legend: sư tử đội vương miện trên khiên vàng đồng, cánh vàng hai bên, đá xanh ở vương miện và đáy khiên. */
+function mlbbLegend(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		mirrored(ctx, () => featherWing(ctx, MLBB_GOLD, { root: [0.4, 0.1], feathers: 5, from: -1, to: 0.35, longest: 0.62, shortest: 0.44, width: 0.24 }, edge));
+		shieldPath(ctx, 0, 0.16, 0.6, 0.8);
+		fillOutlined(ctx, metalPaint(ctx, mix(color, "#000000", 0.15), -0.64, 0.96), color, edge);
+		ctx.save();
+		ctx.translate(0, 0.08);
+		ctx.scale(0.8, 0.8);
+		manePath(ctx, 0, 0.02, 0.56, 0.84, 12, -Math.PI / 2, 0.08);
+		fillOutlined(ctx, manePaint(ctx, color, 0.02, 0.84, 0.3), color, edge / 0.8);
+		lionFace(ctx, color, edge / 0.8, false);
+		ctx.restore();
+		mlbbCrown(ctx, 0, -0.44, 0.34, 0.4, MLBB_GOLD, MLBB_BLUE, edge);
+		mlbbStone(ctx, 0, 0.78, 0.09, 0.08, MLBB_BLUE, color, edge);
+	});
+}
+
+/** Đầu rồng nhìn thẳng (không gồm sừng): gờ mày, vây má nhọn, mõm dài, mắt phát sáng màu `eye`. */
+function dragonHead(ctx: Ctx, gold: string, eye: string, edge: number): void
+{
+	mirrorPath(ctx, [0, -0.56], [
+		[0.2, -0.58, 0.32, -0.44],
+		[0.44, -0.38],
+		[0.66, -0.22],
+		[0.46, -0.1],
+		[0.62, 0.08],
+		[0.38, 0.12],
+		[0.28, 0.38, 0.2, 0.62],
+		[0.14, 0.8, 0, 0.8],
+	]);
+	fillOutlined(ctx, metalPaint(ctx, gold, -0.58, 0.8), gold, edge);
+	const ink = inkOf(gold);
+	ctx.strokeStyle = rgba(ink, 0.8);
+	ctx.lineWidth = edge;
+	ctx.beginPath();
+	ctx.moveTo(-0.3, -0.34);
+	ctx.quadraticCurveTo(0, -0.2, 0.3, -0.34);
+	ctx.moveTo(-0.16, 0.2);
+	ctx.quadraticCurveTo(0, 0.28, 0.16, 0.2);
+	ctx.stroke();
+	mirrored(ctx, () =>
+	{
+		drawGlow(ctx, 0.2, -0.12, 0.22, eye, 0.7);
+		mlbbEye(ctx, 0.2, -0.12, 0.24, mix(eye, "#ffffff", 0.25), edge);
+		ctx.beginPath();
+		ctx.ellipse(0.08, 0.66, 0.035, 0.05, 0.4, 0, TAU);
+		ctx.fillStyle = rgba(ink, 0.9);
+		ctx.fill();
+		ctx.fillStyle = MLBB_IVORY;
+		ctx.beginPath();
+		ctx.moveTo(0.14, 0.5);
+		ctx.lineTo(0.22, 0.48);
+		ctx.lineTo(0.17, 0.66);
+		ctx.closePath();
+		ctx.fill();
+	});
+}
+
+/** Sừng rồng thuôn nhọn ở nửa phải, từ gốc `base` uốn qua `bend` tới ngọn `tip`. */
+function dragonHorn(ctx: Ctx, gold: string, base: UnitPoint, tip: UnitPoint, bend: UnitPoint, width: number, edge: number): void
+{
+	const [bx, by] = base;
+	const [tx, ty] = tip;
+	const [kx, ky] = bend;
+	const length = Math.hypot(tx - bx, ty - by) || 1;
+	const nx = -(ty - by) / length;
+	const ny = (tx - bx) / length;
+	ctx.beginPath();
+	ctx.moveTo(bx + nx * width * 0.5, by + ny * width * 0.5);
+	ctx.quadraticCurveTo(kx + nx * width * 0.45, ky + ny * width * 0.45, tx, ty);
+	ctx.quadraticCurveTo(kx - nx * width * 0.2, ky - ny * width * 0.2, bx - nx * width * 0.5, by - ny * width * 0.5);
+	ctx.closePath();
+	fillOutlined(ctx, linearGradient(ctx, bx, by, tx, ty, [mix(gold, "#000000", 0.25), gold, mix(gold, "#ffffff", 0.55)]), gold, edge);
+}
+
+/** Cánh rồng (màng dơi) ở nửa phải: ba xương cánh vàng toả từ gốc, màng tím lượn sóng giữa các đầu xương. */
+function dragonWing(ctx: Ctx, membrane: string, bone: string, edge: number): void
+{
+	const root: UnitPoint = [0.3, 0.02];
+	const tips: UnitPoint[] = [[0.9, -0.62], [1, -0.08], [0.82, 0.42]];
+	tracePath(ctx, root, [
+		[0.52, -0.5, tips[0][0], tips[0][1]],
+		[0.8, -0.3, tips[1][0], tips[1][1]],
+		[0.78, 0.14, tips[2][0], tips[2][1]],
+		[0.56, 0.3, 0.32, 0.3],
+	]);
+	ctx.closePath();
+	fillOutlined(ctx, linearGradient(ctx, 0.3, 0, 1, 0, [mix(membrane, "#000000", 0.35), membrane, mix(membrane, "#ffffff", 0.3)]), membrane, edge);
+	ctx.strokeStyle = bone;
+	ctx.lineWidth = Math.max(edge * 1.3, 0.05);
+	ctx.beginPath();
+	for (const [tx, ty] of tips)
+	{
+		ctx.moveTo(root[0], root[1]);
+		ctx.quadraticCurveTo((root[0] + tx) / 2, (root[1] + ty) / 2 - 0.12, tx, ty);
+	}
+	ctx.stroke();
+}
+
+/** Mythic: rồng vàng mắt tím, sừng dài vuốt ngược, cánh màng màu bậc (tím) phía sau, đá tím trên trán. */
+function mlbbMythic(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		const gold = MLBB_GOLD;
+		const purple = mix(color, MLBB_PURPLE, 0.3);
+		mirrored(ctx, () => dragonWing(ctx, mix(purple, "#1e1b4b", 0.15), gold, edge));
+		mirrored(ctx, () => dragonHorn(ctx, gold, [0.24, -0.44], [0.74, -0.98], [0.3, -0.84], 0.26, edge));
+		dragonHead(ctx, gold, purple, edge);
+		mlbbStone(ctx, 0, -0.44, 0.08, 0.1, purple, gold, edge);
+	});
+}
+
+/** Mythical Glory: rồng vàng sừng lớn hình lưỡi liềm trên khiên tím viền đỏ và vàng, đá đỏ trên trán, ngôi sao trên đỉnh khiên. */
+function mlbbGlory(ctx: Ctx, x: number, y: number, size: number, color: string): void
+{
+	inUnit(ctx, x, y, size, edge =>
+	{
+		const gold = MLBB_GOLD;
+		shieldPath(ctx, 0, 0.1, 0.74, 0.86);
+		fillOutlined(ctx, linearGradient(ctx, 0, -0.76, 0, 0.96, [mix(color, "#ffffff", 0.2), color, mix(color, "#1e0538", 0.6)]), color, edge);
+		ctx.strokeStyle = MLBB_GLORY_RED;
+		ctx.lineWidth = Math.max(edge * 2.2, 0.1);
+		ctx.stroke();
+		shieldPath(ctx, 0, 0.1, 0.66, 0.78);
+		ctx.strokeStyle = gold;
+		ctx.lineWidth = Math.max(edge * 1.2, 0.05);
+		ctx.stroke();
+		shieldPath(ctx, 0, 0.1, 0.58, 0.7);
+		ctx.strokeStyle = rgba(gold, 0.7);
+		ctx.lineWidth = edge;
+		ctx.stroke();
+		starPath(ctx, 0, -0.84, 0.16, 0.07, 5);
+		fillOutlined(ctx, mix(gold, "#ffffff", 0.3), gold, edge);
+		mirrored(ctx, () =>
+		{
+			ctx.beginPath();
+			ctx.moveTo(0.16, -0.04);
+			ctx.bezierCurveTo(0.72, -0.06, 1.02, -0.4, 0.84, -0.98);
+			ctx.bezierCurveTo(0.76, -0.56, 0.54, -0.38, 0.14, -0.3);
+			ctx.closePath();
+			fillOutlined(ctx, linearGradient(ctx, 0.2, -0.2, 0.84, -0.98, [mix(gold, "#000000", 0.3), gold, mix(gold, "#ffffff", 0.6)]), gold, edge);
+		});
+		ctx.save();
+		ctx.translate(0, 0.14);
+		ctx.scale(0.78, 0.78);
+		dragonHead(ctx, gold, MLBB_RED, edge / 0.78);
+		ctx.restore();
+		mlbbStone(ctx, 0, -0.28, 0.09, 0.11, MLBB_RED, gold, edge);
+	});
+}
+
 const EMBLEMS: Readonly<Record<TierSetKey, readonly EmblemDrawer[]>> = {
 	"tu-tien": [tuTienSprout, tuTienFoundation, tuTienCore, tuTienInfant, tuTienFlame, tuTienVoid, tuTienTaiji, tuTienBolt],
 	"rank-game": [shieldWithChevrons(1), shieldWithChevrons(2), shieldWithChevrons(3), rankStarShield, rankGem, rankWingedGem, rankWingedShield, rankChallenger],
 	"kiem-hiep": [kiemHiepScroll, kiemHiepSword, kiemHiepFan, kiemHiepCrossed, kiemHiepWanderer, kiemHiepAura, kiemHiepToken, kiemHiepLeader],
 	"cay-xanh": [cayXanhSeed, cayXanhSprout, cayXanhSapling, cayXanhFlower, cayXanhFruit, cayXanhTree, cayXanhPine, cayXanhGreatTree],
 	"vu-tru": [vuTruMeteor, vuTruAsteroid, vuTruPlanet, vuTruStar, vuTruGiant, vuTruNebula, vuTruGalaxy, vuTruUniverse],
+	"mobile-legends": [mlbbWarrior, mlbbElite, mlbbMaster, mlbbGrandmaster, mlbbEpic, mlbbLegend, mlbbMythic, mlbbGlory],
 };
 
 function emblemFor(setKey: string | null, index: number | null): EmblemDrawer | null

@@ -546,14 +546,16 @@ describe("bảng điều khiển danh hiệu: dựng giao diện (hàm thuần)"
 		assert.ok(placeholder.startsWith("Chọn role cho ƯƯƯ") && placeholder.endsWith("…"), placeholder);
 	});
 
-	test("menu chọn bộ: 5 bộ, mô tả theo bộ, mặc định là bộ đang dùng", () =>
+	test("menu chọn bộ: 6 bộ, mô tả theo bộ, mặc định là bộ đang dùng", () =>
 	{
 		const panel = toJson(buildTierPanel({ set: TIER_SETS["kiem-hiep"], mappings: [] }));
 		const select = nodeById(panel, "tierui:set");
 		assert.equal(select.type, ComponentType.StringSelect);
-		assert.deepEqual(select.options?.map(option => option.value), ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru"]);
-		assert.deepEqual(select.options?.map(option => option.default ?? false), [false, false, true, false, false]);
+		assert.deepEqual(select.options?.map(option => option.value), ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru", "mobile-legends"]);
+		assert.deepEqual(select.options?.map(option => option.default ?? false), [false, false, true, false, false, false]);
 		assert.equal(select.options?.[1].description, TIER_SETS["rank-game"].description);
+		assert.equal(select.options?.[5].label, "Mobile Legends");
+		assert.equal(select.options?.[5].description, TIER_SETS["mobile-legends"].description);
 		assert.ok(panelText(panel).includes("🗡️ **Kiếm Khách** · từ Level 3"));
 	});
 

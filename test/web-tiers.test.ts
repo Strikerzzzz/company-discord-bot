@@ -274,14 +274,15 @@ function useAdminRole(t: TierTest): void
 
 describe("web: trang danh hiệu (GET)", () =>
 {
-	test("đủ 4 phần: bộ (5 thẻ, chọn sẵn bộ đang dùng), tên 8 bậc kèm dấu vân tay, role 8 bậc kèm role lúc vẽ, nút tạo/đồng bộ", async () =>
+	test("đủ 4 phần: bộ (6 thẻ, chọn sẵn bộ đang dùng), tên 8 bậc kèm dấu vân tay, role 8 bậc kèm role lúc vẽ, nút tạo/đồng bộ", async () =>
 	{
 		const t = createTierTest();
 		const auth = await login(t.harness, ADMIN_USER);
 		const body = await getPage(t, auth);
 
 		for (const path of ["/set", "/names", "/reset-names", "/roles", "/setup"]) assert.ok(body.includes(`method="post" action="${PAGE}${path}"`), path);
-		assert.equal(body.match(/name="set"/gu)?.length, 5);
+		assert.equal(body.match(/name="set"/gu)?.length, 6);
+		assert.ok(body.includes("value=\"mobile-legends\"") && body.includes("Mobile Legends") && body.includes("🐲 Vinh Quang"), "bộ Mobile Legends chọn được trên web");
 		assert.ok(body.includes("value=\"tu-tien\" checked") && body.includes("Đồng → ") && body.includes("🏆 Thách Đấu"));
 		assert.ok(body.includes("Bậc 3 · từ Level 6") && body.includes("✨ Tạo/đồng bộ role") && body.includes("Role được cập nhật khi thành viên nhắn tin"));
 

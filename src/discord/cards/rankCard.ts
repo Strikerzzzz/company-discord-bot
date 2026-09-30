@@ -16,6 +16,7 @@ import {
 	formatCount,
 	hashString,
 	linearGradient,
+	luminance,
 	measureSpaced,
 	mix,
 	mulberry32,
@@ -28,7 +29,7 @@ import {
 import { ensureFonts, font } from "./fonts";
 import { drawBadge, drawFlame, drawGroup, drawRising, drawSparkle, drawStar, drawTrophy } from "./icons";
 import { CardStyle, cardStyle, RankScene } from "./styles";
-import { CardTexts, cardTexts, drawTierPill, isTopTier, PALETTE, tierColors, tierIndex, tierName, tierSetKeyOf } from "./theme";
+import { CardTexts, cardTexts, drawTierPill, isTopTier, PALETTE, tierBorderColor, tierColors, tierIndex, tierName, tierSetKeyOf } from "./theme";
 import { RankCardData, RenderedCard } from "./types";
 
 /*
@@ -207,6 +208,13 @@ function buildTiles(data: RankCardData, accent: string, texts: CardTexts): Tile[
 	];
 }
 
+/** Màu bậc dùng cho chữ nhỏ trên nền tối: màu quá tối (ví dụ tím đậm) được pha sáng thêm cho đủ tương phản, màu sáng giữ nguyên. */
+export function readableOnDark(color: string): string
+{
+	const light = luminance(color);
+	return light >= 0.5 ? color : mix(color, "#ffffff", Math.min(0.6, (0.5 - light) * 1.6));
+}
+
 function toView(data: RankCardData): RankView
 {
 	const name = cleanDisplayName(data.displayName);
@@ -233,7 +241,7 @@ function toView(data: RankCardData): RankView
 		totalXp: nonNegative(data.level?.totalXp ?? 0),
 		ratio: xpForNextLevel > 0 ? clamp(xpIntoLevel / xpForNextLevel, 0, 1) : 0,
 		teams,
-		tiles: buildTiles(data, colors.color, texts),
+		tiles: buildTiles(data, readableOnDark(colors.color), texts),
 		seed: hashString(`${name}|${setKey ?? "?"}|${data.tier?.key}`),
 	};
 }
@@ -274,7 +282,9 @@ function drawCardBorder(ctx: Ctx, view: RankView): void
 	if (view.top)
 	{
 		const { primary, secondary, light } = view.style.top;
-		strokeRoundedRect(ctx, 2, 2, WIDTH - 4, HEIGHT - 4, CARD_RADIUS - 2, linearGradient(ctx, 0, 0, WIDTH, HEIGHT, [light, primary, secondary, primary, light]), 4);
+		const border = tierBorderColor(view.tier);
+		const stops = border ? [border, mix(border, "#ffffff", 0.3), border, mix(border, primary, 0.45), border] : [light, primary, secondary, primary, light];
+		strokeRoundedRect(ctx, 2, 2, WIDTH - 4, HEIGHT - 4, CARD_RADIUS - 2, linearGradient(ctx, 0, 0, WIDTH, HEIGHT, stops), border ? 5 : 4);
 		strokeRoundedRect(ctx, 9, 9, WIDTH - 18, HEIGHT - 18, CARD_RADIUS - 8, rgba(primary, 0.35), 1);
 		view.style.corners(ctx, WIDTH, HEIGHT);
 		return;

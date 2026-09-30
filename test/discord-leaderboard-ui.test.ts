@@ -492,6 +492,7 @@ describe("thẻ rank và phần chữ đi kèm", () =>
 			"kiem-hiep": "🛡️ Danh hiệu **Hiệp Sĩ** · Level 7",
 			"cay-xanh": "🌿 Giai đoạn **Cây Non** · Level 7",
 			"vu-tru": "🌍 Thiên thể **Hành Tinh** · Level 7",
+			"mobile-legends": "🦁 Rank **Cao Thủ** · Level 7",
 		};
 		for (const set of Object.values(TIER_SETS))
 		{
