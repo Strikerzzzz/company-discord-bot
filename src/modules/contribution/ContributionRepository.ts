@@ -54,6 +54,16 @@ const SELECT_WITH_VOTES = `
 	) AS votes
 	FROM contributions c`;
 
+/** Tham số lọc danh sách contribution; `author` null = mọi tác giả. */
+export interface ContributionFilterParams
+{
+	guild: string;
+	author: string | null;
+	status: "active" | "removed" | "all";
+}
+
+const CONTRIBUTION_FILTER = "c.guild_id = @guild AND (@author IS NULL OR c.author_id = @author) AND (@status = 'all' OR c.status = @status)";
+
 /** Truy cập SQL cho contribution; không chứa quy tắc nghiệp vụ. */
 export class ContributionRepository
 {
@@ -70,6 +80,8 @@ export class ContributionRepository
 	private readonly selectVote: Statement<[number, string], { event_id: number; voided_at: number | null }>;
 	private readonly insertVoteRow: Statement<[number, string, number, number]>;
 	private readonly deleteVoteRow: Statement<[number, string]>;
+	private readonly selectPage: Statement<[ContributionFilterParams & { limit: number; offset: number }], ContributionRow>;
+	private readonly countPage: Statement<[ContributionFilterParams], { n: number }>;
 
 	constructor(db: Db)
 	{
@@ -94,6 +106,19 @@ export class ContributionRepository
 			WHERE v.contribution_id = ? AND v.voter_id = ?`);
 		this.insertVoteRow = db.prepare("INSERT INTO contribution_votes (contribution_id, voter_id, event_id, created_at) VALUES (?, ?, ?, ?)");
 		this.deleteVoteRow = db.prepare("DELETE FROM contribution_votes WHERE contribution_id = ? AND voter_id = ?");
+		this.selectPage = db.prepare(`${SELECT_WITH_VOTES} WHERE ${CONTRIBUTION_FILTER} ORDER BY c.created_at DESC, c.id DESC LIMIT @limit OFFSET @offset`);
+		this.countPage = db.prepare(`SELECT COUNT(*) AS n FROM contributions c WHERE ${CONTRIBUTION_FILTER}`);
+	}
+
+	countFiltered(filter: ContributionFilterParams): number
+	{
+		return this.countPage.get(filter)?.n ?? 0;
+	}
+
+	/** Một trang contribution khớp bộ lọc, mới nhất trước. */
+	listFiltered(filter: ContributionFilterParams, limit: number, offset: number): ContributionRow[]
+	{
+		return this.selectPage.all({ ...filter, limit, offset });
 	}
 
 	/** Trả về id của contribution vừa tạo. */

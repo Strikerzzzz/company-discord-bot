@@ -1,4 +1,3 @@
-import { basename } from "path";
 import {
 	ChatInputCommandInteraction,
 	GuildMember,
@@ -8,49 +7,40 @@ import {
 	SlashCommandSubcommandBuilder,
 } from "discord.js";
 import Command from "../../classes/Command";
-import { formatNumber, relativeTime, userMention } from "../../discord/format";
+import {
+	AdjustTarget,
+	adjustMemberContribution,
+	adjustMemberXp,
+	assertManualBackupAllowed,
+	BOT_TARGET,
+	createManualBackup,
+	DEFAULT_ADMIN_ACTIONS,
+	MAX_ADJUST,
+	normalizeReason,
+	REASON_MAX_LENGTH,
+	RECENT_XP_EVENTS,
+	removeContribution,
+	RESET_CONFIRMATION,
+	resetAllContribution,
+	resetAllXp,
+	resetMemberContribution,
+	resetMemberXp,
+	syncMemberTierRoles,
+} from "../../discord/adminOps";
 import { requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
-import { refreshContributionMessage } from "../../discord/messages";
-import { syncTierRoles } from "../../discord/roleSync";
-import {
-	buildAuditEmbed,
-	buildStatsEmbed,
-	buildXpDetailEmbed,
-	ephemeral,
-	ephemeralEmbed,
-	inlineText,
-	tierRoleSyncLine,
-} from "../../discord/views/admin";
-import { levelInfo } from "../../modules/activity/levels";
+import { buildAuditEmbed, buildStatsEmbed, buildXpDetailEmbed, ephemeral, ephemeralEmbed } from "../../discord/views/admin";
 import { AppServices } from "../../services";
 import { UserError } from "../../shared/errors";
 
-/** Chuỗi phải nhập đúng để reset toàn server. */
-const RESET_CONFIRMATION = "XAC NHAN";
-const MAX_ADJUST = 1_000_000;
-const REASON_MAX_LENGTH = 200;
-const RECENT_XP_EVENTS = 10;
 const AUDIT_DEFAULT = 10;
 const AUDIT_MAX = 25;
-const TITLE_DISPLAY_MAX = 100;
-/** Khoảng tối thiểu giữa hai lần sao lưu thủ công, chống spam lệnh làm đầy ổ đĩa. */
-const MANUAL_BACKUP_COOLDOWN_MS = 10 * 60 * 1000;
-/** Lý do ghi vào audit log của Discord khi bot đổi role danh hiệu sau thao tác của admin (DEC-031). */
-const TIER_ROLE_REASON = "Danh hiệu theo level (admin điều chỉnh XP)";
-const RESET_ALL_TIER_ROLE_NOTE = "Role danh hiệu sẽ tự cập nhật khi từng thành viên nhắn tin được XP.";
 
 interface AdminContext
 {
 	interaction: ChatInputCommandInteraction;
 	guildId: string;
 	actorId: string;
-}
-
-interface Target
-{
-	userId: string;
-	roleIds: string[];
 }
 
 type SubcommandSetup = (sub: SlashCommandSubcommandBuilder) => SlashCommandSubcommandBuilder;
@@ -115,25 +105,21 @@ function resetAllSubcommand(description: string): SubcommandSetup
 }
 
 /** Thành viên được thao tác và role hiện có của họ (snapshot team). Không cho thao tác với bot. */
-function targetOf(interaction: ChatInputCommandInteraction): Target
+function targetOf({ interaction, guildId, actorId }: AdminContext): AdjustTarget
 {
 	const user = interaction.options.getUser("thanh-vien", true);
-	if (user.bot) throw new UserError("Không thể thao tác với bot.");
-	return { userId: user.id, roleIds: roleIdsOf(interaction.options.getMember("thanh-vien")) };
+	if (user.bot) throw new UserError(BOT_TARGET);
+	return { guildId, userId: user.id, roleIds: roleIdsOf(interaction.options.getMember("thanh-vien")), actorId };
 }
 
 function reasonOf(interaction: ChatInputCommandInteraction): string | null
 {
-	const reason = interaction.options.getString("ly-do")?.trim() ?? "";
-	return reason.length > 0 ? reason : null;
+	return normalizeReason(interaction.options.getString("ly-do"));
 }
 
-function assertConfirmed(interaction: ChatInputCommandInteraction): void
+function confirmationOf(interaction: ChatInputCommandInteraction): string
 {
-	if (interaction.options.getString("xac-nhan", true).trim() !== RESET_CONFIRMATION)
-	{
-		throw new UserError(`Để reset toàn bộ, nhập chính xác: ${RESET_CONFIRMATION}`);
-	}
+	return interaction.options.getString("xac-nhan", true);
 }
 
 // Lệnh quản trị điểm, thống kê, nhật ký và sao lưu. Hai lớp quyền: ManageGuild (Discord) + adminOnly (dispatcher).
@@ -242,50 +228,34 @@ export default class AdminCmd extends Command
 		}
 	}
 
-	private async viewXp({ interaction, guildId }: AdminContext): Promise<void>
+	private async viewXp(context: AdminContext): Promise<void>
 	{
-		const { userId } = targetOf(interaction);
+		const { userId } = targetOf(context);
+		const { guildId } = context;
 		const profile = this.services.activity.getProfile(guildId, userId);
 		const events = this.services.activity.recentEvents(guildId, userId, RECENT_XP_EVENTS);
-		await interaction.reply(ephemeralEmbed(buildXpDetailEmbed(profile, events, this.services.tierSets.current(guildId))));
+		await context.interaction.reply(ephemeralEmbed(buildXpDetailEmbed(profile, events, this.services.tierSets.current(guildId))));
 	}
 
-	private async adjustXp({ interaction, guildId, actorId }: AdminContext, sign: 1 | -1): Promise<void>
+	private async adjustXp(context: AdminContext, sign: 1 | -1): Promise<void>
 	{
-		const target = targetOf(interaction);
+		const { interaction } = context;
 		const amount = interaction.options.getInteger("so-xp", true);
-		const { totalXp } = this.services.activity.adjustXp({
-			guildId,
-			userId: target.userId,
-			delta: sign * amount,
-			actorId,
-			reason: reasonOf(interaction),
-			roleIds: target.roleIds,
-		});
-		const action = sign > 0
-			? `Đã cộng ${formatNumber(amount)} XP cho ${userMention(target.userId)}`
-			: `Đã trừ ${formatNumber(amount)} XP của ${userMention(target.userId)}`;
-		const text = `${action}. Tổng: ${formatNumber(totalXp)} XP.`;
+		const { text, totalXp } = adjustMemberXp(this.services, targetOf(context), sign, amount, reasonOf(interaction));
 		await interaction.reply(ephemeral(text));
 		await this.syncTargetTierRoles(interaction, totalXp, text);
 	}
 
-	private async resetUserXp({ interaction, guildId, actorId }: AdminContext): Promise<void>
+	private async resetUserXp(context: AdminContext): Promise<void>
 	{
-		const { userId } = targetOf(interaction);
-		const { voidedEvents } = this.services.activity.resetUser(guildId, userId, actorId);
-		const text = `Đã reset XP của ${userMention(userId)} (huỷ ${formatNumber(voidedEvents)} biến động). Tổng: 0 XP.`;
-		await interaction.reply(ephemeral(text));
-		await this.syncTargetTierRoles(interaction, 0, text);
+		const { text, totalXp } = resetMemberXp(this.services, targetOf(context));
+		await context.interaction.reply(ephemeral(text));
+		await this.syncTargetTierRoles(context.interaction, totalXp, text);
 	}
 
 	private async resetAllXp({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
-		assertConfirmed(interaction);
-		const { voidedEvents, members } = this.services.activity.resetAll(guildId, actorId);
-		await interaction.reply(ephemeral(
-			`Đã reset XP toàn server: huỷ ${formatNumber(voidedEvents)} biến động của ${formatNumber(members)} thành viên.\n${RESET_ALL_TIER_ROLE_NOTE}`,
-		));
+		await interaction.reply(ephemeral(resetAllXp(this.services, guildId, actorId, confirmationOf(interaction))));
 	}
 
 	/**
@@ -296,59 +266,33 @@ export default class AdminCmd extends Command
 	private async syncTargetTierRoles(interaction: ChatInputCommandInteraction, totalXp: number, text: string): Promise<void>
 	{
 		const member = interaction.options.getMember("thanh-vien");
-		if (!(member instanceof GuildMember)) return;
-
-		const result = await syncTierRoles(member, levelInfo(totalXp).level, this.services.tierRoles, TIER_ROLE_REASON);
-		const line = tierRoleSyncLine(result);
+		const line = await syncMemberTierRoles(DEFAULT_ADMIN_ACTIONS, this.services, member instanceof GuildMember ? member : null, totalXp);
 		if (line !== null) await interaction.editReply(`${text}\n${line}`);
 	}
 
-	private async adjustContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
+	private async adjustContribution(context: AdminContext): Promise<void>
 	{
-		const target = targetOf(interaction);
+		const { interaction } = context;
 		const delta = interaction.options.getInteger("diem", true);
-		if (delta === 0) throw new UserError("Số điểm phải khác 0.");
-		const { score } = this.services.contributions.adjust({
-			guildId,
-			userId: target.userId,
-			delta,
-			actorId,
-			reason: reasonOf(interaction),
-			roleIds: target.roleIds,
-		});
-		const action = delta > 0
-			? `Đã cộng ${formatNumber(delta)} điểm contribution cho ${userMention(target.userId)}`
-			: `Đã trừ ${formatNumber(-delta)} điểm contribution của ${userMention(target.userId)}`;
-		await interaction.reply(ephemeral(`${action}. Tổng: ${formatNumber(score)} điểm.`));
+		await interaction.reply(ephemeral(adjustMemberContribution(this.services, targetOf(context), delta, reasonOf(interaction))));
 	}
 
 	private async removeContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
-		const id = interaction.options.getInteger("id", true);
-		const removed = this.services.contributions.remove(guildId, id, actorId);
-		await interaction.reply(ephemeral(
-			`Đã gỡ contribution #${removed.id} "${inlineText(removed.title, TITLE_DISPLAY_MAX)}" của ${userMention(removed.authorId)}. Toàn bộ điểm của contribution này đã bị huỷ.`,
-		));
+		const { text, removed } = removeContribution(this.services, guildId, interaction.options.getInteger("id", true), actorId);
+		await interaction.reply(ephemeral(text));
 		// Sau khi trả lời mới sửa message công khai sang "Đã bị gỡ" và bỏ nút; lỗi chỉ ghi cảnh báo.
-		await refreshContributionMessage(this.client, removed);
+		await DEFAULT_ADMIN_ACTIONS.refreshContribution(this.client, removed);
 	}
 
-	private async resetUserContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
+	private async resetUserContribution(context: AdminContext): Promise<void>
 	{
-		const { userId } = targetOf(interaction);
-		const { voidedEvents } = this.services.contributions.resetUser(guildId, userId, actorId);
-		await interaction.reply(ephemeral(
-			`Đã reset điểm contribution của ${userMention(userId)} (huỷ ${formatNumber(voidedEvents)} biến động). Tổng: 0 điểm.`,
-		));
+		await context.interaction.reply(ephemeral(resetMemberContribution(this.services, targetOf(context))));
 	}
 
 	private async resetAllContribution({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
-		assertConfirmed(interaction);
-		const { voidedEvents, members } = this.services.contributions.resetAll(guildId, actorId);
-		await interaction.reply(ephemeral(
-			`Đã reset điểm contribution toàn server: huỷ ${formatNumber(voidedEvents)} biến động của ${formatNumber(members)} thành viên.`,
-		));
+		await interaction.reply(ephemeral(resetAllContribution(this.services, guildId, actorId, confirmationOf(interaction))));
 	}
 
 	private async showStats({ interaction, guildId }: AdminContext): Promise<void>
@@ -364,21 +308,9 @@ export default class AdminCmd extends Command
 
 	private async backup({ interaction, guildId, actorId }: AdminContext): Promise<void>
 	{
-		const { backup, clock } = this.services;
-		const latest = backup.latestBackupAt("manual");
-		const now = clock.now();
-		// Bản mang thời điểm tương lai (đồng hồ từng bị lệch) không chặn lệnh.
-		if (latest !== null && latest <= now && now - latest < MANUAL_BACKUP_COOLDOWN_MS)
-		{
-			throw new UserError(
-				`Vừa có bản sao lưu thủ công ${relativeTime(latest)}. Mỗi 10 phút chỉ tạo được một bản, vui lòng thử lại ${relativeTime(latest + MANUAL_BACKUP_COOLDOWN_MS)}.`,
-			);
-		}
-
+		assertManualBackupAllowed(this.services);
 		// Sao lưu có thể mất vài giây: defer trước để không quá hạn 3 giây của interaction.
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-		const file = basename(await backup.createBackup("manual"));
-		this.services.audit.record(guildId, actorId, "backup.manual", null, { file });
-		await interaction.editReply(`Đã sao lưu database: \`${file}\`.`);
+		await interaction.editReply(await createManualBackup(this.services, guildId, actorId));
 	}
 }

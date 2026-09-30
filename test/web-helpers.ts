@@ -3,9 +3,13 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ChannelType, Collection, PermissionFlagsBits, PermissionsBitField } from "discord.js";
-import type { Guild, Role } from "discord.js";
+import type { Guild, GuildMember, Role } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
+import type { AdminActions } from "../src/discord/adminOps";
 import type { LiveBoardActions } from "../src/discord/configOps";
+import { UNKNOWN_MEMBER_NAME } from "../src/discord/memberDirectory";
+import type { MemberDisplay } from "../src/discord/memberDirectory";
+import type { TierRoleSyncResult } from "../src/discord/roleSync";
 import { openDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
 import { AppServices, createServices } from "../src/services";
@@ -44,6 +48,8 @@ export interface FakeMemberSpec
 	displayName: string;
 	permissions: bigint[];
 	roleIds: string[];
+	/** Tài khoản bot (mặc định false). */
+	bot?: boolean;
 }
 
 export interface FakeChannelSpec
@@ -86,7 +92,7 @@ function memberObject(world: WebWorld, spec: FakeMemberSpec): object
 	}
 	return {
 		id: spec.id,
-		user: { id: spec.id, username: spec.displayName },
+		user: { id: spec.id, username: spec.displayName, bot: spec.bot ?? false },
 		displayName: spec.displayName,
 		guild: world.guild,
 		permissions: new PermissionsBitField(spec.permissions),
@@ -121,6 +127,8 @@ export function addChannel(world: WebWorld, spec: FakeChannelSpec): void
 		guild: world.guild,
 		guildId: world.guild.id,
 		isThread: () => false,
+		isDMBased: () => false,
+		isTextBased: () => spec.type !== ChannelType.GuildCategory,
 		permissionsFor(member: { id: string }): PermissionsBitField
 		{
 			const own = spec.permissionsByMember?.[member.id];
@@ -184,6 +192,7 @@ export function createWorld(): WebWorld
 		displayName: "ezOne Bot",
 		permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageRoles],
 		roleIds: [],
+		bot: true,
 	});
 	const botSpec = members.get(BOT_ID);
 	if (botSpec) guild.members.me = memberObject(world, botSpec);
@@ -199,6 +208,32 @@ export interface WebHarness
 	deps: WebDeps;
 	/** Các lần gọi thao tác Bảng vàng giả ("refresh:<guild>", "remove:<channel>"). */
 	boardCalls: string[];
+	/**
+	 * Các lần gọi AdminActions giả: "refreshContribution:<id>", "refreshPoll:<id>", "syncTierRoles:<userId>:<level>",
+	 * "search:<query>:<limit>".
+	 */
+	adminCalls: string[];
+	/** Kết quả đồng bộ role danh hiệu giả trả về (mặc định: không đổi gì). Test gán để giả lập role được thêm/bỏ/bỏ qua. */
+	tierSync: { result: TierRoleSyncResult };
+}
+
+let backupDirCounter = 0;
+
+/**
+ * Tên hiển thị giả theo thành viên của server giả; người không có trong server là "Người dùng không rõ" (inGuild false), như
+ * MemberDirectory khi tra không được.
+ */
+function fakeDisplays(world: WebWorld, userIds: readonly string[]): Map<string, MemberDisplay>
+{
+	const result = new Map<string, MemberDisplay>();
+	for (const userId of userIds)
+	{
+		const spec = world.members.get(userId);
+		result.set(userId, spec
+			? { displayName: spec.displayName, avatarUrl: `https://cdn.discordapp.com/embed/avatars/${Number(userId.slice(-1)) % 5}.png`, inGuild: true }
+			: { displayName: UNKNOWN_MEMBER_NAME, avatarUrl: null, inGuild: false });
+	}
+	return result;
 }
 
 /** Bot giả đang sẵn sàng; OAuth2 giả: code "code-<userId>" đổi được thành người dùng đó. */
@@ -207,11 +242,22 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 	const db = openDatabase(":memory:");
 	runMigrations(db);
 	const clock = new FakeClock();
-	const services = createServices(db, { clock, backupDir: path.join(tmpdir(), "web-test-backups-unused"), backupKeep: 3 });
+	backupDirCounter += 1;
+	const backupDir = path.join(tmpdir(), `web-test-backups-${process.pid}-${backupDirCounter}`);
+	const services = createServices(db, { clock, backupDir, backupKeep: 3 });
 	const world = createWorld();
 	const boardCalls: string[] = [];
+	const adminCalls: string[] = [];
+	const tierSync = { result: { added: [], removed: [], skipped: [] } as TierRoleSyncResult };
 	const client = {
 		guilds: { cache: new Collection([[GUILD, world.guild]]) },
+		channels: {
+			fetch: (channelId: string): Promise<object | null> =>
+			{
+				const channel = world.channels.get(channelId);
+				return channel ? Promise.resolve(channel) : Promise.reject(Object.assign(new Error("Unknown Channel"), { status: 404, code: 10003 }));
+			},
+		},
 		application: { id: APP_ID },
 		user: { id: BOT_ID, username: "ezOne Bot" },
 	} as unknown as DiscordClient;
@@ -227,6 +273,34 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 			return Promise.resolve(true);
 		},
 	};
+	const adminActions: AdminActions = {
+		refreshContribution: (_client, contribution) =>
+		{
+			adminCalls.push(`refreshContribution:${contribution.id}`);
+			return Promise.resolve(true);
+		},
+		refreshPoll: (_client, poll) =>
+		{
+			adminCalls.push(`refreshPoll:${poll.id}`);
+			return Promise.resolve(true);
+		},
+		syncTierRoles: (member, level) =>
+		{
+			adminCalls.push(`syncTierRoles:${member.id}:${level}`);
+			return Promise.resolve(tierSync.result);
+		},
+		searchMembers: (guild, query, limit) =>
+		{
+			adminCalls.push(`search:${query}:${limit}`);
+			const needle = query.toLowerCase();
+			const found = [...world.members.values()]
+				.filter(spec => spec.displayName.toLowerCase().startsWith(needle))
+				.slice(0, limit)
+				.map(spec => memberObject(world, spec) as GuildMember);
+			return Promise.resolve(found);
+		},
+		displays: (_client, _guild, userIds) => Promise.resolve(fakeDisplays(world, userIds)),
+	};
 	const deps: WebDeps = {
 		client,
 		services,
@@ -235,8 +309,9 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		fetch: fakeDiscordFetch,
 		clock,
 		liveBoardActions,
+		adminActions,
 	};
-	return { handler: createWebHandler(deps, modules), services, clock, world, deps, boardCalls };
+	return { handler: createWebHandler(deps, modules), services, clock, world, deps, boardCalls, adminCalls, tierSync };
 }
 
 function jsonResponse(status: number, body: unknown): Response

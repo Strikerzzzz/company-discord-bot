@@ -11,17 +11,30 @@ export interface NavItem
 	/** Phần sau /g/<guildId>. */
 	path: string;
 	label: string;
+	/** Nhóm trong menu; tên nhóm hiện trước mục đầu tiên của nhóm. */
+	group: string;
 }
 
+const DATA_GROUP = "Dữ liệu";
+const CONFIG_GROUP = "Cấu hình";
+const SYSTEM_GROUP = "Hệ thống";
+
 export const NAV_ITEMS: readonly NavItem[] = [
-	{ key: "overview", path: "", label: "🏠 Tổng quan" },
-	{ key: "channels", path: "/channels", label: "📺 Kênh tính XP" },
-	{ key: "teams", path: "/teams", label: "👥 Team" },
-	{ key: "settings", path: "/settings", label: "⭐ Cài đặt điểm" },
-	{ key: "roles", path: "/roles", label: "🔐 Quyền" },
-	{ key: "board", path: "/board", label: "🏆 Bảng vàng" },
-	{ key: "tiers", path: "/tiers", label: "🏅 Danh hiệu" },
-	{ key: "audit", path: "/audit", label: "📜 Nhật ký" },
+	{ key: "overview", path: "", label: "🏠 Tổng quan", group: DATA_GROUP },
+	{ key: "members", path: "/members", label: "👤 Thành viên", group: DATA_GROUP },
+	{ key: "leaderboard", path: "/leaderboard", label: "📊 Bảng xếp hạng", group: DATA_GROUP },
+	{ key: "contributions", path: "/contributions", label: "🤝 Contribution", group: DATA_GROUP },
+	{ key: "polls", path: "/polls", label: "🗳️ Vote", group: DATA_GROUP },
+	{ key: "stats", path: "/stats", label: "📈 Thống kê", group: DATA_GROUP },
+	{ key: "channels", path: "/channels", label: "📺 Kênh tính XP", group: CONFIG_GROUP },
+	{ key: "teams", path: "/teams", label: "👥 Team", group: CONFIG_GROUP },
+	{ key: "settings", path: "/settings", label: "⭐ Cài đặt điểm", group: CONFIG_GROUP },
+	{ key: "roles", path: "/roles", label: "🔐 Quyền", group: CONFIG_GROUP },
+	{ key: "board", path: "/board", label: "🏆 Bảng vàng", group: CONFIG_GROUP },
+	{ key: "tiers", path: "/tiers", label: "🏅 Danh hiệu", group: CONFIG_GROUP },
+	{ key: "reset", path: "/reset", label: "♻️ Reset điểm", group: SYSTEM_GROUP },
+	{ key: "backup", path: "/backup", label: "💾 Sao lưu", group: SYSTEM_GROUP },
+	{ key: "audit", path: "/audit", label: "📜 Nhật ký", group: SYSTEM_GROUP },
 ];
 
 /** URL tuyệt đối trong trang (bắt đầu bằng "/") tới trang `path` của guild hiện tại. */
@@ -65,7 +78,7 @@ export function renderPage(ctx: GuildPageContext, page: PageSpec, status = 200):
 	session.flash = null;
 	const botName = deps.client.user?.username ?? "Bot";
 	const otherGuilds = deps.guildIds.filter(id => id !== guild.id && deps.client.guilds.cache.has(id));
-	const nav = NAV_ITEMS.map(item => html`<a href="${guildUrl(ctx, item.path)}"${item.key === page.nav ? html` class="active"` : ""}>${item.label}</a>`);
+	const nav = NAV_ITEMS.map((item, index) => html`${NAV_ITEMS[index - 1]?.group === item.group ? "" : html`<div class="nav-group">${item.group}</div>`}<a href="${guildUrl(ctx, item.path)}"${item.key === page.nav ? html` class="active"` : ""}>${item.label}</a>`);
 	const switcher = otherGuilds.map(id => html` · <a href="/g/${id}">${deps.client.guilds.cache.get(id)?.name ?? id}</a>`);
 
 	return htmlResponse(html`<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

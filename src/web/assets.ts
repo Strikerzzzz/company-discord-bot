@@ -22,6 +22,19 @@ code { background: #eef0f8; padding: 1px 5px; border-radius: 4px; font-size: 0.9
 .sidebar a:hover { background: #eef0fb; text-decoration: none; }
 .sidebar a.active { background: var(--brand); color: #fff; font-weight: 600; }
 .sidebar .guild { padding: 4px 12px 12px; font-weight: 600; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+.sidebar .nav-group { padding: 12px 12px 4px; color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.pager { display: flex; gap: 12px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.pager .current { color: var(--muted); }
+.user-cell { display: inline-flex; align-items: center; gap: 8px; }
+.user-cell img { width: 28px; height: 28px; border-radius: 50%; }
+.filters { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+.filters .field { margin-bottom: 0; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tabs a { padding: 6px 12px; border-radius: 999px; background: #eceef6; color: var(--text); font-weight: 600; font-size: 14px; }
+.tabs a.active { background: var(--brand); color: #fff; }
+.danger-zone { border-color: #f5c2bf; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+textarea { font: inherit; padding: 8px 10px; border: 1px solid #cfd3e3; border-radius: 8px; background: #fff; color: var(--text); width: 100%; max-width: 420px; }
 main { flex: 1; padding: 24px 32px; max-width: 1100px; }
 h1 { font-size: 24px; margin: 0 0 6px; }
 h2 { font-size: 18px; margin: 0 0 12px; }
@@ -71,6 +84,7 @@ table.table input[type=number] { width: 100%; max-width: 120px; }
 	.shell { flex-direction: column; }
 	.sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; }
 	.sidebar .guild { width: 100%; }
+	.sidebar .nav-group { width: 100%; padding: 6px 12px 0; }
 	main { padding: 16px; max-width: 100vw; }
 	table.table th, table.table td { padding: 6px; }
 	table.table input[type=number] { min-width: 64px; }

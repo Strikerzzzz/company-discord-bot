@@ -3,6 +3,7 @@
 import type { Guild, GuildMember } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
 import type { WebConfig } from "../config";
+import type { AdminActions } from "../discord/adminOps";
 import type { LiveBoardActions } from "../discord/configOps";
 import type { AppServices } from "../services";
 import type { Clock } from "../shared/clock";
@@ -22,6 +23,11 @@ export interface WebDeps
 	clock: Clock;
 	/** Đăng/xoá message Bảng vàng (dùng chung với lệnh Discord); test thay bằng hàm giả. */
 	liveBoardActions: LiveBoardActions;
+	/**
+	 * Tác dụng phụ lên Discord của thao tác quản trị (DEC-041, src/discord/adminOps.ts): sửa message contribution/vote, đồng bộ
+	 * role danh hiệu, tìm thành viên, tên hiển thị. Test thay bằng hàm giả.
+	 */
+	adminActions: AdminActions;
 }
 
 /**
@@ -43,7 +49,22 @@ export interface GuildPageContext
 }
 
 /** Mục menu bên trái; mỗi trang một khoá. */
-export type NavKey = "overview" | "channels" | "teams" | "settings" | "roles" | "board" | "tiers" | "audit";
+export type NavKey =
+	| "overview"
+	| "members"
+	| "leaderboard"
+	| "contributions"
+	| "polls"
+	| "stats"
+	| "channels"
+	| "teams"
+	| "settings"
+	| "roles"
+	| "board"
+	| "tiers"
+	| "reset"
+	| "backup"
+	| "audit";
 
 /**
  * Một route của trang guild, gắn dưới `/g/<guildId>`. `path` là phần sau đó: "" (tổng quan) hoặc "/channels", ...
@@ -56,12 +77,19 @@ export type NavKey = "overview" | "channels" | "teams" | "settings" | "roles" | 
  * - Mọi form POST phải có `csrfField(ctx)`. Đọc form bằng `ctx.req.form`. Không bao giờ tin giá trị form: kiểm tra lại ID kênh/role
  *   có trong `ctx.guild` và đúng loại; số đi qua `parseFormNumber` hoặc giới hạn của service.
  * - Form có thể bị hai admin mở cùng lúc: đặt giá trị lúc vẽ vào input ẩn và chỉ ghi phần admin thật sự đổi (như `/config panel`).
+ * - Trang chi tiết mang tham số trong query (`/members/view?u=<userId>`, `/polls/view?id=<số>`), vì đường dẫn con chỉ gồm chữ
+ *   thường, số và gạch ngang. POST từ trang chi tiết khai báo `errorRedirect` để lỗi nghiệp vụ quay về đúng trang chi tiết.
  */
 export interface GuildRoute
 {
 	method: "GET" | "POST";
 	path: string;
 	handler(ctx: GuildPageContext): Promise<WebResponse> | WebResponse;
+	/**
+	 * Chỉ cho POST: trang GET để quay về khi handler ném lỗi (thay cho `pageAfterPost`), dạng `"/members/view?u=123"`. Chỉ dựng
+	 * từ giá trị đã kiểm tra (ID toàn chữ số); server bỏ qua kết quả sai định dạng hoặc hàm ném lỗi và dùng `pageAfterPost`.
+	 */
+	errorRedirect?(ctx: GuildPageContext): string;
 }
 
 /** Một module trang: các route và CSS riêng (tuỳ chọn, nối vào /static/app.css; CSP chặn style inline). */

@@ -48,6 +48,7 @@ import { ChannelSettings, DEFAULT_GUILD_SETTINGS, NumericSettingKey, SETTING_LIM
 import { LiveBoardService } from "../src/modules/live-board/LiveBoardService";
 import { GuildStatistics } from "../src/modules/statistics/types";
 import { AppServices } from "../src/services";
+import { ListPage } from "../src/shared/paging";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, ROLE_BACKEND, ROLE_FRONTEND, ROLE_OTHER, TestContext, USER_A } from "./helpers";
 
 const BOT_USER = "900000000000000001";
@@ -197,6 +198,11 @@ class FakeContributions implements ContributionServiceApi
 	}
 
 	list(): Contribution[]
+	{
+		throw unused();
+	}
+
+	listPage(): ListPage<Contribution>
 	{
 		throw unused();
 	}

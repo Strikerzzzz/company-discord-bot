@@ -1,3 +1,5 @@
+import { ListPage } from "../../shared/paging";
+
 export const POLL_LIMITS = {
 	questionMin: 3,
 	questionMax: 200,
@@ -65,6 +67,16 @@ export interface PollVoteResult
 	dailyCap: number;
 }
 
+export interface PollListQuery
+{
+	/** "open" = chưa đóng và chưa quá hạn (như Poll.open); "closed" = đã đóng hoặc đã quá hạn. */
+	status: "open" | "closed" | "all";
+	/** Bắt đầu từ 1; ngoài khoảng thì kẹp về trang hợp lệ gần nhất. */
+	page: number;
+	/** 1 đến MAX_PAGE_SIZE (src/shared/paging.ts); ngoài khoảng thì kẹp. */
+	pageSize: number;
+}
+
 export interface PollServiceApi
 {
 	/** Validate và tạo vote. Ghi audit "poll.create". UserError nếu không hợp lệ. */
@@ -82,4 +94,6 @@ export interface PollServiceApi
 	closeDue(): Poll[];
 	/** Vote đang mở của guild, mới nhất trước. */
 	listOpen(guildId: string): Poll[];
+	/** Một trang vote của guild (lịch sử cho web quản trị, DEC-041), mới nhất trước. Không kiểm tra quyền xem kênh. */
+	listPage(guildId: string, query: PollListQuery): ListPage<Poll>;
 }

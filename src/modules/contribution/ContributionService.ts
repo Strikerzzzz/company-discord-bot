@@ -1,5 +1,6 @@
 import { Db } from "../../db/connection";
 import { UserError } from "../../shared/errors";
+import { ListPage, pageWindow } from "../../shared/paging";
 import { ServiceDeps } from "../deps";
 import { ContributionRepository, ContributionRow } from "./ContributionRepository";
 import {
@@ -8,6 +9,7 @@ import {
 	CONTRIBUTION_LIMITS,
 	ContributionAdjustInput,
 	ContributionCategory,
+	ContributionListQuery,
 	ContributionProfile,
 	ContributionServiceApi,
 	ContributionVoteResult,
@@ -173,6 +175,15 @@ export class ContributionService implements ContributionServiceApi
 			? this.repo.listActive(guildId, limit)
 			: this.repo.listActiveByAuthor(guildId, options.authorId, limit);
 		return rows.map(toContribution);
+	}
+
+	listPage(guildId: string, query: ContributionListQuery): ListPage<Contribution>
+	{
+		const filter = { guild: guildId, author: query.authorId ?? null, status: query.status };
+		const total = this.repo.countFiltered(filter);
+		const window = pageWindow(total, query.page, query.pageSize);
+		const items = this.repo.listFiltered(filter, window.pageSize, window.offset).map(toContribution);
+		return { items, page: window.page, totalPages: window.totalPages, total, pageSize: window.pageSize };
 	}
 
 	toggleVote(input: { guildId: string; contributionId: number; voterId: string }): ContributionVoteResult

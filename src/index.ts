@@ -8,6 +8,7 @@ import { runMigrations } from "./db/migrations";
 import { createServices } from "./services";
 import { systemClock } from "./shared/clock";
 import { logger, registerSecret } from "./shared/logger";
+import { DEFAULT_ADMIN_ACTIONS } from "./discord/adminOps";
 import { DEFAULT_LIVE_BOARD_ACTIONS } from "./discord/configOps";
 import { startWebServer, WebServerHandle } from "./web/server";
 
@@ -48,6 +49,7 @@ async function main(): Promise<void>
 				fetch: (input, init) => fetch(input, init),
 				clock: systemClock,
 				liveBoardActions: DEFAULT_LIVE_BOARD_ACTIONS,
+				adminActions: DEFAULT_ADMIN_ACTIONS,
 			})
 				.then(handle =>
 				{

@@ -20,6 +20,7 @@ import {
 	WebRequest,
 	WebResponse,
 } from "./http";
+import { DISCORD_UNAVAILABLE, DiscordUnavailableError, fetchMember } from "./discord";
 import { renderPlainPage } from "./layout";
 import { DiscordIdentity, DiscordOAuth, LOGIN_FAILED } from "./oauth";
 import { PAGE_MODULES } from "./pages";
@@ -51,16 +52,8 @@ const LOGIN_MESSAGES: Readonly<Record<string, string>> = {
 	out: "Bạn đã đăng xuất.",
 };
 
-const DISCORD_UNAVAILABLE = "Không kiểm tra được quyền với Discord (Discord đang lỗi hoặc mạng chậm). Hãy thử lại sau ít phút.";
-
-/** Discord không trả lời được khi lấy thông tin thành viên (khác với "không phải thành viên"). */
-class DiscordUnavailableError extends Error
-{}
-
-function isNotFound(error: unknown): boolean
-{
-	return typeof error === "object" && error !== null && "status" in error && error.status === 404;
-}
+/** Trang quay về do route chỉ định (`GuildRoute.errorRedirect`): đường dẫn con chữ thường, kèm query đơn giản (không ký tự lạ). */
+const ERROR_REDIRECT = /^(?:\/[a-z0-9-]+)*(?:\?[A-Za-z0-9=&%._~-]*)?$/u;
 
 export interface WebHandler
 {
@@ -99,20 +92,18 @@ ${message ? html`<div class="flash ${reason === "out" ? "ok" : "error"}">${messa
 </div></div>`);
 }
 
-/**
- * Lấy lại thông tin thành viên từ Discord (không dùng cache, để quyền luôn mới nhất). null nếu Discord báo không có (404: không
- * còn trong server); lỗi khác (Discord lỗi, mạng) thì ném DiscordUnavailableError để không báo nhầm là "không có quyền".
- */
-async function fetchMember(guild: Guild, userId: string): Promise<GuildMember | null>
+/** Trang quay về sau lỗi nghiệp vụ do route chỉ định; null nếu route không chỉ định, hàm lỗi hoặc kết quả sai định dạng. */
+function routeErrorRedirect(route: GuildRoute, ctx: GuildPageContext): string | null
 {
+	if (!route.errorRedirect) return null;
 	try
 	{
-		return await guild.members.fetch({ user: userId, force: true });
+		const target = route.errorRedirect(ctx);
+		return ERROR_REDIRECT.test(target) ? target : null;
 	}
-	catch (error)
+	catch
 	{
-		if (isNotFound(error)) return null;
-		throw new DiscordUnavailableError(DISCORD_UNAVAILABLE, { cause: error });
+		return null;
 	}
 }
 
@@ -341,7 +332,7 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 			if (req.method === "POST")
 			{
 				session.flash = { kind: "error", text: message };
-				return redirect(`/g/${guildId}${pageAfterPost(subpath)}`);
+				return redirect(`/g/${guildId}${routeErrorRedirect(matched, ctx) ?? pageAfterPost(subpath)}`);
 			}
 			return error instanceof UserError ? messagePage("Không thực hiện được", message, 400) : messagePage("Lỗi", message, 500);
 		}

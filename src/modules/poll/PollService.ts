@@ -1,10 +1,11 @@
 import { Db } from "../../db/connection";
 import { UserError } from "../../shared/errors";
+import { ListPage, pageWindow } from "../../shared/paging";
 import { startOfVnDay } from "../../shared/time";
 import { ServiceDeps } from "../deps";
 import { SETTING_LIMITS } from "../guild-config/types";
 import { PollRepository, PollRow } from "./PollRepository";
-import { CreatePollInput, Poll, POLL_LIMITS, PollServiceApi, PollVoteResult } from "./types";
+import { CreatePollInput, Poll, POLL_LIMITS, PollListQuery, PollServiceApi, PollVoteResult } from "./types";
 
 const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_DAY = 24 * 60;
@@ -231,6 +232,16 @@ export class PollService implements PollServiceApi
 	{
 		const now = this.deps.clock.now();
 		return this.repo.findOpen(guildId, now).map(row => this.toPoll(row, now));
+	}
+
+	listPage(guildId: string, query: PollListQuery): ListPage<Poll>
+	{
+		const now = this.deps.clock.now();
+		const filter = { guild: guildId, status: query.status, now };
+		const total = this.repo.countFiltered(filter);
+		const window = pageWindow(total, query.page, query.pageSize);
+		const items = this.repo.listFiltered(filter, window.pageSize, window.offset).map(row => this.toPoll(row, now));
+		return { items, page: window.page, totalPages: window.totalPages, total, pageSize: window.pageSize };
 	}
 
 	/**

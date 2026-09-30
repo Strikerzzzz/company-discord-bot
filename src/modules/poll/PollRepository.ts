@@ -34,6 +34,20 @@ export interface NewPoll
 	createdAt: number;
 }
 
+/** Tham số lọc danh sách vote: `status` "open" = chưa đóng và chưa quá hạn tại `now`, "closed" = ngược lại. */
+export interface PollFilterParams
+{
+	guild: string;
+	status: "open" | "closed" | "all";
+	now: number;
+}
+
+const POLL_FILTER = `guild_id = @guild AND (
+	@status = 'all'
+	OR (@status = 'open' AND closed_at IS NULL AND (closes_at IS NULL OR closes_at > @now))
+	OR (@status = 'closed' AND (closed_at IS NOT NULL OR (closes_at IS NOT NULL AND closes_at <= @now)))
+)`;
+
 /**
  * Truy cập các bảng polls, poll_options, poll_votes, poll_participants. Chỉ chứa SQL, không có quy tắc nghiệp vụ.
  * Phiếu ẩn danh (DEC-026): không có hàm nào trả danh sách người đã chọn một lựa chọn.
@@ -56,6 +70,8 @@ export class PollRepository
 	private readonly updateClosed: Statement<[number, number]>;
 	private readonly selectDue: Statement<[number], PollRow>;
 	private readonly selectOpen: Statement<[string, number], PollRow>;
+	private readonly selectPage: Statement<[PollFilterParams & { limit: number; offset: number }], PollRow>;
+	private readonly countPage: Statement<[PollFilterParams], { n: number }>;
 
 	constructor(db: Db)
 	{
@@ -86,6 +102,20 @@ export class PollRepository
 			SELECT * FROM polls
 			WHERE guild_id = ? AND closed_at IS NULL AND (closes_at IS NULL OR closes_at > ?)
 			ORDER BY created_at DESC, id DESC`);
+		this.selectPage = db.prepare(`SELECT * FROM polls WHERE ${POLL_FILTER} ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`);
+		this.countPage = db.prepare(`SELECT COUNT(*) AS n FROM polls WHERE ${POLL_FILTER}`);
+	}
+
+	/** Số vote của guild khớp trạng thái (mở/đóng tính tại `now`, như Poll.open). */
+	countFiltered(filter: PollFilterParams): number
+	{
+		return this.countPage.get(filter)?.n ?? 0;
+	}
+
+	/** Một trang vote của guild khớp trạng thái, mới nhất trước. */
+	listFiltered(filter: PollFilterParams, limit: number, offset: number): PollRow[]
+	{
+		return this.selectPage.all({ ...filter, limit, offset });
 	}
 
 	insertPoll(poll: NewPoll): number

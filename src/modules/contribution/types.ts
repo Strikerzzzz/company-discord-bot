@@ -1,3 +1,5 @@
+import { ListPage } from "../../shared/paging";
+
 export const CONTRIBUTION_CATEGORIES = [
 	{ value: "y-tuong", label: "Ý tưởng" },
 	{ value: "giai-phap", label: "Giải pháp" },
@@ -87,6 +89,18 @@ export interface ContributionAdjustInput
 	roleIds: readonly string[];
 }
 
+export interface ContributionListQuery
+{
+	/** Chỉ contribution của tác giả này (người nhận điểm); bỏ trống = mọi tác giả. */
+	authorId?: string;
+	/** "active" = còn hiệu lực, "removed" = đã bị admin gỡ. */
+	status: "active" | "removed" | "all";
+	/** Bắt đầu từ 1; ngoài khoảng thì kẹp về trang hợp lệ gần nhất. */
+	page: number;
+	/** 1 đến MAX_PAGE_SIZE (src/shared/paging.ts); ngoài khoảng thì kẹp. */
+	pageSize: number;
+}
+
 export interface ContributionServiceApi
 {
 	/** Tạo contribution sau khi validate (tiêu đề, mô tả, loại, link http/https). UserError nếu không hợp lệ. */
@@ -96,6 +110,8 @@ export interface ContributionServiceApi
 	get(guildId: string, contributionId: number): Contribution | null;
 	/** Contribution còn hiệu lực, mới nhất trước. */
 	list(guildId: string, options: { authorId?: string; limit: number }): Contribution[];
+	/** Một trang contribution (kể cả đã gỡ, cho web quản trị, DEC-041), mới nhất trước. Không kiểm tra quyền xem kênh. */
+	listPage(guildId: string, query: ContributionListQuery): ListPage<Contribution>;
 	/** Bấm ghi nhận: chưa ghi nhận thì ghi nhận, đã ghi nhận thì rút. UserError nếu tự ghi nhận, contribution không tồn tại hoặc đã bị gỡ. */
 	toggleVote(input: { guildId: string; contributionId: number; voterId: string }): ContributionVoteResult;
 	/** Admin gỡ contribution: huỷ mọi điểm của nó. Ghi audit. */
