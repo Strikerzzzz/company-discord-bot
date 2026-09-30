@@ -202,14 +202,14 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
     | `cfgui:ann:<on\|off>` | Nút, `xp` | Đặt thông báo lên level |
     | `cfgui:xpform` → `cfgui:xpsave:<xp>.<cooldown>.<độ dài>.<chống trùng>` | Nút mở form 4 ô → form, `xp` | Lưu các ô đã sửa |
     | `cfgui:pollform` → `cfgui:pollsave:<xp vote>.<giới hạn ngày>.<điểm ghi nhận>` | Nút mở form 3 ô → form, `poll` | Lưu các ô đã sửa |
-    | `cfgui:pollrole:<roleId\|none>` | RoleSelect một role, cho bỏ chọn, `poll` | Đặt hoặc xoá role tạo vote |
+    | `cfgui:pollroles:<8 hex>` | RoleSelect nhiều role (0–25), `poll` | Đặt danh sách role tạo vote (DEC-044) |
     | `cfgui:board` · `cfgui:boardoff` | ChannelSelect một kênh (`BOARD_CHANNEL_TYPES`) · nút, `board` | Đặt kênh Bảng vàng (kiểm tra quyền như `/config board`) · tắt Bảng vàng |
-    | `cfgui:admin:<roleId\|none>` | RoleSelect một role, cho bỏ chọn, `board` | Đặt hoặc xoá role admin bot |
+    | `cfgui:admins:<8 hex>` | RoleSelect nhiều role (0–25), `board` | Đặt danh sách role admin bot (DEC-044) |
     | `cfgui:tier` | Nút, `board` | Mở `/config tier panel` trong một tin nhắn trả lời riêng mới |
 
   - customId mang **trạng thái lúc vẽ** để bảng cũ không ghi đè thay đổi mới hơn (như `tierui`):
     - form mang giá trị lúc mở (`drawn`, `XpFormValues`/`PollFormValues`). Khi lưu, ô có giá trị bằng `drawn` thì không ghi, nên hai admin sửa hai ô khác nhau không đè nhau. Ô số đọc bằng `parseFormNumber`: bỏ khoảng trắng, chỉ nhận chữ số (dấu chấm hay dấu phẩy bị từ chối, vì "2,5" hay "1.000" dễ hiểu nhầm), phải là số nguyên trong `SETTING_LIMITS`;
-    - `pollrole`/`admin` mang `drawnRoleId` (role lúc vẽ, `none` = chưa đặt). Chọn role thì đặt (chọn đúng role đang đặt thì không ghi); bỏ chọn chỉ xoá khi role hiện tại vẫn là `drawnRoleId`, ngược lại vẽ lại bảng và báo.
+    - `pollroles`/`admins` mang vân tay 8 hex (`roleListFingerprint`, sha256 của danh sách đã sắp xếp) của danh sách lúc vẽ. Danh sách hiện tại khác vân tay thì vẽ lại bảng và báo (`CONFIG_ROLES_CHANGED`), không ghi; khớp thì ghi phần chênh lệch (`changeRoleGrants`), chỉ kiểm tra role mới thêm. customId dạng cũ một role (`pollrole`, `admin`) được báo "bảng đã cũ".
   - Menu chọn (trừ `nav`) bị từ chối thì bảng được vẽ lại theo dữ liệu thật trước khi báo lỗi: nếu không, Discord vẫn hiện lựa chọn vừa bị từ chối trong khi customId giữ role lúc vẽ, và thao tác bỏ chọn kế tiếp sẽ xoá nhầm role đang đặt (review Phase 15).
   - `nav` không đánh dấu `default` (placeholder ghi trang đang xem), để chọn lại trang đang xem là làm mới trang.
   - Role/kênh đã lưu mà không còn trong cache của guild (`ConfigPanelData.missingIds`): không điền sẵn vào menu (Discord có thể từ chối ID không tồn tại) và hiện cảnh báo, như `missingRoleIds` của `tierui`.
@@ -378,7 +378,7 @@ Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), th
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration (6 migration, version lưu ở `PRAGMA user_version`):
+Migration (7 migration trên `main` sau Phase 18; version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
@@ -397,6 +397,8 @@ Migration (6 migration, version lưu ở `PRAGMA user_version`):
 - **6** (DEC-043): `guild_settings.level_up_channel_id TEXT` (NULL = gửi thông báo lên level ở kênh vừa nhắn, như trước). Guild đang chạy nhận NULL nên hành vi không đổi khi cập nhật.
   - Backup/restore: vẫn một file SQLite. Backup cũ (≤ 5) khôi phục vào code mới thì tự migrate lên 6, kênh thông báo trở về NULL: đặt lại sau khi khôi phục.
   - Code cũ (≤ 5) gặp DB version 6 thì từ chối khởi động; selfcheck của code cũ báo ❌.
+- **7** (Phase 18, DEC-044): bảng `guild_role_grants (guild_id, kind 'admin'|'poll_creator', role_id, created_at)`, khoá chính `(guild_id, kind, role_id)`. Role đang đặt ở `guild_settings.admin_role_id` / `poll_creator_role_id` được chép sang, rồi hai cột cũ về NULL (không xoá cột, code không dùng nữa). `GuildSettings.adminRoleIds` / `pollCreatorRoleIds` là danh sách (tối đa `MAX_GRANT_ROLES` = 25); `isAdmin`/`canCreatePoll` xét có ít nhất một role. `GuildConfigService.changeRoleGrants` đổi theo phần chênh lệch trong một transaction, audit `config.update`.
+  - Backup/restore: vẫn một file SQLite; backup cũ tự migrate lên 7 (giữ role đã đặt). Code cũ (≤ 6) gặp DB version 7 thì từ chối khởi động.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;

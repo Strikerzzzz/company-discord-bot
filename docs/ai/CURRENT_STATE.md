@@ -12,7 +12,16 @@
   - Trang web quản trị **đã bật** ở `http://192.168.0.206:8787`, bằng `deploy/enable-web.sh`: `ufw` chỉ mở cổng 8787 cho 10/8, 172.16/12, 192.168/16. Ngày 2026-09-30 đã có lượt đăng nhập admin thành công.
   - `main` mới hơn bản đang chạy chỉ ở script `deploy/enable-web.sh`, tài liệu và test.
 - **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động.
-- **Phase 17 (DEC-042) và kênh thông báo lên level (DEC-043)** trên branch `phase-17/web-full`, **chưa merge, chưa cài lên server**:
+- **Phase 17 đã merge vào `main` (DEC-046, `c8359b6`)**, đã build và chạy 1027/1027 test trên server ở `~/deploy/src`; **chờ người phụ trách chạy `install.sh` và `start.sh`** (sao lưu bằng `/admin backup` trước, vì có migration 6).
+- **Phase 18 (DEC-044, DEC-047) trên branch `phase-18/quick-wins`**, chưa merge:
+  - đã gộp:
+    - "Chọn tất cả" cho bảng ô tick;
+    - nhiều role admin bot và role tạo vote (migration 7, `guild_role_grants`);
+    - bộ danh hiệu thứ 6 Mobile Legends, có `textColor`/`borderColor` cho bậc;
+    - trang Kênh tính XP hiện mọi kênh cho admin (DEC-045);
+  - kết quả: 1049/1050 test pass;
+  - đang làm (agent): bộ danh hiệu cá nhân (migration 8, `/rank-style`) và nút "?" giải thích trên thẻ `/rank`; sau đó review độc lập rồi merge.
+- Chi tiết Phase 17 (giữ để tra cứu):
   - 7 trang web mới: Thành viên, Bảng xếp hạng, Contribution, Vote, Thống kê, Reset điểm, Sao lưu. `test/web-parity.test.ts` không còn mục nào thiếu.
   - Nền móng `src/discord/adminOps.ts`, dùng chung cho `/admin` và web.
   - Kênh nhận thông báo lên level (migration 6), đặt trên web hoặc bằng `/config xp kenh-thong-bao`.
