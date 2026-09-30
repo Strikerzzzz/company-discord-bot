@@ -361,7 +361,7 @@ describe("web: trang nhật ký quản trị", () =>
 	test("hiện thao tác vừa làm: giờ Việt Nam, người thao tác, hành động, đối tượng bằng tên kênh/role/người, chi tiết", async () =>
 	{
 		const { harness, auth } = await setup();
-		await submit(harness, auth, "/roles", { ...drawnForm(await page(harness, auth, "/roles"), "/roles"), admin: ROLE_ADMIN_BOT });
+		await submit(harness, auth, "/roles", { ...drawnForm(await page(harness, auth, "/roles"), "/roles"), admin: ROLE_ADMIN_BOT, "xac-nhan-admin": "1" });
 		await submit(harness, auth, "/board", { ...drawnForm(await page(harness, auth, "/board"), "/board"), channelId: CHANNEL_CHAT });
 		harness.services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
 		harness.services.audit.record(GUILD, ADMIN_USER, "xp.adjust", USER_TARGET, { delta: 5, reason: "thưởng dự_án *a* ~b~" });
