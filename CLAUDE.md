@@ -79,7 +79,7 @@ Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước 
 - **Admin command có hai lớp bảo vệ:** `setDefaultMemberPermissions` **và** kiểm tra quyền trong code. Lớp Discord có thể bị admin server nới lỏng, nên không được chỉ dựa vào nó.
 - **Secret** không được nằm trong source, commit, log hay **build artifact**. Secret chỉ đọc từ biến môi trường qua `src/config.ts`. Không import file chứa secret bằng `import ... from "*.json"`: nếu bật `resolveJsonModule`, `tsc` sẽ copy file đó vào `build/` (LL-002).
 - Khi bot gửi lại nội dung do user nhập, phải chặn mention bằng `allowedMentions`.
-- Không gọi network nào ngoài Discord API. Không webhook, telemetry, SaaS.
+- Không gọi network nào ngoài Discord API, trừ Confluence nội bộ cho retro (DEC-049). Không webhook, telemetry, SaaS.
 - Không dựa vào install script của dependency: `.npmrc` đặt `ignore-scripts=true`. Dependency mới cần install script phải được duyệt riêng.
 - Không lưu nội dung tin nhắn vào database khi chưa có quyết định.
 
@@ -89,7 +89,7 @@ Chỉ được thay đổi thông qua proposal đã được duyệt (xem mục 
 
 1. Không truy cập database sản phẩm của công ty. Database của bot hoàn toàn độc lập.
 2. Không tự thêm PostgreSQL, MySQL, MongoDB, Redis, Kafka, RabbitMQ, microservices, Kubernetes, API server riêng, database server riêng, external SaaS, cloud service, dashboard, Docker. (Ngoại lệ đã duyệt: trang web quản trị nhúng trong process bot, chỉ mạng nội bộ, DEC-039. Thêm trang cho tính năng theo DEC-041 nằm trong ngoại lệ này. Hạ tầng, phạm vi mạng và cách đăng nhập thì không mở rộng khi chưa có proposal mới.)
-3. Không tự thêm external service hay network call.
+3. Không tự thêm external service hay network call. (Ngoại lệ đã duyệt: REST API của Confluence nội bộ cho retro sprint, DEC-049, chỉ host `CONFLUENCE_BASE_URL`.)
 4. Không tự cấp quyền Administrator.
 5. Không tự quyết định hoặc thay đổi công thức scoring hay business rule.
 6. Không tự thay đổi architecture lớn.

@@ -26,6 +26,7 @@
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
 | 15 | Bảng cấu hình chung, chế độ kênh tính XP | **Đã merge vào `main`** (DEC-038) | DEC-037 |
 | 16 | Trang web quản trị (mạng nội bộ, đăng nhập Discord) | **Đã merge vào `main`** (DEC-040) | DEC-039 |
+| 19 | Retro sprint theo team, tự ghi Confluence, vote tên sprint | **Đã duyệt, đang làm** | DEC-049 |
 | 17 | Web quản trị đủ tính năng (làm bù theo DEC-041), kênh thông báo lên level | **Đã code trên branch `phase-17/web-full`**, đang review; chờ duyệt merge | DEC-041, DEC-042, DEC-043 |
 
 ## Chi tiết

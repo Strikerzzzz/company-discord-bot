@@ -524,6 +524,57 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Kiểm thử: 1094/1095 test trên Windows, 1095/1095 trên server Linux.
   - Cài lên `192.168.0.206`: sao lưu trước, vì có migration 7 và 8.
 
+### DEC-049 — Phase 19: Retro sprint theo team, tự ghi vào Confluence (duyệt PROP-039, ngoại lệ luật protected số 3)
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (gửi trang "2026/09/18 Retrospective - Pms Sprint 24"; "mỗi team sẽ có kênh riêng và mỗi team sẽ họp retro riêng… kiểm soát linh hoạt trong cái đoạn chat thread đó của team đó"; "phải tự ghi vào confluence ấy - chấp nhận tích hợp thêm tool"; trả lời 6 điểm: 1 chấp nhận, 2 ghi tên cho admin theo dõi còn doc và Discord ẩn danh, 3 lưu theo phiên rồi xoá theo admin điều phối, 4 có cộng XP, 5 tham gia vote tên được XP như thường và người đề xuất tên thắng được cộng nhiều XP, 6 ghi vào Confluence)
+- **Nội dung:**
+  - **Phiên retro theo team:**
+    - mỗi phiên gắn với một kênh hoặc thread của team, là nơi chạy `/retro create`, và tuỳ chọn một role team (DEC-024);
+    - có role team thì chỉ người có role đó điền được; không có thì ai xem được kênh cũng điền được;
+    - mọi thứ của phiên diễn ra trong thread hoặc kênh đó: nút điền, số người đã điền, bảng tổng hợp, vote tên sprint, công bố tên thắng.
+  - **Người quản lý phiên:**
+    - admin bot, người tạo phiên, và role "quản lý retro" (tối đa 25 role, đặt trên web);
+    - trong thread họ làm được: đóng, mở lại, gia hạn, nhắc người chưa điền, tạo vote tên, ghi lại vào Confluence.
+  - **Form điền:**
+    - modal đúng 5 ô theo 5 cột của mẫu Confluence: Learned, Thiếu sót, Sáng tạo, Tuyên dương, Đặt tên sprint;
+    - ô trống được, mỗi người một phiếu, sửa được tới khi đóng;
+    - tên sprint chỉ toàn số bị từ chối, theo luật của mẫu: "cấm đặt tên Sprint là số".
+  - **Ẩn danh:**
+    - database lưu người điền để admin theo dõi (web: ai đã điền, ai chưa);
+    - bảng trên Discord và trên Confluence không có tên người viết.
+  - **Lưu nội dung** (quyết định đầu tiên cho phép lưu chữ người dùng viết):
+    - câu trả lời lưu theo phiên;
+    - admin xoá nội dung một phiên trên web (xoá hẳn chữ, giữ thông tin phiên và XP đã cộng). Đây là ngoại lệ có chủ ý của DEC-027, vì là dữ liệu riêng tư, không phải điểm.
+  - **XP** (admin chỉnh trên web; ghi qua `xpLedger` với nguồn `admin`, người thao tác là bot, lý do "Retro …"):
+    - điền retro: cộng một lần mỗi phiên, mặc định 20 XP;
+    - tham gia vote tên sprint: như vote thường;
+    - người đề xuất tên thắng: mặc định 100 XP. Nhiều người cùng đề xuất tên đó thì mỗi người đều được.
+    - Vote hoà: người quản lý chọn tên cuối cùng trong các tên hoà.
+  - **Vote tên sprint:**
+    - người quản lý bấm tạo sau buổi họp;
+    - bot gom cột "Đặt tên sprint": bỏ trùng (không phân biệt hoa thường, dấu cách), bỏ tên chỉ toàn số;
+    - tạo vote bằng hệ thống vote hiện có, mỗi người chọn 1 tên, hạn mặc định 24 giờ;
+    - nhiều hơn 10 tên thì người quản lý chọn danh sách rút gọn trên web.
+  - **Confluence** (ngoại lệ luật protected số 3, chỉ trong phạm vi này):
+    - bot gọi REST API của Confluence nội bộ tại `CONFLUENCE_BASE_URL`, xác thực bằng `CONFLUENCE_TOKEN` (Personal Access Token, header Bearer);
+    - khi đóng phiên (và khi người quản lý bấm "ghi lại"), bot thêm các dòng ẩn danh vào bảng retro 5 cột của trang đã gắn, tức bảng có cột "Đặt tên sprint";
+    - không tìm thấy bảng đó thì thêm một bảng mới cuối trang;
+    - vote xong thì ghi tên sprint được chọn;
+    - chỉ nhận link trang cùng host với `CONFLUENCE_BASE_URL`, để không gửi token sang nơi khác;
+    - không thêm dependency (dùng `fetch` có sẵn); lỗi được ghi lại và hiện trên web để thử lại;
+    - không đặt `CONFLUENCE_*` thì mọi phần khác của retro vẫn chạy, chỉ bỏ bước ghi Confluence.
+  - **Token:**
+    - người phụ trách nhập trên server bằng script `deploy/enable-confluence.sh` (hỏi ẩn, ghi vào `.env` root 600);
+    - không gửi token qua chat hay commit;
+    - nên dùng token của tài khoản dùng riêng cho bot, chỉ có quyền sửa các trang retro.
+    - Token cá nhân đã gửi trong chat ngày 2026-09-30 cần được thu hồi.
+  - **Web** (DEC-041): trang Retro gồm:
+    - danh sách phiên và trạng thái;
+    - chi tiết phiên, ai đã điền (chỉ admin thấy) và nội dung ẩn danh;
+    - xoá ý không phù hợp, chọn danh sách tên rút gọn, tạo vote, ghi lại vào Confluence, xoá nội dung phiên;
+    - cài đặt XP retro và role quản lý retro.
+  - Phase 19, branch `phase-19/retro`. Schema là migration 9 (`retro_*`); bảng `xp_events` không đổi.
+
 ---
 
 ## Đang chờ quyết định

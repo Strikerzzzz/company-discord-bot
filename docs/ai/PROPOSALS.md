@@ -48,6 +48,7 @@
 | PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
 | PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | IMPLEMENTED |
 | PROP-038 | Nhật ký quản trị giấu tiêu đề contribution và câu hỏi vote ở kênh người xem không xem được | LOW | PROPOSED |
+| PROP-039 | Retro sprint theo team trong Discord, tự ghi vào Confluence nội bộ | HIGH | APPROVED (DEC-049) |
 
 ---
 
@@ -1516,3 +1517,25 @@ LOW
 ### Trạng thái
 
 PROPOSED (2026-09-30).
+
+## PROP-039 — Retro sprint theo team trong Discord, tự ghi vào Confluence nội bộ
+
+### Vấn đề
+
+Mỗi team làm retro trên trang Confluence theo mẫu 5 cột (Learned, Thiếu sót, Sáng tạo, Tuyên dương, Đặt tên sprint), rồi đặt tên sprint bằng tay. Người phụ trách muốn điền retro ngay trong Discord, trong kênh hoặc thread của từng team. Bot tự tổng hợp bảng, tự ghi vào trang Confluence, và tự tạo vote tên sprint từ cột cuối.
+
+### Đề xuất và tác động
+
+- Chi tiết thiết kế: DEC-049.
+- **Luật protected số 3:** thêm network call tới Confluence nội bộ (`CONFLUENCE_BASE_URL`), chỉ để đọc và sửa trang retro đã gắn. Không thêm dependency.
+- **Secret mới:** `CONFLUENCE_TOKEN`, nhập qua script trên server.
+- **Database:** migration 9 (phiên retro, câu trả lời theo người, cấu hình XP và role quản lý). Có lưu chữ người dùng viết; admin xoá theo phiên.
+- **Quyền Discord:** không cần quyền mới nếu phiên chạy trong kênh hoặc thread có sẵn (bot cần View Channel, Send Messages, Send Messages in Threads).
+
+### Độ ưu tiên
+
+HIGH
+
+### Trạng thái
+
+APPROVED (2026-09-30, DEC-049); triển khai ở Phase 19.
