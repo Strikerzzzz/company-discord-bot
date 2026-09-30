@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_GRANT_ROLES } from "../src/modules/guild-config/types";
 import { escapeHtml } from "../src/web/html";
-import { MISSING_ROLE_NOTE, ROLES_STALE_FORM, ROLES_UNCHANGED } from "../src/web/pages/roles";
+import { ADMIN_CONFIRM_FIELD, ADMIN_CONFIRM_REQUIRED, MISSING_ROLE_NOTE, ROLES_STALE_FORM, ROLES_UNCHANGED } from "../src/web/pages/roles";
 import { GUILD } from "./helpers";
 import {
 	addRole,
@@ -142,7 +142,9 @@ describe("web trang Quyền: hiển thị (DEC-044)", () =>
 		assert.equal(drawn.get(`a:${ROLE_TEAM_B}`), "0");
 		assert.equal(drawn.get(`v:${ROLE_TEAM_B}`), "1");
 		assert.equal(drawn.get(`v:${ROLE_ADMIN_BOT}`), "0");
-		assert.ok(body.includes(`href="${pageUrl(PATH)}?chon-admin=tat-ca"`) && body.includes(`href="${pageUrl(PATH)}?chon-vote=bo-het"`), "chọn tất cả riêng từng bảng");
+		assert.ok(body.includes(`href="${pageUrl(PATH)}?chon-vote=tat-ca"`) && body.includes(`href="${pageUrl(PATH)}?chon-vote=bo-het"`), "bảng role tạo vote có chọn tất cả");
+		assert.ok(!body.includes("chon-admin="), "bảng role admin không có chọn tất cả (review bảo mật Phase 18)");
+		assert.ok(body.includes(`name="${ADMIN_CONFIRM_FIELD}"`), "có ô xác nhận khi thêm role admin");
 		assert.ok(!body.includes("rl-lockout"), "người có Manage Server không bị cảnh báo tự khoá");
 	});
 
@@ -161,9 +163,11 @@ describe("web trang Quyền: hiển thị (DEC-044)", () =>
 		assert.deepEqual(ticked(allFields, "admin"), [ROLE_ADMIN_BOT], "bảng role admin giữ nguyên");
 		assert.equal(new Map(allFields).get(`v:${ROLE_TEAM_A}`), "0");
 
-		const none = readForm(await getPage(harness, auth, `${PATH}?chon-admin=bo-het`));
-		assert.deepEqual(ticked(none, "admin"), []);
-		assert.deepEqual(ticked(none, "vote"), [ROLE_TEAM_B]);
+		const none = readForm(await getPage(harness, auth, `${PATH}?chon-vote=bo-het`));
+		assert.deepEqual(ticked(none, "vote"), []);
+		assert.deepEqual(ticked(none, "admin"), [ROLE_ADMIN_BOT]);
+		const ignored = readForm(await getPage(harness, auth, `${PATH}?chon-admin=tat-ca`));
+		assert.deepEqual(ticked(ignored, "admin"), [ROLE_ADMIN_BOT], "bảng role admin bỏ qua tham số chọn tất cả");
 		assert.equal(auditCount(harness), before, "chỉ vẽ lại, chưa ghi gì");
 
 		const flash = await save(harness, auth, allFields);
@@ -220,7 +224,12 @@ describe("web trang Quyền: lưu (DEC-044)", () =>
 		let fields = readForm(await getPage(harness, auth));
 		fields = check(check(fields, "admin", ROLE_ADMIN_BOT, true), "admin", ROLE_TEAM_A, true);
 		fields = check(check(fields, "vote", ROLE_TEAM_A, true), "vote", ROLE_TEAM_B, true);
-		const flash = await save(harness, auth, fields);
+		const unconfirmed = await save(harness, auth, fields);
+		assert.equal(unconfirmed.kind, "error");
+		assert.ok(unconfirmed.text.includes("cần tick ô xác nhận"), unconfirmed.text);
+		assert.deepEqual(settings(harness), { admins: [], creators: [] }, "thiếu xác nhận thì không ghi cả bảng role tạo vote");
+		assert.ok(ADMIN_CONFIRM_REQUIRED.includes("toàn quyền quản trị"));
+		const flash = await save(harness, auth, [...fields, [ADMIN_CONFIRM_FIELD, "1"]]);
 		assert.equal(flash.kind, "ok");
 		for (const part of ["Đã cập nhật quyền", "vào danh sách role admin bot", "vào danh sách role tạo vote", "@Admin bot", "@Backend", "@Frontend", "Integrations"])
 		{
@@ -262,7 +271,7 @@ describe("web trang Quyền: lưu (DEC-044)", () =>
 		const tabA = readForm(await getPage(harness, auth));
 		const tabB = readForm(await getPage(harness, auth));
 
-		await save(harness, auth, check(check(tabA, "admin", ROLE_TEAM_A, true), "vote", ROLE_TEAM_A, false));
+		await save(harness, auth, [...check(check(tabA, "admin", ROLE_TEAM_A, true), "vote", ROLE_TEAM_A, false), [ADMIN_CONFIRM_FIELD, "1"]]);
 		assert.deepEqual(settings(harness), { admins: [ROLE_ADMIN_BOT, ROLE_TEAM_A], creators: [] });
 
 		const flash = await save(harness, auth, check(tabB, "vote", ROLE_TEAM_B, true));
@@ -314,7 +323,7 @@ describe("web trang Quyền: lưu (DEC-044)", () =>
 		const fields = readForm(body);
 		const before = auditCount(harness);
 
-		const flash = await save(harness, auth, check(fields, "admin", ROLE_TEAM_A, true));
+		const flash = await save(harness, auth, [...check(fields, "admin", ROLE_TEAM_A, true), [ADMIN_CONFIRM_FIELD, "1"]]);
 		assert.equal(flash.kind, "error");
 		assert.ok(flash.text.includes(`tối đa ${MAX_GRANT_ROLES} role tạo vote`) && flash.text.includes("Bot chưa thay đổi gì"), flash.text);
 		assert.deepEqual(settings(harness), { admins: [ROLE_ADMIN_BOT], creators: [] }, "bảng role admin hợp lệ cũng không được ghi");

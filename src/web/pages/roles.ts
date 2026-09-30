@@ -25,10 +25,15 @@ export const MISSING_ROLE_NOTE = "Role không còn trong server: bỏ tick để
 const ADMIN_ROLE_INTEGRATION_NOTE = "-# Muốn role admin mới dùng lệnh `/admin`, `/config` trong Discord thì cho phép trong "
 	+ "**Server Settings → Integrations → chọn bot**; trang web không cần bước này.";
 
+/** Ô xác nhận bắt buộc khi một lần lưu thêm role admin bot (review bảo mật Phase 18). */
+export const ADMIN_CONFIRM_FIELD = "xac-nhan-admin";
+export const ADMIN_CONFIRM_REQUIRED = "Thêm role admin bot cần tick ô xác nhận ở bảng Role admin bot: mọi thành viên có role vừa thêm sẽ có toàn quyền quản trị bot. Bot chưa thay đổi gì.";
+
 /**
  * Một bảng ô tick. Form gửi: checkbox `<field>` = role ID cho mỗi ô đang tick, input ẩn `<drawnPrefix><roleId>` = 1/0 (role có
- * trong danh sách lúc vẽ trang hay không) cho mọi dòng. "Chọn tất cả" của mỗi bảng dùng tham số riêng `selectParam`, để tick hết
- * một bảng (ví dụ ai cũng được tạo vote) không tick luôn bảng role admin.
+ * trong danh sách lúc vẽ trang hay không) cho mọi dòng. "Chọn tất cả" dùng tham số riêng `selectParam` của từng bảng; bảng role
+ * admin KHÔNG có "Chọn tất cả" (null): một cú bấm rồi Lưu sẽ biến mọi role, kể cả role team, thành admin bot (review bảo mật
+ * Phase 18), và thêm role admin phải tick ô xác nhận ADMIN_CONFIRM_FIELD.
  */
 interface GrantTable
 {
@@ -40,7 +45,8 @@ interface GrantTable
 	column: string;
 	field: string;
 	drawnPrefix: string;
-	selectParam: string;
+	/** Tham số "Chọn tất cả" của bảng; null = bảng không có "Chọn tất cả". */
+	selectParam: string | null;
 	hint: string;
 	/** Chữ khi danh sách rỗng. */
 	empty: string;
@@ -54,7 +60,7 @@ const GRANT_TABLES: readonly GrantTable[] = [
 		column: "Là role admin bot",
 		field: "admin",
 		drawnPrefix: "a:",
-		selectParam: "chon-admin",
+		selectParam: null,
 		hint: "Người có ít nhất một role trong danh sách quản trị được bot: dùng trang web này, và dùng lệnh /admin, /config nếu server cho phép (xem ghi chú).",
 		empty: "Chưa đặt role nào: chỉ người có quyền Manage Server là admin bot.",
 	},
@@ -119,7 +125,7 @@ function roleRow(guild: Guild, table: GrantTable, row: RowState): RawHtml
 function grantSection(ctx: GuildPageContext, table: GrantTable, roleIds: readonly string[], tierRoleIds: ReadonlySet<string>): RawHtml
 {
 	const { guild } = ctx;
-	const selection = bulkSelection(ctx.req.query, table.selectParam);
+	const selection = table.selectParam === null ? null : bulkSelection(ctx.req.query, table.selectParam);
 	const rows = rowStates(guild, roleIds, tierRoleIds, selection);
 	const checked = rows.filter(row => row.checked).length;
 	const tooMany = checked > MAX_GRANT_ROLES
@@ -129,9 +135,10 @@ function grantSection(ctx: GuildPageContext, table: GrantTable, roleIds: readonl
 	return html`<section class="card" id="rl-${table.field}"><h2>${table.title}: ${roleIds.length}/${MAX_GRANT_ROLES}</h2>
 <p class="muted rl-hint">${table.hint}</p>
 ${current}
-${rows.length === 0 ? html`<p class="muted">Server chưa có role nào ngoài @everyone.</p>` : html`${selectAllLinks(ctx, PATH, selection, table.selectParam)}${tooMany}<div class="rl-scroll"><table class="table rl-table">
+${rows.length === 0 ? html`<p class="muted">Server chưa có role nào ngoài @everyone.</p>` : html`${table.selectParam === null ? "" : selectAllLinks(ctx, PATH, selection, table.selectParam)}${tooMany}<div class="rl-scroll"><table class="table rl-table">
 <thead><tr><th>Role</th><th>${table.column}</th><th>Ghi chú</th></tr></thead>
 <tbody>${rows.map(row => roleRow(guild, table, row))}</tbody></table></div>`}
+${table.key === "adminRoleIds" ? html`<label class="check rl-confirm"><input type="checkbox" name="${ADMIN_CONFIRM_FIELD}" value="1"> Khi thêm role admin bot: tôi hiểu mọi thành viên có role đó sẽ có <strong>toàn quyền quản trị bot</strong> (cấu hình, chỉnh và reset điểm, sao lưu). Chỉ cần tick khi có thêm role.</label>` : ""}
 </section>`;
 }
 
@@ -232,6 +239,8 @@ function saveRoles(ctx: GuildPageContext): WebResponse
 	const changes = GRANT_TABLES.map(table => readChange(ctx, form, table)).filter(change => change.add.length > 0 || change.remove.length > 0);
 	if (changes.length === 0) return redirectWithFlash(ctx, PATH, "ok", ROLES_UNCHANGED);
 
+	const addsAdmin = changes.some(change => change.table.key === "adminRoleIds" && change.add.length > 0);
+	if (addsAdmin && form.get(ADMIN_CONFIRM_FIELD) !== "1") throw new UserError(ADMIN_CONFIRM_REQUIRED);
 	const settings = guildConfig.getSettings(ctx.guild.id);
 	for (const change of changes) assertWithinLimit(settings[change.table.key], change);
 	const results: [GrantTable, RoleGrantResult][] = changes.map(change => [
@@ -252,6 +261,7 @@ export const rolesPage: PageModule = {
 	],
 	css: `
 .rl-hint { font-size: 13px; margin: 0 0 8px; }
+.rl-confirm { margin-top: 12px; }
 .rl-chips .chip { margin: 2px 6px 2px 0; }
 .rl-scroll { overflow-x: auto; }
 .rl-table td label { cursor: pointer; }
