@@ -78,12 +78,21 @@ export function auditTargetLabel(guild: Guild, action: AuditAction, targetId: st
 
 /**
  * Chi tiết của một mục audit dạng HTML; null nếu không có. formatAuditDetails escape markdown kiểu Discord (chèn `\` trước
- * `_`, `*`...) cho tin nhắn Discord; trên web bỏ các dấu đó để hiện đúng chữ gốc ("a_b"), rồi discordText vẫn escape HTML toàn bộ.
+ * `_`, `*`...) cho tin nhắn Discord; discordText bỏ các dấu đó để hiện đúng chữ gốc ("a_b") và vẫn escape HTML toàn bộ.
  */
 export function auditDetailsHtml(guild: Guild, action: AuditAction, details: Record<string, unknown> | null, viewer?: GuildMember): RawHtml | null
 {
 	const text = formatAuditDetails(details, action);
-	return text === null ? null : discordText(guild, text.replace(/\\([\\*_`~|])/gu, "$1"), viewer);
+	return text === null ? null : discordText(guild, text, viewer);
+}
+
+const TIMESTAMP_FORMAT = new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "short", timeStyle: "short" });
+
+/** Mốc thời gian kiểu Discord `<t:giây:kiểu>` hiện trên web: "lúc <ngày giờ Việt Nam>"; null nếu số giây ngoài khoảng ngày hợp lệ. */
+function timestampLabel(seconds: string): string | null
+{
+	const ms = Number(seconds) * 1000;
+	return Number.isSafeInteger(ms) && Math.abs(ms) <= 8.64e15 ? `lúc ${TIMESTAMP_FORMAT.format(ms)}` : null;
 }
 
 /** Ký tự đánh dấu chỗ đặt mention trong lúc xử lý markdown (vùng dùng riêng của Unicode, đã bị loại khỏi chữ đầu vào). */
@@ -101,10 +110,11 @@ function cleanInput(text: string): string
 }
 
 /**
- * Chuyển chuỗi kiểu Discord (thông báo của service, UserError, configOps) sang HTML an toàn: bỏ ký tự điều khiển, escape toàn
- * bộ; mention `<#id>`, `<@&id>`, `<@id>` được thay bằng chỗ đánh dấu trước khi xử lý `**đậm**` và `` `mã` ``, rồi mới điền tên
- * (tên có dấu `*` hay backtick không làm lồng thẻ sai); dòng bắt đầu bằng `-# ` thành chữ nhỏ; xuống dòng thành <br>.
- * `viewer` (nếu có) để giấu tên kênh người đó không xem được.
+ * Chuyển chuỗi kiểu Discord (thông báo của service, UserError, configOps, adminOps) sang HTML an toàn: bỏ ký tự điều khiển,
+ * escape toàn bộ. Ký tự markdown đã escape (`\*`, `\_`...), mốc thời gian `<t:giây:kiểu>` và mention `<#id>`, `<@&id>`,
+ * `<@id>` được thay bằng chỗ đánh dấu trước khi xử lý `**đậm**` và `` `mã` ``, rồi mới điền chữ (tên có dấu `*` hay backtick
+ * không làm lồng thẻ sai); dòng bắt đầu bằng `-# ` thành chữ nhỏ; xuống dòng thành <br>. `viewer` (nếu có) để giấu tên kênh
+ * người đó không xem được.
  */
 export function discordText(guild: Guild, text: string, viewer?: GuildMember): RawHtml
 {
@@ -112,12 +122,19 @@ export function discordText(guild: Guild, text: string, viewer?: GuildMember): R
 	{
 		const small = line.startsWith("-# ");
 		const mentions: string[] = [];
-		const slot = (label: string): string =>
+		const keep = (htmlText: string): string =>
 		{
-			mentions.push(`<span class="mention">${escapeHtml(label)}</span>`);
+			mentions.push(htmlText);
 			return `${SLOT}${mentions.length - 1}${SLOT}`;
 		};
+		const slot = (label: string): string => keep(`<span class="mention">${escapeHtml(label)}</span>`);
 		const out = (small ? line.slice(3) : line)
+			.replace(/\\([\\*_`~|])/gu, (_, char: string) => keep(char))
+			.replace(/&lt;t:(-?\d{1,15})(?::[tTdDfFR])?&gt;/gu, (match: string, seconds: string) =>
+			{
+				const label = timestampLabel(seconds);
+				return label === null ? match : keep(escapeHtml(label));
+			})
 			.replace(/&lt;#(\d{17,20})&gt;/gu, (_, id: string) => slot(channelLabel(guild, id, viewer)))
 			.replace(/&lt;@&amp;(\d{17,20})&gt;/gu, (_, id: string) => slot(roleLabel(guild, id)))
 			.replace(/&lt;@!?(\d{17,20})&gt;/gu, (_, id: string) => slot(userLabel(guild, id)))

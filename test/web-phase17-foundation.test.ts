@@ -4,18 +4,22 @@ import { ChannelType } from "discord.js";
 import {
 	adjustMemberContribution,
 	adjustMemberXp,
+	assertAdjustableUser,
 	assertContributionDelta,
 	assertXpAmount,
+	BOT_TARGET,
 	MAX_ADJUST,
 	normalizeReason,
 	REASON_MAX_LENGTH,
 	resetAllContribution,
 	resetAllXp,
 	syncMemberTierRoles,
+	USER_NOT_FOUND,
 } from "../src/discord/adminOps";
 import { pageWindow, MAX_PAGE_SIZE } from "../src/shared/paging";
 import { UserError } from "../src/shared/errors";
 import { canViewItemChannel, hiddenChannelIds, lookupMember } from "../src/web/discord";
+import { discordText } from "../src/web/format";
 import { html } from "../src/web/html";
 import { csrfField, renderPage } from "../src/web/layout";
 import type { PageModule } from "../src/web/types";
@@ -244,5 +248,46 @@ describe("nền móng Phase 17: web", () =>
 			assert.ok(links.includes(`/g/${GUILD}${path}`), path);
 			assert.equal((await call(harness, `/g/${GUILD}${path}`, { cookies: auth.cookies })).status, 200, path);
 		}
+	});
+});
+
+describe("nền móng Phase 17: hiển thị chữ kiểu Discord và người được chỉnh điểm", () =>
+{
+	test("discordText bỏ dấu escape markdown, đổi mốc thời gian <t:…> sang giờ Việt Nam, vẫn escape HTML", () =>
+	{
+		const { guild } = createWebHarness().world;
+		assert.equal(discordText(guild, "Sửa lỗi\\_đăng \\*\\*nhập\\*\\*").html, "Sửa lỗi_đăng **nhập**");
+		assert.equal(discordText(guild, "**đậm** và `mã`").html, "<strong>đậm</strong> và <code>mã</code>");
+		const time = discordText(guild, "Vừa có bản sao lưu <t:1790000000:R>.").html;
+		assert.ok(/^Vừa có bản sao lưu lúc [\d:/ ,]+\.$/u.test(time), time);
+		assert.ok(!time.includes("&lt;t:"), time);
+		assert.equal(discordText(guild, "<t:999999999999999:R> <b>").html, "&lt;t:999999999999999:R&gt; &lt;b&gt;");
+	});
+
+	test("assertAdjustableUser: thành viên thường qua; bot bị chặn; người đã rời server phải là tài khoản thật, không phải bot", async () =>
+	{
+		const harness = createWebHarness();
+		const { deps, world } = harness;
+		const member = await lookupMember(world.guild, PLAIN_USER);
+		await assertAdjustableUser(deps.adminActions, deps.client, member, PLAIN_USER);
+		const bot = await lookupMember(world.guild, "1554342618434109440");
+		await assert.rejects(assertAdjustableUser(deps.adminActions, deps.client, bot, "1554342618434109440"), { message: BOT_TARGET });
+		await assertAdjustableUser(deps.adminActions, deps.client, null, STRANGER);
+		await assert.rejects(assertAdjustableUser(deps.adminActions, deps.client, null, "310000000000000777"), { message: USER_NOT_FOUND });
+		harness.formerUsers.set("310000000000000888", { bot: true });
+		await assert.rejects(assertAdjustableUser(deps.adminActions, deps.client, null, "310000000000000888"), { message: BOT_TARGET });
+	});
+
+	test("trang Thành viên: ID không phải tài khoản Discord thì không xem, không chỉnh được điểm", async () =>
+	{
+		const harness = createWebHarness();
+		const auth = await login(harness, ADMIN_USER);
+		const unknown = "310000000000000777";
+		const view = await call(harness, `/g/${GUILD}/members/view?u=${unknown}`, { cookies: auth.cookies });
+		assert.equal(view.status, 400);
+		assert.ok(view.body.includes(USER_NOT_FOUND));
+		const post = await call(harness, `/g/${GUILD}/members/xp`, { cookies: auth.cookies, form: withCsrf(auth, { u: unknown, "so-xp": "10", huong: "cong", "ly-do": "" }) });
+		assert.equal(post.status, 303);
+		assert.equal(harness.services.activity.getProfile(GUILD, unknown).level.totalXp, 0);
 	});
 });

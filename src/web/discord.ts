@@ -34,15 +34,15 @@ export async function fetchMember(guild: Guild, userId: string): Promise<GuildMe
 }
 
 /**
- * Cho trang: thành viên `userId` lấy mới qua REST, không nhét vào cache thành viên của discord.js (bot không có intent
- * GuildMembers nên cache đó không tự dọn). null nếu người này không còn trong server. Discord lỗi thì ném UserError để trang
- * báo lỗi thay vì trang 500.
+ * Cho trang: thành viên `userId` lấy mới qua REST. null nếu người này không còn trong server. Discord lỗi thì ném UserError để
+ * trang báo lỗi thay vì trang 500. Kết quả vào cache thành viên của discord.js (như người đăng nhập ở fetchMember), để mention
+ * `<@id>` trong thông báo sau thao tác hiện được tên; chỉ có các thành viên admin vừa thao tác nên cache không phình.
  */
 export async function lookupMember(guild: Guild, userId: string): Promise<GuildMember | null>
 {
 	try
 	{
-		return await guild.members.fetch({ user: userId, force: true, cache: false });
+		return await guild.members.fetch({ user: userId, force: true });
 	}
 	catch (error)
 	{

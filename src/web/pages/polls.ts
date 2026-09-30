@@ -13,8 +13,7 @@ import { html, HtmlValue, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
-import { formatDateTime, memberLink, pager, parsePositiveId, queryPage } from "../widgets";
-import { HIDDEN_ITEM_TEXT, withMessageEditNote } from "./contributions";
+import { formatDateTime, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, queryPage, withMessageEditNote } from "../widgets";
 
 const PATH = "/polls";
 const VIEW_PATH = `${PATH}/view`;

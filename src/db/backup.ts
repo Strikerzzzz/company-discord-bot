@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 import { Db } from "./connection";
 import { Clock } from "../shared/clock";
@@ -40,15 +40,16 @@ export class BackupService
 	constructor(
 		private readonly db: Db,
 		readonly directory: string,
-		private readonly keep: number,
+		/** Số bản mới nhất giữ lại cho mỗi loại (BACKUP_KEEP). */
+		readonly keep: number,
 		private readonly clock: Clock,
 	)
 	{}
 
-	/** Danh sách file backup của một loại, cũ nhất trước (theo thời điểm ghi trong tên file). */
+	/** Danh sách file backup của một loại, cũ nhất trước (theo thời điểm ghi trong tên file). Chưa có thư mục thì rỗng (không tạo). */
 	list(kind: BackupKind = "auto"): string[]
 	{
-		mkdirSync(this.directory, { recursive: true });
+		if (!existsSync(this.directory)) return [];
 		return readdirSync(this.directory)
 			.map(name => ({ name, time: timeOf(kind, name) }))
 			.filter((entry): entry is { name: string; time: number } => entry.time !== null)

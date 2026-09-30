@@ -26,42 +26,25 @@ type Coverage =
 	| { options: readonly string[]; discordOnly: string }
 	| { options: readonly string[]; pending: string };
 
-const PHASE_17 = "Phase 17";
-
-/** Việc còn thiếu trên web lúc chốt DEC-041 (2026-09-30). Danh sách này chỉ được rút ngắn, không được thêm. */
-const PENDING_AT_DEC_041: ReadonlySet<string> = new Set([
-	"/admin xp view",
-	"/admin xp give",
-	"/admin xp remove",
-	"/admin xp reset",
-	"/admin xp reset-all",
-	"/admin contribution adjust",
-	"/admin contribution remove",
-	"/admin contribution reset",
-	"/admin contribution reset-all",
-	"/admin stats",
-	"/admin backup",
-	"/contribution view",
-	"/contribution list",
-	"/leaderboard",
-	"/poll close",
-	"/poll results",
-	"/poll list",
-]);
+/**
+ * Việc còn thiếu trên web. Lúc chốt DEC-041 (2026-09-30) có 17 mục; Phase 17 đã làm hết (DEC-044), nên từ nay không lệnh nào được
+ * xếp vào `pending`: tính năng mới phải có trang web ngay.
+ */
+const PENDING_AT_DEC_041: ReadonlySet<string> = new Set<string>();
 
 const COVERAGE: Readonly<Record<string, Coverage>> = {
-	"/admin xp view": { options: ["thanh-vien"], pending: PHASE_17 },
-	"/admin xp give": { options: ["ly-do", "so-xp", "thanh-vien"], pending: PHASE_17 },
-	"/admin xp remove": { options: ["ly-do", "so-xp", "thanh-vien"], pending: PHASE_17 },
-	"/admin xp reset": { options: ["thanh-vien"], pending: PHASE_17 },
-	"/admin xp reset-all": { options: ["xac-nhan"], pending: PHASE_17 },
-	"/admin contribution adjust": { options: ["diem", "ly-do", "thanh-vien"], pending: PHASE_17 },
-	"/admin contribution remove": { options: ["id"], pending: PHASE_17 },
-	"/admin contribution reset": { options: ["thanh-vien"], pending: PHASE_17 },
-	"/admin contribution reset-all": { options: ["xac-nhan"], pending: PHASE_17 },
-	"/admin stats": { options: [], pending: PHASE_17 },
+	"/admin xp view": { options: ["thanh-vien"], web: ["/members/view"] },
+	"/admin xp give": { options: ["ly-do", "so-xp", "thanh-vien"], web: ["/members/view"] },
+	"/admin xp remove": { options: ["ly-do", "so-xp", "thanh-vien"], web: ["/members/view"] },
+	"/admin xp reset": { options: ["thanh-vien"], web: ["/members/view"] },
+	"/admin xp reset-all": { options: ["xac-nhan"], web: ["/reset"] },
+	"/admin contribution adjust": { options: ["diem", "ly-do", "thanh-vien"], web: ["/members/view"] },
+	"/admin contribution remove": { options: ["id"], web: ["/contributions/view"] },
+	"/admin contribution reset": { options: ["thanh-vien"], web: ["/members/view"] },
+	"/admin contribution reset-all": { options: ["xac-nhan"], web: ["/reset"] },
+	"/admin stats": { options: [], web: ["/stats"] },
 	"/admin audit": { options: ["so-luong"], web: ["/audit"] },
-	"/admin backup": { options: [], pending: PHASE_17 },
+	"/admin backup": { options: [], web: ["/backup"] },
 	"/config view": { options: [], web: [""] },
 	"/config panel": { options: [], web: [""] },
 	"/config xp": {
@@ -91,17 +74,17 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 	"/config tier setup-roles": { options: [], web: ["/tiers"] },
 	"/config board": { options: ["kenh", "tat"], web: ["/board"] },
 	"/contribution submit": { options: ["link", "loai", "noi-dung", "tieu-de"], discordOnly: "thành viên đăng đóng góp vào kênh" },
-	"/contribution view": { options: ["id"], pending: PHASE_17 },
-	"/contribution list": { options: ["thanh-vien"], pending: PHASE_17 },
-	"/leaderboard": { options: ["ky", "loai", "pham-vi", "trang"], pending: PHASE_17 },
+	"/contribution view": { options: ["id"], web: ["/contributions/view"] },
+	"/contribution list": { options: ["thanh-vien"], web: ["/contributions"] },
+	"/leaderboard": { options: ["ky", "loai", "pham-vi", "trang"], web: ["/leaderboard"] },
 	"/ping": { options: [], discordOnly: "kiểm tra bot còn phản hồi, không có gì để quản lý" },
 	"/poll create": {
 		options: ["cau-hoi", "lua-chon", "nhieu-lua-chon", "thoi-han-phut", "xp"],
 		discordOnly: "đăng vote vào kênh; vote đã tạo được quản lý trên web",
 	},
-	"/poll close": { options: ["id"], pending: PHASE_17 },
-	"/poll results": { options: ["id"], pending: PHASE_17 },
-	"/poll list": { options: [], pending: PHASE_17 },
+	"/poll close": { options: ["id"], web: ["/polls/view"] },
+	"/poll results": { options: ["id"], web: ["/polls/view"] },
+	"/poll list": { options: [], web: ["/polls"] },
 	"/rank": { options: ["thanh-vien"], discordOnly: "thẻ hồ sơ trong Discord; admin xem hồ sơ thành viên như /admin xp view" },
 	"menu:Ghi nhận đóng góp": { options: [], discordOnly: "thành viên ghi nhận tin nhắn của người khác ngay trong Discord" },
 };

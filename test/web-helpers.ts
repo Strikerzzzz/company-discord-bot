@@ -213,6 +213,11 @@ export interface WebHarness
 	 * "search:<query>:<limit>".
 	 */
 	adminCalls: string[];
+	/**
+	 * Tài khoản Discord không còn trong server mà AdminActions.fetchUser giả vẫn tìm thấy (mặc định: STRANGER, không phải bot).
+	 * ID không có ở đây và không phải thành viên thì fetchUser trả null (không có tài khoản).
+	 */
+	formerUsers: Map<string, { bot: boolean }>;
 	/** Kết quả đồng bộ role danh hiệu giả trả về (mặc định: không đổi gì). Test gán để giả lập role được thêm/bỏ/bỏ qua. */
 	tierSync: { result: TierRoleSyncResult };
 }
@@ -248,6 +253,7 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 	const world = createWorld();
 	const boardCalls: string[] = [];
 	const adminCalls: string[] = [];
+	const formerUsers = new Map<string, { bot: boolean }>([[STRANGER, { bot: false }]]);
 	const tierSync = { result: { added: [], removed: [], skipped: [] } as TierRoleSyncResult };
 	const client = {
 		guilds: { cache: new Collection([[GUILD, world.guild]]) },
@@ -300,6 +306,13 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 			return Promise.resolve(found);
 		},
 		displays: (_client, _guild, userIds) => Promise.resolve(fakeDisplays(world, userIds)),
+		fetchUser: (_client, userId) =>
+		{
+			adminCalls.push(`fetchUser:${userId}`);
+			const spec = world.members.get(userId);
+			if (spec) return Promise.resolve({ bot: spec.bot ?? false });
+			return Promise.resolve(formerUsers.get(userId) ?? null);
+		},
 	};
 	const deps: WebDeps = {
 		client,
@@ -311,7 +324,7 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		liveBoardActions,
 		adminActions,
 	};
-	return { handler: createWebHandler(deps, modules), services, clock, world, deps, boardCalls, adminCalls, tierSync };
+	return { handler: createWebHandler(deps, modules), services, clock, world, deps, boardCalls, adminCalls, tierSync, formerUsers };
 }
 
 function jsonResponse(status: number, body: unknown): Response

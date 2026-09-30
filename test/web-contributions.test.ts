@@ -7,13 +7,8 @@ import type { Contribution, SubmitContributionInput } from "../src/modules/contr
 import { UserError } from "../src/shared/errors";
 import { PRIVATE_CHANNEL_LABEL } from "../src/web/format";
 import type { WebResponse } from "../src/web/http";
-import {
-	CONTRIBUTION_PAGE_SIZE,
-	HIDDEN_ITEM_TEXT,
-	INVALID_CONTRIBUTION_ID,
-	MESSAGE_EDIT_FAILED,
-	REMOVE_CONFIRM_REQUIRED,
-} from "../src/web/pages/contributions";
+import { CONTRIBUTION_PAGE_SIZE, INVALID_CONTRIBUTION_ID, REMOVE_CONFIRM_REQUIRED } from "../src/web/pages/contributions";
+import { HIDDEN_ITEM_TEXT, MESSAGE_EDIT_FAILED } from "../src/web/widgets";
 import { GUILD } from "./helpers";
 import {
 	addChannel,

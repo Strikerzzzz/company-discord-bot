@@ -14,7 +14,7 @@ import { html, HtmlValue, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
-import { formatDateTime, memberLink, pager, parsePositiveId, parseUserId, queryPage } from "../widgets";
+import { formatDateTime, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, parseUserId, queryPage, withMessageEditNote } from "../widgets";
 
 const PATH = "/contributions";
 const VIEW_PATH = `${PATH}/view`;
@@ -25,10 +25,6 @@ const STATUS_PARAM = "tt";
 const AUTHOR_PARAM = "u";
 const CONFIRM_FIELD = "xac-nhan";
 
-/** Thay cho tiêu đề (câu hỏi) của mục nằm trong kênh người đăng nhập không xem được; dùng chung với trang Vote. */
-export const HIDDEN_ITEM_TEXT = "🔒 Nằm trong kênh bạn không xem được";
-/** Nối vào thông báo khi bot không sửa được message đã đăng trong Discord; dùng chung với trang Vote. */
-export const MESSAGE_EDIT_FAILED = "Không sửa được message trong Discord (có thể message đã bị xoá hoặc bot mất quyền).";
 export const INVALID_CONTRIBUTION_ID = "Mã contribution không hợp lệ.";
 export const REMOVE_CONFIRM_REQUIRED = "Hãy tick ô xác nhận trước khi gỡ.";
 const INVALID_AUTHOR = "Tác giả phải là Discord user ID (17–20 chữ số) hoặc mention dạng <@ID>. Đang hiện contribution của mọi tác giả.";
@@ -40,12 +36,6 @@ const STATUS_OPTIONS: readonly { value: StatusFilter; label: string }[] = [
 	{ value: "removed", label: "Đã gỡ" },
 	{ value: "all", label: "Tất cả" },
 ];
-
-/** Thông báo kết quả, kèm cảnh báo nếu message đã đăng trong Discord (có `messageId`) không sửa được. */
-export function withMessageEditNote(text: string, refreshed: boolean, messageId: string | null): string
-{
-	return !refreshed && messageId !== null ? `${text}\n${MESSAGE_EDIT_FAILED}` : text;
-}
 
 /** Trạng thái lọc từ `?tt=`; giá trị khác (kể cả thiếu) là "active". */
 function statusFilter(query: URLSearchParams): StatusFilter

@@ -15,6 +15,17 @@ const POSITIVE_INT = /^\d{1,9}$/u;
 /** Avatar chỉ lấy từ CDN của Discord (CSP chỉ cho phép `img-src https://cdn.discordapp.com`). */
 const DISCORD_CDN = "https://cdn.discordapp.com/";
 
+/** Thay cho tiêu đề (câu hỏi) của mục nằm trong kênh người đăng nhập không xem được (contribution, vote). */
+export const HIDDEN_ITEM_TEXT = "🔒 Nằm trong kênh bạn không xem được";
+/** Nối vào thông báo khi bot không sửa được message đã đăng trong Discord. */
+export const MESSAGE_EDIT_FAILED = "Không sửa được message trong Discord (có thể message đã bị xoá hoặc bot mất quyền).";
+
+/** Thông báo kết quả, kèm cảnh báo nếu message đã đăng trong Discord (có `messageId`) không sửa được. */
+export function withMessageEditNote(text: string, refreshed: boolean, messageId: string | null): string
+{
+	return !refreshed && messageId !== null ? `${text}\n${MESSAGE_EDIT_FAILED}` : text;
+}
+
 const TIME_FORMAT = new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", dateStyle: "short", timeStyle: "short" });
 
 /** Ngày giờ theo giờ Việt Nam, ví dụ "30/9/26 09:04". */

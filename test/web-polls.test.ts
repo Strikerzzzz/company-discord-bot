@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { ChannelType } from "discord.js";
 import type { CreatePollInput, Poll } from "../src/modules/poll/types";
 import type { WebResponse } from "../src/web/http";
-import { HIDDEN_ITEM_TEXT, MESSAGE_EDIT_FAILED } from "../src/web/pages/contributions";
+import { HIDDEN_ITEM_TEXT, MESSAGE_EDIT_FAILED } from "../src/web/widgets";
 import { CLOSE_CONFIRM_REQUIRED, INVALID_POLL_ID, POLL_CREATE_NOTE, POLL_PAGE_SIZE } from "../src/web/pages/polls";
 import { GUILD } from "./helpers";
 import {

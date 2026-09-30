@@ -6,6 +6,7 @@ import {
 	AdjustTarget,
 	adjustMemberContribution,
 	adjustMemberXp,
+	assertAdjustableUser,
 	assertContributionDelta,
 	assertXpAmount,
 	BOT_TARGET,
@@ -16,13 +17,14 @@ import {
 	resetMemberContribution,
 	resetMemberXp,
 	syncMemberTierRoles,
+	USER_NOT_FOUND,
 } from "../../discord/adminOps";
 import { formatNumber } from "../../discord/format";
 import { MemberDisplay, UNKNOWN_MEMBER_NAME } from "../../discord/memberDirectory";
-import { signed } from "../../discord/views/admin";
+import { rankText, signed, XP_SOURCE_LABELS } from "../../discord/views/admin";
 import { levelInfo } from "../../modules/activity/levels";
 import { tierForLevel } from "../../modules/activity/tiers";
-import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activity/types";
+import { ActivityProfile, XpEventView } from "../../modules/activity/types";
 import { Contribution, ContributionProfile } from "../../modules/contribution/types";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
@@ -61,12 +63,6 @@ const SORT_TABS: readonly { key: SortKey; label: string }[] = [
 	{ key: "contribution", label: "🤝 Theo contribution" },
 ];
 
-const XP_SOURCE_LABELS: Readonly<Record<XpEventSource, string>> = {
-	message: "tin nhắn",
-	poll: "vote",
-	admin: "admin",
-};
-
 function sortOf(query: URLSearchParams): SortKey
 {
 	return query.get(SORT_PARAM) === "contribution" ? "contribution" : "xp";
@@ -75,11 +71,6 @@ function sortOf(query: URLSearchParams): SortKey
 function viewPath(userId: string): string
 {
 	return `${VIEW_PATH}?u=${userId}`;
-}
-
-function rankText(rank: number | null, totalRanked: number): string
-{
-	return rank === null ? "Chưa xếp hạng" : `#${formatNumber(rank)} / ${formatNumber(totalRanked)}`;
 }
 
 function stat(label: string, value: string): RawHtml
@@ -320,6 +311,18 @@ async function renderMemberView(ctx: GuildPageContext): Promise<WebResponse>
 	const userId = requireUserId(ctx.req.query.get("u"));
 	const member = await lookupMember(guild, userId);
 	const lead = "Hồ sơ Activity XP và contribution, như lệnh /admin xp view.";
+	const formerUser = member === null ? await deps.adminActions.fetchUser(deps.client, userId) : null;
+	if (member === null && formerUser === null) throw new UserError(USER_NOT_FOUND);
+
+	if (member === null && formerUser?.bot)
+	{
+		return renderPage(ctx, {
+			nav: "members",
+			title: UNKNOWN_MEMBER_NAME,
+			lead,
+			body: headerCard(ctx, userId, undefined, html`<div class="warn-box">${BOT_TARGET} Bot không nhận XP hay điểm contribution.</div>`),
+		});
+	}
 
 	if (member?.user.bot)
 	{
@@ -374,11 +377,14 @@ function formOf(ctx: GuildPageContext): URLSearchParams
 	return ctx.req.form ?? new URLSearchParams();
 }
 
-/** Lấy lại thành viên từ Discord (role mới nhất cho snapshot team), như option `thanh-vien` của lệnh; không cho thao tác với bot. */
+/**
+ * Lấy lại thành viên từ Discord (role mới nhất cho snapshot team), như option `thanh-vien` của lệnh: không cho thao tác với bot
+ * hay ID không phải tài khoản Discord (assertAdjustableUser).
+ */
 async function memberTarget(ctx: GuildPageContext, userId: string): Promise<MemberTarget>
 {
 	const member = await lookupMember(ctx.guild, userId);
-	if (member?.user.bot) throw new UserError(BOT_TARGET);
+	await assertAdjustableUser(ctx.deps.adminActions, ctx.deps.client, member, userId);
 	return {
 		member,
 		target: { guildId: ctx.guild.id, userId, roleIds: member ? [...member.roles.cache.keys()] : [], actorId: ctx.actorId },

@@ -312,7 +312,8 @@ export function tierRoleSyncLine(result: TierRoleSyncResult): string | null
 
 // ---------- Activity XP ----------
 
-const XP_SOURCE_LABELS: Record<XpEventSource, string> = {
+/** Nhãn nguồn của một biến động XP (dùng chung với trang Thành viên của web). */
+export const XP_SOURCE_LABELS: Readonly<Record<XpEventSource, string>> = {
 	message: "tin nhắn",
 	poll: "vote",
 	admin: "admin",
@@ -328,7 +329,8 @@ export function formatXpEvent(event: XpEventView): string
 	return event.voided ? `~~${line}~~ (đã huỷ)` : line;
 }
 
-function rankText(rank: number | null, totalRanked: number): string
+/** "#hạng / tổng" hoặc "Chưa xếp hạng" (dùng chung với trang Thành viên của web). */
+export function rankText(rank: number | null, totalRanked: number): string
 {
 	return rank === null ? "Chưa xếp hạng" : `#${formatNumber(rank)} / ${formatNumber(totalRanked)}`;
 }

@@ -30,6 +30,8 @@ export const MANUAL_BACKUP_COOLDOWN_MS = 10 * 60 * 1000;
 export const TIER_ROLE_REASON = "Danh hiệu theo level (admin điều chỉnh XP)";
 export const RESET_ALL_TIER_ROLE_NOTE = "Role danh hiệu sẽ tự cập nhật khi từng thành viên nhắn tin được XP.";
 export const BOT_TARGET = "Không thể thao tác với bot.";
+export const USER_NOT_FOUND = "Không tìm thấy tài khoản Discord có ID này.";
+export const USER_LOOKUP_UNAVAILABLE = "Không lấy được thông tin tài khoản từ Discord (Discord đang lỗi hoặc mạng chậm). Hãy thử lại sau ít phút.";
 const TITLE_DISPLAY_MAX = 100;
 
 /** Người được thao tác: `roleIds` là role hiện có (snapshot team, rỗng nếu đã rời server); `actorId` là admin thao tác. */
@@ -57,6 +59,30 @@ export interface AdminActions
 	searchMembers(guild: Guild, query: string, limit: number): Promise<GuildMember[]>;
 	/** Tên hiển thị và avatar của nhiều người (MemberDirectory của client, có cache). */
 	displays(client: DiscordClient, guild: Guild, userIds: readonly string[]): Promise<Map<string, MemberDisplay>>;
+	/**
+	 * Tài khoản Discord `userId` (kể cả người không còn trong server) qua REST: null nếu Discord báo không có tài khoản này.
+	 * Discord lỗi thì ném UserError(USER_LOOKUP_UNAVAILABLE).
+	 */
+	fetchUser(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>;
+}
+
+function isNotFound(error: unknown): boolean
+{
+	return typeof error === "object" && error !== null && "status" in error && error.status === 404;
+}
+
+async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>
+{
+	try
+	{
+		const user = await client.users.fetch(userId, { cache: false, force: true });
+		return { bot: user.bot };
+	}
+	catch (error)
+	{
+		if (isNotFound(error)) return null;
+		throw new UserError(USER_LOOKUP_UNAVAILABLE);
+	}
 }
 
 export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
@@ -65,7 +91,24 @@ export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
 	syncTierRoles,
 	searchMembers: async (guild, query, limit) => [...(await guild.members.search({ query, limit, cache: false })).values()],
 	displays: (client, guild, userIds) => client.members.resolve(guild, userIds),
+	fetchUser: fetchUserOrNull,
 };
+
+/**
+ * Người được chỉnh điểm phải là tài khoản Discord thật và không phải bot, như option `thanh-vien` của lệnh `/admin`. `member`
+ * là thành viên vừa lấy từ Discord (null nếu không còn trong server): khi đó hỏi tài khoản qua `actions.fetchUser`.
+ */
+export async function assertAdjustableUser(actions: AdminActions, client: DiscordClient, member: GuildMember | null, userId: string): Promise<void>
+{
+	if (member)
+	{
+		if (member.user.bot) throw new UserError(BOT_TARGET);
+		return;
+	}
+	const user = await actions.fetchUser(client, userId);
+	if (user === null) throw new UserError(USER_NOT_FOUND);
+	if (user.bot) throw new UserError(BOT_TARGET);
+}
 
 /** UserError nếu `input` (đã bỏ khoảng trắng hai đầu) khác RESET_CONFIRMATION. */
 export function assertResetConfirmation(input: string): void
