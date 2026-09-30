@@ -1,9 +1,10 @@
-// Thao tác quản trị điểm, contribution, vote và sao lưu dùng chung cho lệnh `/admin`, `/poll close` (tầng Discord) và trang
-// web quản trị (DEC-041), để hai nơi luôn cùng quy tắc. Lỗi hiển thị cho người dùng là UserError; thông báo trả về dùng
+// Thao tác quản trị điểm, contribution và sao lưu dùng chung cho lệnh `/admin` (tầng Discord) và trang web quản trị (DEC-041),
+// để hai nơi luôn cùng quy tắc. Sửa message vote sau khi đóng cũng đi qua AdminActions.refreshPoll. Lỗi hiển thị cho người dùng là UserError; thông báo trả về dùng
 // markdown/mention của Discord (web tự chuyển sang HTML bằng discordText).
 import { basename } from "path";
 import type { Guild, GuildMember } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
+import type { BackupService } from "../db/backup";
 import { levelInfo } from "../modules/activity/levels";
 import { Contribution } from "../modules/contribution/types";
 import { TierRoleServiceApi } from "../modules/gamification/types";
@@ -11,6 +12,7 @@ import { Poll } from "../modules/poll/types";
 import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
 import { formatNumber, relativeTime, userMention } from "./format";
+import { isNotFoundError } from "./guards";
 import { MemberDisplay } from "./memberDirectory";
 import { refreshContributionMessage } from "./messages";
 import { refreshPollMessage } from "./pollScheduler";
@@ -66,11 +68,6 @@ export interface AdminActions
 	fetchUser(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>;
 }
 
-function isNotFound(error: unknown): boolean
-{
-	return typeof error === "object" && error !== null && "status" in error && error.status === 404;
-}
-
 async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>
 {
 	try
@@ -80,7 +77,7 @@ async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{
 	}
 	catch (error)
 	{
-		if (isNotFound(error)) return null;
+		if (isNotFoundError(error)) return null;
 		throw new UserError(USER_LOOKUP_UNAVAILABLE);
 	}
 }
@@ -230,9 +227,18 @@ export async function syncMemberTierRoles(actions: AdminActions, services: AppSe
 	return tierRoleSyncLine(result);
 }
 
-/** UserError nếu vừa có bản sao lưu thủ công trong MANUAL_BACKUP_COOLDOWN_MS. Bản mang thời điểm tương lai không chặn. */
+export const BACKUP_IN_PROGRESS = "Đang có một bản sao lưu thủ công chạy dở. Hãy đợi ít giây rồi thử lại.";
+
+/** Bản sao lưu thủ công đang chạy (lệnh và web chạy chung process), để hai yêu cầu đến cùng lúc không cùng qua bước kiểm tra. */
+const runningManualBackups = new WeakSet<BackupService>();
+
+/**
+ * UserError nếu đang có bản sao lưu thủ công chạy dở, hoặc vừa có bản thủ công trong MANUAL_BACKUP_COOLDOWN_MS. Bản mang thời điểm
+ * tương lai không chặn.
+ */
 export function assertManualBackupAllowed(services: AppServices): void
 {
+	if (runningManualBackups.has(services.backup)) throw new UserError(BACKUP_IN_PROGRESS);
 	const latest = services.backup.latestBackupAt("manual");
 	const now = services.clock.now();
 	if (latest !== null && latest <= now && now - latest < MANUAL_BACKUP_COOLDOWN_MS)
@@ -243,10 +249,22 @@ export function assertManualBackupAllowed(services: AppServices): void
 	}
 }
 
-/** Tạo bản sao lưu thủ công và ghi audit "backup.manual"; trả về thông báo kèm tên file (không có đường dẫn). */
+/**
+ * Tạo bản sao lưu thủ công và ghi audit "backup.manual"; trả về thông báo kèm tên file (không có đường dẫn). Kiểm tra lại
+ * assertManualBackupAllowed và đánh dấu "đang chạy" trước lần `await` đầu tiên, nên các yêu cầu đến cùng lúc chỉ một yêu cầu chạy.
+ */
 export async function createManualBackup(services: AppServices, guildId: string, actorId: string): Promise<string>
 {
-	const file = basename(await services.backup.createBackup("manual"));
-	services.audit.record(guildId, actorId, "backup.manual", null, { file });
-	return `Đã sao lưu database: \`${file}\`.`;
+	assertManualBackupAllowed(services);
+	runningManualBackups.add(services.backup);
+	try
+	{
+		const file = basename(await services.backup.createBackup("manual"));
+		services.audit.record(guildId, actorId, "backup.manual", null, { file });
+		return `Đã sao lưu database: \`${file}\`.`;
+	}
+	finally
+	{
+		runningManualBackups.delete(services.backup);
+	}
 }

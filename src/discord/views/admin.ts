@@ -580,6 +580,7 @@ function detailLabel(key: string): string
 function detailValue(key: string, value: unknown, action: AuditAction | null): string
 {
 	if (value === null && action === "channel.set" && CHANNEL_FALLBACK_KEYS.has(key)) return "dùng giá trị chung";
+	if (value === null && key === "levelUpChannelId") return SETTING_DISPLAY.levelUpChannelId.format(null);
 	if (value === null || value === undefined) return "không có";
 	if (typeof value === "boolean") return onOff(value);
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);

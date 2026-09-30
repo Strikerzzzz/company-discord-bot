@@ -9,6 +9,8 @@ import { logger } from "../shared/logger";
 
 /** Lý do ghi vào audit log của Discord khi bot đổi role danh hiệu. */
 const TIER_ROLE_REASON = "Danh hiệu theo level";
+/** Khoảng tối thiểu giữa hai lần ghi cảnh báo "kênh thông báo lên level hỏng" của cùng một server, để log không bị lặp mỗi lần lên level. */
+const BROKEN_CHANNEL_WARN_INTERVAL_MS = 10 * 60 * 1000;
 
 // Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023), thông báo lên level hoặc lên bậc theo giọng văn của bộ danh hiệu
 // guild đang dùng (DEC-029, DEC-033), rồi đồng bộ role danh hiệu (DEC-031). Không ghi log nội dung tin nhắn; lỗi của service
@@ -16,6 +18,8 @@ const TIER_ROLE_REASON = "Danh hiệu theo level";
 export default class MessageCreate extends Event
 {
 	name = Events.MessageCreate;
+	/** Lần gần nhất đã cảnh báo kênh thông báo hỏng, theo guild. */
+	private readonly brokenChannelWarnedAt = new Map<string, number>();
 
 	async execute(message: Message): Promise<void>
 	{
@@ -79,10 +83,19 @@ export default class MessageCreate extends Event
 		const configured = message.guild.channels.cache.get(configuredId);
 		if (!configured?.isTextBased() || !this.canSendIn(configured))
 		{
-			logger.warn(`Không gửi được thông báo lên level: kênh thông báo "${configuredId}" không còn hoặc bot thiếu quyền gửi tin ở đó.`);
+			this.warnBrokenChannel(message.guildId, configuredId);
 			return null;
 		}
 		return configured;
+	}
+
+	private warnBrokenChannel(guildId: string, channelId: string): void
+	{
+		const now = this.client.services.clock.now();
+		const last = this.brokenChannelWarnedAt.get(guildId);
+		if (last !== undefined && now - last < BROKEN_CHANNEL_WARN_INTERVAL_MS) return;
+		this.brokenChannelWarnedAt.set(guildId, now);
+		logger.warn(`Không gửi được thông báo lên level: kênh thông báo "${channelId}" không còn hoặc bot thiếu quyền gửi tin ở đó (cảnh báo tối đa mỗi 10 phút).`);
 	}
 
 	/** Bot có quyền gửi tin ở channel này không (isSendable() chỉ kiểm tra loại channel, không kiểm tra quyền). */

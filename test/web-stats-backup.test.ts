@@ -7,7 +7,8 @@ import { ChannelType } from "discord.js";
 import { MANUAL_BACKUP_COOLDOWN_MS } from "../src/discord/adminOps";
 import { formatNumber } from "../src/discord/format";
 import { PRIVATE_CHANNEL_LABEL } from "../src/web/format";
-import { backupFileTime, NO_BACKUPS } from "../src/web/pages/backup";
+import { backupFileTime } from "../src/db/backup";
+import { NO_BACKUPS } from "../src/web/pages/backup";
 import { NO_CHANNEL_DATA } from "../src/web/pages/stats";
 import { SESSION_COOKIE } from "../src/web/server";
 import { formatDateTime } from "../src/web/widgets";
@@ -164,7 +165,7 @@ describe("web: trang Sao lưu (DEC-041)", () =>
 			const empty = await getPage(harness, auth, "/backup");
 			assert.equal(empty.split(NO_BACKUPS).length - 1, 2, "chưa có bản thủ công lẫn tự động");
 			assert.ok(empty.includes(`<form method="post" action="${pageUrl("/backup")}"><input type="hidden" name="_csrf" value="${auth.csrf}">`));
-			assert.ok(empty.includes(services.backup.directory.replace(/&/gu, "&amp;")), "hiện thư mục trên server");
+			assert.ok(!empty.includes(services.backup.directory.replace(/&/gu, "&amp;")), "không lộ đường dẫn thư mục trên server");
 			assert.equal(existsSync(services.backup.directory), false, "mở trang không tạo thư mục sao lưu");
 
 			const created = await call(harness, pageUrl("/backup"), { form: withCsrf(auth), cookies: auth.cookies });

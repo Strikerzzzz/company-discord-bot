@@ -1170,7 +1170,7 @@ describe("/admin", () =>
 		const { admin, context, backup, backupPath } = createHarness();
 		const fake = await run(admin, { subcommand: "backup" });
 		assert.deepEqual(backup.created, ["manual"]);
-		assert.deepEqual(backup.latestQueries, ["manual"]);
+		assert.deepEqual(backup.latestQueries, ["manual", "manual"], "kiểm tra cooldown trước khi defer, và kiểm lại ngay trước khi ghi");
 		assert.deepEqual(fake.deferred, [{ flags: MessageFlags.Ephemeral }]);
 		assert.deepEqual(fake.edits, ["Đã sao lưu database: `bot-manual-2026-01-01T00-00-00-000Z.db`."]);
 		assert.ok(!String(fake.edits[0]).includes("backups"));

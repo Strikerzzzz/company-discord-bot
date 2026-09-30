@@ -30,6 +30,12 @@ function timeOf(kind: BackupKind, fileName: string): number | null
 	return Number.isNaN(time) ? null : time;
 }
 
+/** Thời điểm tạo của một file sao lưu (bản tự động hay thủ công) đọc từ tên file; null nếu tên không đúng dạng. */
+export function backupFileTime(fileName: string): number | null
+{
+	return timeOf("manual", fileName) ?? timeOf("auto", fileName);
+}
+
 /**
  * Sao lưu database hàng ngày (DEC-017) bằng online backup của better-sqlite3 (an toàn khi đang chạy với WAL).
  * Mỗi loại (auto/manual) giữ `keep` bản mới nhất, nên admin tạo nhiều bản thủ công không đẩy mất bản hàng ngày.

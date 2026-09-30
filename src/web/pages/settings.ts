@@ -1,7 +1,7 @@
 // Trang "Cài đặt điểm" của web quản trị (DEC-039): số của Activity XP, vote, contribution, thông báo lên level và kênh nhận
 // thông báo (DEC-043). Cùng quy tắc với `/config xp`, `/config poll`, `/config contribution` và form của `/config panel`
 // (panelSaveForm): đọc và kiểm tra mọi ô trước khi ghi, chỉ ghi ô có giá trị khác lúc vẽ trang để không đè thay đổi của admin khác.
-import { Guild, GuildMember } from "discord.js";
+import { Guild, GuildMember, PermissionFlagsBits } from "discord.js";
 import { isBoardChannel, resolveLevelUpChannel } from "../../discord/configOps";
 import { formatNumber } from "../../discord/format";
 import { describeSettingsPatch } from "../../discord/views/admin";
@@ -13,13 +13,13 @@ import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
+import { isSnowflake } from "../widgets";
 
 const PATH = "/settings";
 /** Tên input ẩn mang giá trị lúc vẽ của ô `key`. */
 const DRAWN_PREFIX = "d:";
 const ANNOUNCE_KEY = "levelUpAnnouncements";
 const ANNOUNCE_CHANNEL_KEY = "levelUpChannelId";
-const SNOWFLAKE = /^\d{17,20}$/u;
 
 export const SETTINGS_STALE_FORM = "Form đã cũ hoặc không hợp lệ, nên bot chưa lưu gì. Hãy tải lại trang rồi thử lại.";
 export const SETTINGS_UNCHANGED = "Không có gì thay đổi.";
@@ -105,6 +105,19 @@ Thông báo khi thành viên lên level</label>
 </div>`;
 }
 
+/** Lý do bot hiện không gửi được thông báo vào kênh đang đặt (kênh bị xoá, bot thiếu quyền); null nếu gửi được. */
+function brokenAnnounceChannel(guild: Guild, channelId: string): string | null
+{
+	const channel = guild.channels.cache.get(channelId);
+	if (!channel) return "Kênh đang đặt không còn trong server: bot không gửi thông báo lên level nữa. Hãy chọn kênh khác.";
+	const me = guild.members.me;
+	if (!me || !channel.permissionsFor(me).has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]))
+	{
+		return "Bot đang thiếu quyền View Channel hoặc Send Messages ở kênh này, nên không gửi được thông báo lên level. Hãy cấp lại quyền cho bot hoặc chọn kênh khác.";
+	}
+	return null;
+}
+
 /**
  * Ô chọn kênh nhận thông báo lên level (DEC-043): kênh văn bản và kênh thông báo mà người đăng nhập xem được, theo thứ tự trong
  * server. Kênh đang đặt luôn có trong danh sách (tên bị giấu nếu người đăng nhập không xem được, ghi rõ nếu kênh không còn).
@@ -117,8 +130,10 @@ function announceChannelField(guild: Guild, viewer: GuildMember, current: string
 	const listed = new Set(channels.map(channel => channel.id));
 	const options = channels.map(channel => html`<option value="${channel.id}"${channel.id === current ? html` selected` : ""}>${channelLabel(guild, channel.id, viewer)}</option>`);
 	const currentOption = current !== null && !listed.has(current) ? html`<option value="${current}" selected>${channelLabel(guild, current, viewer)}</option>` : "";
+	const broken = current === null ? null : brokenAnnounceChannel(guild, current);
 	return html`<div class="field">
 <label for="st-${ANNOUNCE_CHANNEL_KEY}">Kênh nhận thông báo lên level</label>
+${broken === null ? "" : html`<div class="warn-box">${broken}</div>`}
 <select id="st-${ANNOUNCE_CHANNEL_KEY}" name="${ANNOUNCE_CHANNEL_KEY}">
 <option value=""${current === null ? html` selected` : ""}>Kênh thành viên vừa nhắn (mặc định)</option>
 ${currentOption}${options}
@@ -165,7 +180,7 @@ function drawnFlag(form: URLSearchParams, key: string): boolean
 function channelValue(form: URLSearchParams, name: string): string
 {
 	const text = form.get(name) ?? "";
-	if (text !== "" && !SNOWFLAKE.test(text)) throw new UserError(SETTINGS_STALE_FORM);
+	if (text !== "" && !isSnowflake(text)) throw new UserError(SETTINGS_STALE_FORM);
 	return text;
 }
 

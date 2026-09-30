@@ -56,24 +56,69 @@ export function assertCanSendMessages(interaction: Interaction): void
 	if (!canSendMessages(interaction)) throw new UserError("Bạn không có quyền gửi tin nhắn trong kênh này.");
 }
 
-/** Channel theo ID (cache trước, sau đó REST); null nếu không còn hoặc bot không truy cập được. */
-async function fetchChannel(client: DiscordClient, channelId: string): Promise<Channel | null>
+/** Discord báo "không có" (HTTP 404: Unknown Channel, Unknown Member, Unknown User...). */
+export function isNotFoundError(error: unknown): boolean
 {
-	try
-	{
-		return await client.channels.fetch(channelId);
-	}
-	catch (error)
-	{
-		logger.debug(`Không lấy được channel "${channelId}" để kiểm tra quyền xem:`, error);
-		return null;
-	}
+	return typeof error === "object" && error !== null && "status" in error && error.status === 404;
 }
+
+/**
+ * Kết quả kiểm tra quyền xem kênh gốc của một mục (contribution, vote):
+ * - "visible": xem được;
+ * - "hidden": thiếu View Channel, hoặc thread riêng tư mà không phải thành viên thread và không có Manage Threads;
+ * - "gone": Discord báo kênh không còn (404), hoặc kênh không thuộc server này;
+ * - "unknown": không lấy được kênh vì lỗi khác (thiếu quyền truy cập, Discord lỗi, mạng) hoặc không tính được quyền.
+ */
+export type ChannelAccess = "visible" | "hidden" | "gone" | "unknown";
 
 /** Phần của channel cần để tính quyền; khai báo riêng để gọi được trên mọi loại channel của guild. */
 interface PermissionScope
 {
 	permissionsFor(member: GuildMember | string): Readonly<PermissionsBitField> | null;
+}
+
+/** Channel theo ID (cache trước, sau đó REST); "gone" nếu Discord báo không còn, "unknown" nếu lỗi khác. */
+async function fetchChannel(client: DiscordClient, channelId: string): Promise<Channel | "gone" | "unknown">
+{
+	try
+	{
+		return await client.channels.fetch(channelId) ?? "gone";
+	}
+	catch (error)
+	{
+		logger.debug(`Không lấy được channel "${channelId}" để kiểm tra quyền xem:`, error);
+		return isNotFoundError(error) ? "gone" : "unknown";
+	}
+}
+
+/**
+ * Quyền xem kênh `channelId` của `member` (GuildMember, hoặc user ID khi không có) trong server `guildId`. Lõi dùng chung cho
+ * lệnh Discord (canViewChannel) và trang web (src/web/discord.ts): mỗi nơi tự quyết cách xử lý "gone" và "unknown".
+ */
+export async function channelAccess(client: DiscordClient, guildId: string, channelId: string, member: GuildMember | string): Promise<ChannelAccess>
+{
+	const channel = await fetchChannel(client, channelId);
+	if (channel === "gone" || channel === "unknown") return channel;
+	if (channel.isDMBased() || channel.guildId !== guildId) return "gone";
+
+	const scope: PermissionScope = channel;
+	const permissions = scope.permissionsFor(member);
+	if (!permissions) return "unknown";
+	if (!permissions.has(PermissionFlagsBits.ViewChannel)) return "hidden";
+
+	if (channel.type === ChannelType.PrivateThread && !permissions.has(PermissionFlagsBits.ManageThreads))
+	{
+		try
+		{
+			await channel.members.fetch({ member: typeof member === "string" ? member : member.id });
+			return "visible";
+		}
+		catch
+		{
+			return "hidden";
+		}
+	}
+	return "visible";
 }
 
 /**
@@ -88,27 +133,11 @@ export async function canViewChannel(client: DiscordClient, interaction: Interac
 	if (channelId === null) return true;
 	if (!interaction.inGuild()) return false;
 
-	const channel = await fetchChannel(client, channelId);
-	if (!channel || channel.isDMBased() || channel.guildId !== interaction.guildId) return checkAdmin(interaction, client.services);
-
-	const scope: PermissionScope = channel;
-	const permissions = scope.permissionsFor(interaction.member instanceof GuildMember ? interaction.member : interaction.user.id);
-	if (!permissions) return checkAdmin(interaction, client.services);
-	if (!permissions.has(PermissionFlagsBits.ViewChannel)) return false;
-
-	if (channel.type === ChannelType.PrivateThread && !permissions.has(PermissionFlagsBits.ManageThreads))
-	{
-		try
-		{
-			await channel.members.fetch({ member: interaction.user.id });
-			return true;
-		}
-		catch
-		{
-			return false;
-		}
-	}
-	return true;
+	const member = interaction.member instanceof GuildMember ? interaction.member : interaction.user.id;
+	const access = await channelAccess(client, interaction.guildId, channelId, member);
+	if (access === "visible") return true;
+	if (access === "hidden") return false;
+	return checkAdmin(interaction, client.services);
 }
 
 /** Chỉ giữ các mục người gọi xem được (xem canViewChannel), giữ nguyên thứ tự; mỗi kênh chỉ kiểm tra một lần. */

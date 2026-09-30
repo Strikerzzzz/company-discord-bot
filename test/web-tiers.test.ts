@@ -20,6 +20,7 @@ import {
 	SELECTED_ROLE_UNAVAILABLE,
 	SET_CHANGED,
 } from "../src/web/pages/tiers";
+import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { GUILD } from "./helpers";
 import {
 	addRole,
@@ -487,6 +488,7 @@ describe("web: trang danh hiệu — tên bậc", () =>
 
 		const body = await getPage(t, auth);
 		assert.ok(/<button class="btn" type="submit" disabled>↺ Khôi phục tên mặc định/u.test(body));
+		t.harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		assertFlash(await submit(t, auth, "/reset-names", formFields(body, "/reset-names")), "ok", "vốn đang dùng tên mặc định");
 	});
 });
@@ -756,6 +758,7 @@ describe("web: trang danh hiệu — tạo/đồng bộ role", () =>
 
 		tierSets.select(GUILD, "rank-game", ADMIN_USER);
 		t.calls.length = 0;
+		t.harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		assertFlash(await fillAndSubmit(t, auth, "/setup", {}), "ok", "đổi tên <strong>8</strong>");
 		assert.equal(t.calls.filter(entry => entry.startsWith("edit:")).length, 8);
 		assert.ok(t.calls.includes(`edit:${mappings[0]?.roleId ?? ""}:🟤 Đồng`));

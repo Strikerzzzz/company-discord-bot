@@ -8,12 +8,12 @@ import { MemberDisplay } from "../../discord/memberDirectory";
 import { Poll, PollListQuery } from "../../modules/poll/types";
 import { UserError } from "../../shared/errors";
 import { canViewItemChannel, hiddenChannelIds } from "../discord";
-import { canViewChannel, channelLabel } from "../format";
-import { html, HtmlValue, RawHtml } from "../html";
+import { channelLabel } from "../format";
+import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
-import { formatDateTime, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, queryPage, withMessageEditNote } from "../widgets";
+import { formatDateTime, metaList, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, queryPage, withMessageEditNote } from "../widgets";
 
 const PATH = "/polls";
 const VIEW_PATH = `${PATH}/view`;
@@ -175,11 +175,6 @@ function resultsTable(poll: Poll): RawHtml
 Phiếu ẩn danh: chỉ có số phiếu, không ai xem được ai chọn gì.</p>`;
 }
 
-function metaList(rows: readonly (readonly [string, HtmlValue] | null)[]): RawHtml
-{
-	return html`<dl class="pl-meta">${rows.map(row => row === null ? "" : html`<dt>${row[0]}</dt><dd>${row[1]}</dd>`)}</dl>`;
-}
-
 function closeForm(ctx: GuildPageContext, poll: Poll): RawHtml
 {
 	return html`<section class="card danger-zone"><h2>Đóng vote</h2>
@@ -200,7 +195,7 @@ async function renderDetail(ctx: GuildPageContext): Promise<WebResponse>
 	const displays = await adminActions.displays(client, ctx.guild, [poll.creatorId]);
 	const messageUrl = poll.channelId !== null && poll.messageId !== null ? messageLink(poll.channelId, poll.messageId, poll.guildId) : null;
 
-	const meta = metaList([
+	const meta = metaList("pl-meta", [
 		["Trạng thái", STATE_BADGES[state]],
 		["Hình thức", `${poll.multiSelect ? "Chọn nhiều" : "Chọn một"} · Phiếu ẩn danh`],
 		["Người tham gia", formatNumber(poll.participants)],
@@ -242,14 +237,13 @@ async function close(ctx: GuildPageContext): Promise<WebResponse>
 }
 
 /**
- * Lỗi khi đóng quay về trang chi tiết nếu vote có thật và (theo cache) nằm trong kênh người đăng nhập xem được; còn lại ném để
- * server về danh sách, không chuyển tới trang chi tiết sẽ báo "không tìm thấy".
+ * Lỗi khi đóng quay về trang chi tiết nếu vote có thật; mã sai hoặc không có thì ném để server về danh sách. Vote ở kênh người
+ * đăng nhập không xem được thì trang chi tiết báo "không tìm thấy" (quy tắc xem kênh chỉ nằm ở canViewItemChannel).
  */
 function closeErrorRedirect(ctx: GuildPageContext): string
 {
 	const pollId = requirePollId(ctx.req.form?.get("id"));
-	const poll = ctx.deps.services.polls.get(ctx.guild.id, pollId);
-	if (!poll || (poll.channelId !== null && !canViewChannel(ctx.guild, poll.channelId, ctx.member))) throw notFound(pollId);
+	if (!ctx.deps.services.polls.get(ctx.guild.id, pollId)) throw notFound(pollId);
 	return viewPath(pollId);
 }
 

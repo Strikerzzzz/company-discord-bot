@@ -3,6 +3,7 @@
 // dẫn tải, vì file database chứa dữ liệu của mọi thành viên (chép ra ngoài server theo docs/DEPLOY.md mục 6).
 import { assertManualBackupAllowed, createManualBackup } from "../../discord/adminOps";
 import { formatNumber } from "../../discord/format";
+import { backupFileTime } from "../../db/backup";
 import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
@@ -11,19 +12,6 @@ import { formatDateTime } from "../widgets";
 
 const PATH = "/backup";
 export const NO_BACKUPS = "Chưa có bản nào.";
-
-/** Tên file sao lưu (`bot-<ISO>.db`, `bot-manual-<ISO>.db`, ISO đã thay `:` và `.` bằng `-`): lấy lại thời điểm UTC. */
-const BACKUP_FILE_TIME = /^bot-(?:manual-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.db$/u;
-
-/** Thời điểm tạo bản sao lưu đọc từ tên file; null nếu tên không đúng dạng. */
-export function backupFileTime(fileName: string): number | null
-{
-	const match = BACKUP_FILE_TIME.exec(fileName);
-	if (!match) return null;
-	const [, date, hour, minute, second, ms] = match;
-	const time = Date.parse(`${date}T${hour}:${minute}:${second}.${ms}Z`);
-	return Number.isNaN(time) ? null : time;
-}
 
 function backupRow(fileName: string): RawHtml
 {
@@ -58,7 +46,7 @@ người quản trị server (docs/DEPLOY.md mục 6).</div>
 </section>
 ${backupTable("Bản thủ công", backup.list("manual"), "Do admin tạo bằng nút trên hoặc lệnh /admin backup. Mới nhất trước.")}
 ${backupTable("Bản tự động", backup.list("auto"), "Bot kiểm tra mỗi giờ và tạo một bản khi bản gần nhất đã cũ hơn 24 giờ. Mới nhất trước.")}
-<p class="muted bk-dir">Mỗi loại giữ ${formatNumber(backup.keep)} bản mới nhất (biến môi trường BACKUP_KEEP). Thư mục trên server: <code>${backup.directory}</code></p>`,
+<p class="muted bk-dir">Mỗi loại giữ ${formatNumber(backup.keep)} bản mới nhất (biến môi trường BACKUP_KEEP), trong thư mục BACKUP_DIR trên server.</p>`,
 	});
 }
 

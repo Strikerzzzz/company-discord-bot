@@ -7,6 +7,7 @@ import type { CreatePollInput, Poll } from "../src/modules/poll/types";
 import type { WebResponse } from "../src/web/http";
 import { HIDDEN_ITEM_TEXT, MESSAGE_EDIT_FAILED } from "../src/web/widgets";
 import { CLOSE_CONFIRM_REQUIRED, INVALID_POLL_ID, POLL_CREATE_NOTE, POLL_PAGE_SIZE } from "../src/web/pages/polls";
+import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { GUILD } from "./helpers";
 import {
 	addChannel,
@@ -206,8 +207,11 @@ describe("web: trang Vote — chi tiết", () =>
 		for (const leak of ["Tăng lương", "Anh A", SECRET_CHANNEL_NAME]) assert.ok(!detail.body.includes(leak), leak);
 
 		const response = await closePoll(harness, auth, { id: String(secret.id), "xac-nhan": "1" });
-		assert.equal(response.headers.Location, pageUrl("/polls"), "không chuyển tới trang chi tiết không mở được");
-		assert.deepEqual(await flashAfter(harness, auth, response), { kind: "error", text: `Không tìm thấy vote #${secret.id}.` });
+		assert.equal(response.headers.Location, pageUrl(`/polls/view?id=${secret.id}`));
+		const back = await call(harness, response.headers.Location ?? "", { cookies: auth.cookies });
+		assert.equal(back.status, 400);
+		assert.ok(back.body.includes(`Không tìm thấy vote #${secret.id}.`));
+		assert.ok(!(await getPage(harness, auth, "/polls")).includes("class=\"flash"), "trang lỗi bỏ flash, không hiện muộn ở trang sau");
 		assert.equal(harness.services.polls.get(GUILD, secret.id)?.closedAt, null);
 		assert.deepEqual(harness.adminCalls, []);
 	});
@@ -238,6 +242,7 @@ describe("web: trang Vote — đóng vote", () =>
 		const after = await getPage(harness, auth, `/polls/view?id=${poll.id}`);
 		assert.ok(after.includes("badge\">Đã đóng") && after.includes("<dt>Đóng lúc</dt>") && !after.includes("name=\"xac-nhan\""));
 
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		const again = await closePoll(harness, auth, { id: String(poll.id), "xac-nhan": "1" });
 		assert.equal(again.headers.Location, detailUrl);
 		assert.deepEqual(await flashAfter(harness, auth, again), { kind: "error", text: "Vote này đã đóng." });
