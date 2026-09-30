@@ -92,6 +92,20 @@ describe("thông báo lên bậc", () =>
 		);
 	});
 
+	test("Mobile Legends: tên bậc tiếng Việt, tên gốc tiếng Anh làm phụ đề trong vế lên bậc", () =>
+	{
+		const set = TIER_SETS["mobile-legends"];
+		assert.equal(
+			promotionText(set, USER_A, tierByKey("bac-2", set), 3),
+			`🏆 Thăng hạng! <@${USER_A}> đã lên hạng Tinh Anh (Elite)! 🐏 Rank **Tinh Anh** · Level 3`,
+		);
+		assert.equal(
+			promotionText(set, USER_A, tierByKey("bac-8", set), 40),
+			`🏆 Thăng hạng! <@${USER_A}> đã đứng trên đỉnh Vinh Quang (Mythical Glory)! 🐲 Rank **Vinh Quang** · Level 40`,
+		);
+		assert.equal(levelUpText(set, USER_A, 4), `⚔️ <@${USER_A}> vừa lên **Level 4**, tiếp tục leo rank!`);
+	});
+
 	test("mọi bộ, mọi bậc: có vế lên bậc, emoji, tên, level, không sót placeholder và chỉ mention đúng người", () =>
 	{
 		for (const set of ALL_SETS)

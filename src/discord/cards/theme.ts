@@ -1,5 +1,5 @@
 import { isTierKey, isTierSetKey, Tier, TIER_KEYS, tierIndex as positionOfKey, TierSet, TierSetKey } from "../../modules/activity/tiers";
-import { cleanText, Ctx, drawSpacedText, fillRoundedRect, fitText, isHexColor, linearGradient, measureSpaced, mix, rgba, strokeRoundedRect } from "./draw";
+import { cleanText, Ctx, drawGlow, drawSpacedText, fillRoundedRect, fitText, Gradient, isHexColor, linearGradient, luminance, measureSpaced, mix, rgba, strokeRoundedRect } from "./draw";
 import { drawTierEmblem } from "./emblems";
 import { font } from "./fonts";
 
@@ -147,26 +147,65 @@ export function measureTierPill(ctx: Ctx, tier: Tier, height: number, maxWidth =
 	return pillLayout(ctx, tier, height, maxWidth).width;
 }
 
+/** Màu chữ riêng của bậc khi nằm trên nền màu bậc (`tier.textColor`), hoặc null nếu bậc không khai báo hay sai định dạng. */
+export function tierTextColor(tier: Tier): string | null
+{
+	return isHexColor(tier.textColor) ? tier.textColor : null;
+}
+
+/** Màu viền riêng của bậc (`tier.borderColor`), hoặc null nếu bậc không khai báo hay sai định dạng. */
+export function tierBorderColor(tier: Tier): string | null
+{
+	return isHexColor(tier.borderColor) ? tier.borderColor : null;
+}
+
 /**
- * Huy hiệu bậc dạng viên thuốc: nền tối pha màu bậc, viền gradient, biểu tượng theo bộ danh hiệu và tên viết hoa.
+ * Nền chip màu bậc: giữ `color` làm màu chủ đạo, ngả tối nhẹ khi chữ sáng và ngả sáng nhẹ khi chữ tối để chữ tương phản tốt hơn.
+ */
+function chipPaint(ctx: Ctx, color: string, text: string, y: number, height: number): Gradient
+{
+	const stops = luminance(text) > 0.5
+		? [mix(color, "#ffffff", 0.08), color, mix(color, "#000000", 0.22)]
+		: [mix(color, "#ffffff", 0.3), mix(color, "#ffffff", 0.1), color];
+	return linearGradient(ctx, 0, y, 0, y + height, stops);
+}
+
+/**
+ * Huy hiệu bậc dạng viên thuốc: biểu tượng theo bộ danh hiệu và tên viết hoa. Bậc có `textColor` vẽ thành chip nền màu bậc,
+ * chữ màu đó; bậc khác dùng nền tối pha màu bậc, viền gradient. Bậc có `borderColor` dùng màu đó cho viền.
  * Tên dài được thu nhỏ rồi cắt cho vừa `maxWidth`. Vẽ từ mép trái `x`, căn giữa theo `centerY`; trả về độ rộng.
  */
 export function drawTierPill(ctx: Ctx, tier: Tier, x: number, centerY: number, height: number, maxWidth = Number.POSITIVE_INFINITY): number
 {
 	const { color, from, to } = tierColors(tier);
+	const text = tierTextColor(tier);
+	const border = tierBorderColor(tier);
 	const layout = pillLayout(ctx, tier, height, maxWidth);
 	const y = centerY - height / 2;
+	const radius = height / 2;
 	ctx.save();
-	fillRoundedRect(ctx, x, y, layout.width, height, height / 2, PALETTE.night);
-	fillRoundedRect(ctx, x, y, layout.width, height, height / 2, linearGradient(ctx, x, y, x + layout.width, y, [rgba(from, 0.55), rgba(to, 0.22)]));
-	strokeRoundedRect(ctx, x + 0.75, y + 0.75, layout.width - 1.5, height - 1.5, height / 2, linearGradient(ctx, x, y, x + layout.width, y, [to, rgba(color, 0.35)]), 1.5);
+	if (text)
+	{
+		fillRoundedRect(ctx, x, y, layout.width, height, radius, chipPaint(ctx, color, text, y, height));
+		fillRoundedRect(ctx, x + height * 0.12, y + 1.5, layout.width - height * 0.24, height * 0.34, height * 0.17, "rgba(255, 255, 255, 0.14)");
+	}
+	else
+	{
+		fillRoundedRect(ctx, x, y, layout.width, height, radius, PALETTE.night);
+		fillRoundedRect(ctx, x, y, layout.width, height, radius, linearGradient(ctx, x, y, x + layout.width, y, [rgba(from, 0.55), rgba(to, 0.22)]));
+	}
+	const borderWidth = border ? Math.max(1.5, height * 0.07) : 1.5;
+	const borderPaint = border ?? (text ? mix(color, "#000000", 0.4) : linearGradient(ctx, x, y, x + layout.width, y, [to, rgba(color, 0.35)]));
+	strokeRoundedRect(ctx, x + borderWidth / 2, y + borderWidth / 2, layout.width - borderWidth, height - borderWidth, radius, borderPaint, borderWidth);
 
-	drawTierEmblem(ctx, tierSetKeyOf(tier), tierPosition(tier), x + layout.padding + layout.emblem / 2, centerY, layout.emblem, mix(color, "#ffffff", 0.2));
+	const emblemX = x + layout.padding + layout.emblem / 2;
+	if (text) drawGlow(ctx, emblemX, centerY, layout.emblem * 0.72, "#000000", 0.35);
+	drawTierEmblem(ctx, tierSetKeyOf(tier), tierPosition(tier), emblemX, centerY, layout.emblem, mix(color, "#ffffff", 0.2));
 
 	ctx.font = font(800, layout.fontSize);
 	ctx.textBaseline = "middle";
 	ctx.textAlign = "left";
-	ctx.fillStyle = mix(color, "#ffffff", 0.45);
+	ctx.fillStyle = text ?? mix(color, "#ffffff", 0.45);
 	drawSpacedText(ctx, layout.label, x + layout.padding + layout.emblem + layout.gap, centerY + 1, layout.spacing);
 	ctx.restore();
 	return layout.width;

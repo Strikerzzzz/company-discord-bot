@@ -4,7 +4,8 @@ import { drawLeaf, drawSparkle } from "./icons";
 /*
  * Hoa văn nền của ảnh thẻ: sao/linh khí, dải linh khí, núi xa, trận pháp bát quái, tia sét, hào quang (tu tiên);
  * lưới tổ ong, dải sáng, núi gãy khúc (rank game); núi thuỷ mặc, trăng, cánh hoa, vệt kiếm khí, ấn triện (kiếm hiệp);
- * đồi, lá rơi, đom đóm (cây xanh); tinh vân, chân trời hành tinh, sao băng, thiên hà (vũ trụ).
+ * đồi, lá rơi, đom đóm (cây xanh); tinh vân, chân trời hành tinh, sao băng, thiên hà (vũ trụ);
+ * bản đồ ba đường, thành trì, mảnh pha lê (Mobile Legends).
  * Hàm nào có yếu tố ngẫu nhiên đều nhận PRNG có seed (mulberry32) để ảnh giống hệt nhau giữa các lần vẽ cùng dữ liệu.
  */
 
@@ -741,6 +742,153 @@ export function drawGalaxy(ctx: Ctx, rand: Random, x: number, y: number, radius:
 		const size = 0.9 + rand() * 2 * (1 - t * 0.5);
 		ctx.fillStyle = rgba(rand() < 0.35 ? "#ffffff" : color, 0.3 + 0.65 * (1 - t));
 		ctx.fillRect(px - size / 2, py - size / 2, size, size);
+	}
+	ctx.restore();
+}
+
+/**
+ * Bản đồ ba đường kiểu MOBA (Mobile Legends) cách điệu, tâm (x, y), cạnh `size`: nhà chính ở góc dưới trái và góc trên phải,
+ * đường trên, đường giữa (chéo), đường dưới, dòng sông chéo ngược và vài trụ trên mỗi đường. Chỉ là nét mờ trang trí.
+ */
+export function drawLaneMap(ctx: Ctx, x: number, y: number, size: number, color: string, river: string, alpha: number): void
+{
+	const h = size / 2;
+	const inset = size * 0.1;
+	const left = x - h + inset;
+	const right = x + h - inset;
+	const top = y - h + inset;
+	const bottom = y + h - inset;
+	ctx.save();
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.strokeStyle = rgba(river, alpha * 1.1);
+	ctx.lineWidth = size * 0.045;
+	ctx.beginPath();
+	ctx.moveTo(x - h + size * 0.04, y - h + size * 0.04);
+	ctx.bezierCurveTo(x - h * 0.2, y - h * 0.55, x + h * 0.2, y + h * 0.55, x + h - size * 0.04, y + h - size * 0.04);
+	ctx.stroke();
+
+	ctx.strokeStyle = rgba(color, alpha * 1.2);
+	ctx.lineWidth = size * 0.03;
+	ctx.beginPath();
+	ctx.moveTo(left, bottom);
+	ctx.lineTo(left, top);
+	ctx.lineTo(right, top);
+	ctx.moveTo(left, bottom);
+	ctx.lineTo(right, bottom);
+	ctx.lineTo(right, top);
+	ctx.moveTo(left, bottom);
+	ctx.lineTo(right, top);
+	ctx.stroke();
+
+	const towers: [number, number][] = [
+		[left, y + h * 0.35], [left, y - h * 0.3], [x - h * 0.3, top], [x + h * 0.35, top],
+		[x - h * 0.35, bottom], [x + h * 0.3, bottom], [right, y + h * 0.3], [right, y - h * 0.35],
+		[x - h * 0.3, y + h * 0.3], [x + h * 0.3, y - h * 0.3],
+	];
+	for (const [tx, ty] of towers) fillCircle(ctx, tx, ty, size * 0.03, rgba(color, alpha * 1.8));
+	const bases: [number, number][] = [[left, bottom], [right, top]];
+	for (const [bx, by] of bases)
+	{
+		drawGlow(ctx, bx, by, size * 0.16, color, alpha * 2.2);
+		strokeCircle(ctx, bx, by, size * 0.06, rgba(color, alpha * 2), size * 0.02);
+	}
+	ctx.restore();
+}
+
+export interface FortressLayer
+{
+	color: string;
+	/** Mặt tường thành (tỉ lệ 0..1 tính từ đỉnh vùng vẽ). */
+	base: number;
+	/** Chiều cao tối đa của tháp so với mặt tường. */
+	height: number;
+}
+
+/** Bóng thành trì và trụ tháp (mái nhọn hoặc lỗ châu mai) nối bằng tường răng cưa, nhiều lớp mờ dần về xa. */
+export function drawFortress(ctx: Ctx, rand: Random, area: Area, layers: readonly FortressLayer[]): void
+{
+	const bottom = area.y + area.height;
+	const end = area.x + area.width;
+	ctx.save();
+	for (const layer of layers)
+	{
+		const wall = area.y + area.height * layer.base;
+		ctx.beginPath();
+		ctx.moveTo(area.x, bottom);
+		ctx.lineTo(area.x, wall);
+		let x = area.x;
+		while (x < end)
+		{
+			const wallEnd = Math.min(end, x + 50 + rand() * 110);
+			for (let tooth = x; tooth < wallEnd; tooth += 12)
+			{
+				const toothEnd = Math.min(tooth + 6, wallEnd);
+				ctx.lineTo(tooth, wall);
+				ctx.lineTo(tooth, wall - 5);
+				ctx.lineTo(toothEnd, wall - 5);
+				ctx.lineTo(toothEnd, wall);
+			}
+			x = wallEnd;
+			if (x >= end) break;
+			const width = 16 + rand() * 16;
+			const towerTop = wall - layer.height * (0.55 + rand() * 0.45);
+			ctx.lineTo(x, wall);
+			ctx.lineTo(x, towerTop);
+			if (rand() < 0.55)
+			{
+				ctx.lineTo(x - 3, towerTop);
+				ctx.lineTo(x + width / 2, towerTop - width * 0.95);
+				ctx.lineTo(x + width + 3, towerTop);
+			}
+			else
+			{
+				ctx.lineTo(x, towerTop - 7);
+				ctx.lineTo(x + width * 0.3, towerTop - 7);
+				ctx.lineTo(x + width * 0.3, towerTop);
+				ctx.lineTo(x + width * 0.7, towerTop);
+				ctx.lineTo(x + width * 0.7, towerTop - 7);
+				ctx.lineTo(x + width, towerTop - 7);
+			}
+			ctx.lineTo(x + width, towerTop);
+			ctx.lineTo(x + width, wall);
+			x += width;
+		}
+		ctx.lineTo(end, wall);
+		ctx.lineTo(end, bottom);
+		ctx.closePath();
+		ctx.fillStyle = layer.color;
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
+/** Mảnh pha lê năng lượng lơ lửng: hình thoi thuôn dài, mảnh lớn có quầng sáng. Bỏ qua các mảnh rơi vào vùng `avoid`. */
+export function drawShards(ctx: Ctx, rand: Random, area: Area, count: number, colors: readonly string[], avoid: readonly Area[] = []): void
+{
+	ctx.save();
+	for (let index = 0; index < count; index++)
+	{
+		const x = area.x + rand() * area.width;
+		const y = area.y + rand() * area.height;
+		const length = 3 + Math.pow(rand(), 2) * 9;
+		const angle = (rand() - 0.5) * 0.9;
+		const alpha = 0.3 + rand() * 0.5;
+		const color = colors[Math.floor(rand() * colors.length) % colors.length] ?? "#ffffff";
+		if (inside(avoid, x, y)) continue;
+		if (length > 7) drawGlow(ctx, x, y, length * 1.8, color, alpha * 0.35);
+		ctx.save();
+		ctx.translate(x, y);
+		ctx.rotate(angle);
+		ctx.beginPath();
+		ctx.moveTo(0, -length);
+		ctx.lineTo(length * 0.32, -length * 0.1);
+		ctx.lineTo(0, length * 0.7);
+		ctx.lineTo(-length * 0.32, -length * 0.1);
+		ctx.closePath();
+		ctx.fillStyle = linearGradient(ctx, -length * 0.32, 0, length * 0.32, 0, [rgba(mix(color, "#ffffff", 0.6), alpha), rgba(color, alpha), rgba(mix(color, "#000000", 0.3), alpha)]);
+		ctx.fill();
+		ctx.restore();
 	}
 	ctx.restore();
 }

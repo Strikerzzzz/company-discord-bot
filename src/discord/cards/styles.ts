@@ -7,11 +7,13 @@ import {
 	drawFallingLeaves,
 	drawFireflies,
 	drawFormation,
+	drawFortress,
 	drawGalaxy,
 	drawHexGrid,
 	drawHills,
 	drawHorizon,
 	drawInkMountains,
+	drawLaneMap,
 	drawLensFlare,
 	drawLightning,
 	drawMoon,
@@ -21,15 +23,17 @@ import {
 	drawQiStreams,
 	drawRidges,
 	drawSeal,
+	drawShards,
 	drawShootingStar,
 	drawSlash,
 	drawSparks,
 	drawStarfield,
 	drawSunburst,
 } from "./decor";
-import { Ctx, drawGlow, fillCircle, mix, Random, rgba, strokeCircle } from "./draw";
+import { Ctx, drawGlow, fillCircle, linearGradient, mix, Random, rgba, strokeCircle } from "./draw";
 import { drawCloudCurl, drawLeaf, drawPlanet, drawSparkle } from "./icons";
-import { drawEnsoFrame, drawHexCrest, drawOrbitFrame, drawVineWreath, FrameOptions } from "./frames";
+import { drawTierEmblem } from "./emblems";
+import { drawArenaFrame, drawEnsoFrame, drawHexCrest, drawOrbitFrame, drawVineWreath, FrameOptions } from "./frames";
 import { PALETTE } from "./theme";
 
 /*
@@ -492,12 +496,113 @@ const VU_TRU_STYLE: CardStyle = {
 	},
 };
 
+const MLBB_TOP: TopColors = { primary: "#f7c85a", secondary: "#b84bd6", light: "#fff1c9" };
+const MLBB_RIVER = "#4fb3d9";
+const MLBB_VIOLET = "#7b3fe4";
+const MLBB_SOFT = "#c9b2f5";
+
+/** Góc viền thẻ bậc cao nhất: hai nét vàng vuốt dọc theo mép, viên đá tím ở góc. */
+function gemCorners(ctx: Ctx, width: number, height: number, colors: TopColors): void
+{
+	const inset = 15;
+	const arm = 46;
+	const corners: [number, number, number, number][] = [[inset, inset, 1, 1], [width - inset, inset, -1, 1], [inset, height - inset, 1, -1], [width - inset, height - inset, -1, -1]];
+	ctx.save();
+	ctx.lineCap = "round";
+	for (const [x, y, sx, sy] of corners)
+	{
+		ctx.strokeStyle = colors.primary;
+		ctx.lineWidth = 3;
+		ctx.beginPath();
+		ctx.moveTo(x, y + sy * arm);
+		ctx.quadraticCurveTo(x, y, x + sx * arm, y);
+		ctx.stroke();
+		ctx.strokeStyle = rgba(colors.light, 0.6);
+		ctx.lineWidth = 1.2;
+		ctx.beginPath();
+		ctx.moveTo(x + sx * 7, y + sy * (arm - 12));
+		ctx.quadraticCurveTo(x + sx * 7, y + sy * 7, x + sx * (arm - 12), y + sy * 7);
+		ctx.stroke();
+		const gx = x + sx * 10;
+		const gy = y + sy * 10;
+		drawGlow(ctx, gx, gy, 14, colors.secondary, 0.6);
+		ctx.beginPath();
+		ctx.moveTo(gx, gy - 7);
+		ctx.lineTo(gx + 5, gy);
+		ctx.lineTo(gx, gy + 7);
+		ctx.lineTo(gx - 5, gy);
+		ctx.closePath();
+		ctx.fillStyle = linearGradient(ctx, gx - 5, gy - 7, gx + 5, gy + 7, [mix(colors.secondary, "#ffffff", 0.6), colors.secondary, mix(colors.secondary, "#000000", 0.3)]);
+		ctx.fill();
+		ctx.strokeStyle = colors.primary;
+		ctx.lineWidth = 1;
+		ctx.stroke();
+	}
+	ctx.restore();
+}
+
+const MOBILE_LEGENDS_STYLE: CardStyle = {
+	key: "mobile-legends",
+	top: MLBB_TOP,
+	boardAccent: MLBB_VIOLET,
+	rankBackground: (ctx, scene) =>
+	{
+		const { rand, colors, complexity } = scene;
+		drawLaneMap(ctx, scene.width - 82, 84, 150, mix(colors.to, "#ffffff", 0.3), MLBB_RIVER, 0.06);
+		drawBeams(ctx, rand, { x: 300, y: 0, width: scene.width - 300, height: 280 }, 2 + Math.floor(complexity / 3), scene.top ? MLBB_TOP.primary : colors.to, scene.top ? 0.09 : 0.06);
+		drawFortress(ctx, rand, ground(scene), [
+			{ color: rgba(mix(colors.from, "#ffffff", 0.15), 0.14), base: 0.4, height: 62 },
+			{ color: rgba(mix(colors.from, PALETTE.night, 0.5), 0.4), base: 0.6, height: 46 },
+			{ color: rgba(PALETTE.night, 0.62), base: 0.8, height: 30 },
+		]);
+		drawShards(ctx, rand, full(scene), 26 + complexity * 6, ["#ffffff", colors.color, colors.to], scene.textAreas);
+		if (scene.top) drawShards(ctx, rand, full(scene), 18, [MLBB_TOP.primary, MLBB_TOP.secondary], scene.textAreas);
+	},
+	rankFrame: (ctx, scene) =>
+	{
+		if (scene.top)
+		{
+			drawSunburst(ctx, scene.avatarX, scene.avatarY, scene.frameRadius + 96, MLBB_TOP.primary, 0.22, 18, 0, 0.36);
+			drawSunburst(ctx, scene.avatarX, scene.avatarY, scene.frameRadius + 72, MLBB_TOP.secondary, 0.18, 18, Math.PI / 18, 0.3);
+		}
+		drawArenaFrame(ctx, scene.avatarX, scene.avatarY, scene.frameRadius, frameOptions(scene, MLBB_TOP.primary));
+	},
+	rankFront: (ctx, scene) =>
+	{
+		const x = scene.avatarX;
+		const y = scene.avatarY + scene.frameRadius * 0.74;
+		drawGlow(ctx, x, y, 52, PALETTE.night, 0.75);
+		drawTierEmblem(ctx, "mobile-legends", scene.complexity, x, y, 76, mix(scene.colors.color, "#ffffff", 0.15));
+	},
+	corners: (ctx, width, height) => gemCorners(ctx, width, height, MLBB_TOP),
+	boardBackground: (ctx, rand, width, height, avoid) =>
+	{
+		drawGlow(ctx, 72, 70, 340, PALETTE.gold, 0.2);
+		drawGlow(ctx, width - 80, 20, 380, MLBB_VIOLET, 0.2);
+		drawGlow(ctx, width / 2, height + 60, 520, "#1e3a8a", 0.22);
+		drawLaneMap(ctx, width - 96, 70, 128, MLBB_SOFT, MLBB_RIVER, 0.09);
+		drawFortress(ctx, rand, { x: 0, y: height - 150, width, height: 150 }, [
+			{ color: "rgba(123, 63, 228, 0.07)", base: 0.35, height: 60 },
+			{ color: "rgba(30, 58, 138, 0.1)", base: 0.6, height: 44 },
+		]);
+		drawShards(ctx, rand, { x: 0, y: 0, width, height }, Math.round(height / 9), ["#ffffff", PALETTE.gold, MLBB_SOFT], avoid);
+	},
+	boardRing: (ctx, x, y, radius) => drawArenaFrame(ctx, x, y, radius, { color: PALETTE.gold, accent: PALETTE.gold, complexity: 4, detailed: false }),
+	boardSoft: MLBB_SOFT,
+	boardEmpty: (ctx, x, y, radius) =>
+	{
+		emptyGlow(ctx, x, y, radius, MLBB_VIOLET, MLBB_TOP.primary);
+		drawArenaFrame(ctx, x, y, radius, { color: MLBB_SOFT, accent: MLBB_TOP.primary, complexity: 6, detailed: false });
+	},
+};
+
 const STYLES: Readonly<Record<TierSetKey, CardStyle>> = {
 	"tu-tien": TU_TIEN_STYLE,
 	"rank-game": RANK_GAME_STYLE,
 	"kiem-hiep": KIEM_HIEP_STYLE,
 	"cay-xanh": CAY_XANH_STYLE,
 	"vu-tru": VU_TRU_STYLE,
+	"mobile-legends": MOBILE_LEGENDS_STYLE,
 };
 
 /** Phong cách của bộ `setKey`; bộ lạ hoặc null thì trả về phong cách trung tính. */

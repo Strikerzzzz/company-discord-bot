@@ -37,9 +37,9 @@ function setup(): { context: ReturnType<typeof createTestContext>; service: Tier
 
 describe("dữ liệu bộ danh hiệu", () =>
 {
-	test("5 bộ, mỗi bộ đúng 8 bậc theo khoá vị trí, mốc level chung, màu hợp lệ, template đủ placeholder", () =>
+	test("6 bộ, mỗi bộ đúng 8 bậc theo khoá vị trí, mốc level chung, màu hợp lệ, template đủ placeholder", () =>
 	{
-		assert.deepEqual([...TIER_SET_KEYS], ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru"]);
+		assert.deepEqual([...TIER_SET_KEYS], ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru", "mobile-legends"]);
 		for (const key of TIER_SET_KEYS)
 		{
 			const set = TIER_SETS[key];
@@ -56,6 +56,8 @@ describe("dữ liệu bộ danh hiệu", () =>
 				assert.match(tier.gradient[0], HEX);
 				assert.match(tier.gradient[1], HEX);
 				assert.ok(tier.name.length > 0 && tier.emoji.length > 0 && tier.breakthrough.length > 0);
+				if (tier.textColor !== undefined) assert.match(tier.textColor, HEX);
+				if (tier.borderColor !== undefined) assert.match(tier.borderColor, HEX);
 			}
 			assert.ok(set.texts.levelUp.length > 0);
 			for (const template of set.texts.levelUp) assert.ok(template.includes("{user}") && template.includes("{level}"), `${key}: levelUp thiếu placeholder`);
@@ -73,6 +75,30 @@ describe("dữ liệu bộ danh hiệu", () =>
 			assert.equal(tierUp(14, 15, set)?.name, set.tiers[4].name);
 		}
 		assert.equal(tierForLevel(40, TIER_SETS["rank-game"]).name, "Thách Đấu");
+	});
+
+	test("bộ Mobile Legends: tên tiếng Việt, màu chủ đạo, màu chữ trên nền màu bậc và viền đỏ của bậc 8 đúng thông số đã duyệt", () =>
+	{
+		const set = TIER_SETS["mobile-legends"];
+		assert.equal(set.name, "Mobile Legends");
+		assert.ok(set.description.includes("Warrior → Mythical Glory"), "mô tả kèm tên gốc tiếng Anh");
+		assert.equal(set.texts.tierLabel, "Rank");
+		assert.deepEqual(set.tiers.map(tier => [tier.name, tier.color, tier.textColor]), [
+			["Đấu Sĩ", "#b06a3b", "#ffffff"],
+			["Tinh Anh", "#8a9bb0", "#16212e"],
+			["Cao Thủ", "#e3a62b", "#3a2500"],
+			["Đại Cao Thủ", "#4fb3d9", "#062f3f"],
+			["Sử Thi", "#22a79a", "#04302b"],
+			["Huyền Thoại", "#e5842a", "#3a1a00"],
+			["Thần Thoại", "#b84bd6", "#ffffff"],
+			["Vinh Quang", "#7b3fe4", "#ffffff"],
+		]);
+		assert.deepEqual(set.tiers.map(tier => tier.borderColor ?? null), [null, null, null, null, null, null, null, "#e0364b"]);
+		const english = ["Warrior", "Elite", "Master", "Grandmaster", "Epic", "Legend", "Mythic", "Mythical Glory"];
+		set.tiers.forEach((tier, index) => assert.ok(tier.breakthrough.includes(`${tier.name} (${english[index]})`), tier.breakthrough));
+		assert.equal(new Set(set.tiers.map(tier => tier.emoji)).size, 8, "mỗi bậc một emoji");
+		const others = TIER_SET_KEYS.filter(key => key !== "mobile-legends").flatMap(key => TIER_SETS[key].tiers);
+		assert.ok(others.every(tier => tier.textColor === undefined && tier.borderColor === undefined), "các bộ khác giữ cách vẽ cũ");
 	});
 
 	test("applyTierOverrides chỉ thay tên/emoji có giá trị, giữ màu và mốc", () =>

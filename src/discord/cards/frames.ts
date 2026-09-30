@@ -1,5 +1,5 @@
-import { Ctx, drawGlow, fillCircle, linearGradient, mix, rgba, strokeCircle, TAU } from "./draw";
-import { drawCloudCurl, drawCrown, drawFlower, drawLeaf, drawPlanet, drawSparkle, drawSword, hexagonPath } from "./icons";
+import { Ctx, drawGlow, fillCircle, Gradient, linearGradient, mix, rgba, strokeCircle, TAU } from "./draw";
+import { drawCloudCurl, drawCrown, drawFlower, drawLeaf, drawPlanet, drawSparkle, drawSword, hexagonPath, starPath } from "./icons";
 
 /*
  * Khung trang trí quanh avatar của từng bộ danh hiệu (khung tu tiên là trận pháp bát quái trong decor.ts).
@@ -549,6 +549,180 @@ export function drawOrbitFrame(ctx: Ctx, x: number, y: number, radius: number, o
 	{
 		const sparkles: [number, number, number][] = [[-0.95, -0.55, 9], [0.9, -0.7, 7], [0.98, 0.5, 6], [-0.8, 0.78, 6]];
 		for (const [sx, sy, size] of sparkles) drawSparkle(ctx, x + sx * radius, y + sy * radius, size * k, mix(accent, "#ffffff", 0.5));
+	}
+	ctx.restore();
+}
+
+const ARENA_INK = "#0a0d1b";
+
+function arenaMetal(ctx: Ctx, x: number, y: number, radius: number, color: string): Gradient
+{
+	return linearGradient(ctx, x, y - radius, x, y + radius, [mix(color, "#ffffff", 0.6), color, mix(color, "#000000", 0.35), mix(color, "#ffffff", 0.2)]);
+}
+
+/** Lông cánh dạng lưỡi của khung đấu trường, từ gốc (rx, ry) theo hướng (dx, dy) đã chuẩn hoá. */
+function arenaFeather(ctx: Ctx, rx: number, ry: number, dx: number, dy: number, length: number, width: number, color: string): void
+{
+	const tipX = rx + dx * length;
+	const tipY = ry + dy * length;
+	const nx = -dy;
+	const ny = dx;
+	const mx = (rx + tipX) / 2;
+	const my = (ry + tipY) / 2;
+	ctx.beginPath();
+	ctx.moveTo(rx + nx * width * 0.5, ry + ny * width * 0.5);
+	ctx.quadraticCurveTo(mx + nx * width, my + ny * width, tipX, tipY);
+	ctx.quadraticCurveTo(mx - nx * width * 0.7, my - ny * width * 0.7, rx - nx * width * 0.5, ry - ny * width * 0.5);
+	ctx.closePath();
+	ctx.fillStyle = linearGradient(ctx, rx, ry, tipX, tipY, [mix(color, "#000000", 0.2), color, mix(color, "#ffffff", 0.45)]);
+	ctx.fill();
+	ctx.strokeStyle = rgba(ARENA_INK, 0.7);
+	ctx.lineWidth = Math.max(0.6, width * 0.1);
+	ctx.stroke();
+}
+
+/**
+ * Khung đấu trường (Mobile Legends): vòng kim loại dày như khung rank, dãy 8 ngôi sao ở cung trên chia hai bên (sáng tới bậc hiện tại).
+ * Từ bậc 1 thêm vòng trong; 2 bốn đinh tán hình thoi; 3 lưỡi chắn hai bên và viên đá trên đỉnh; 4 cung ngoài; 5 cánh; 6 cánh dày hơn
+ * và đá quý hai bên; 7 vương miện, cánh và lưỡi màu nhấn, đá đỏ.
+ */
+export function drawArenaFrame(ctx: Ctx, x: number, y: number, radius: number, options: FrameOptions): void
+{
+	const { color, accent, complexity } = options;
+	const k = scale(radius);
+	const metal = complexity >= 7 ? accent : color;
+	const ringR = radius - 6 * k;
+	const ringW = Math.max(2, 10 * k);
+	ctx.save();
+	ctx.lineJoin = "round";
+	ctx.lineCap = "round";
+
+	if (complexity >= 5)
+	{
+		const feathers = complexity >= 6 ? 5 : 3;
+		for (const side of [-1, 1])
+		{
+			for (let index = feathers - 1; index >= 0; index--)
+			{
+				const t = index / (feathers - 1);
+				const angle = -0.62 + t * 1.05;
+				const length = (complexity >= 6 ? 74 : 56) * k * (1 - t * 0.38);
+				const rootX = x + side * radius * 0.84;
+				const rootY = y - radius * 0.18 + t * radius * 0.36;
+				const shade = index % 2 === 0 ? metal : mix(metal, "#000000", 0.15);
+				arenaFeather(ctx, rootX, rootY, side * Math.cos(angle), Math.sin(angle), length, 15 * k, shade);
+			}
+		}
+	}
+
+	if (complexity >= 3)
+	{
+		for (const side of [-1, 1])
+		{
+			ctx.beginPath();
+			ctx.moveTo(x + side * (radius - 6 * k), y - 13 * k);
+			ctx.lineTo(x + side * (radius + 28 * k), y);
+			ctx.lineTo(x + side * (radius - 6 * k), y + 13 * k);
+			ctx.closePath();
+			ctx.fillStyle = arenaMetal(ctx, x, y, 14 * k, metal);
+			ctx.fill();
+			ctx.strokeStyle = rgba(ARENA_INK, 0.75);
+			ctx.lineWidth = Math.max(0.6, 1.4 * k);
+			ctx.stroke();
+		}
+	}
+
+	if (complexity >= 4)
+	{
+		ctx.strokeStyle = rgba(color, 0.6);
+		ctx.lineWidth = Math.max(0.8, 2.4 * k);
+		for (const center of [Math.PI / 4, (Math.PI * 3) / 4, (Math.PI * 5) / 4, (Math.PI * 7) / 4])
+		{
+			ctx.beginPath();
+			ctx.arc(x, y, radius + 12 * k, center - 0.32, center + 0.32);
+			ctx.stroke();
+		}
+	}
+
+	strokeCircle(ctx, x, y, ringR, rgba(ARENA_INK, 0.85), ringW + Math.max(1.5, 3 * k));
+	strokeCircle(ctx, x, y, ringR, arenaMetal(ctx, x, y, radius, metal), ringW);
+	strokeCircle(ctx, x, y, ringR - ringW * 0.28, rgba("#ffffff", 0.28), Math.max(0.6, 1.2 * k));
+	if (complexity >= 1) strokeCircle(ctx, x, y, radius - 22 * k, rgba(color, 0.45), Math.max(0.6, 1.5 * k));
+
+	if (complexity >= 2)
+	{
+		for (const angle of [Math.PI / 4, (Math.PI * 3) / 4, (Math.PI * 5) / 4, (Math.PI * 7) / 4])
+		{
+			const px = x + Math.cos(angle) * ringR;
+			const py = y + Math.sin(angle) * ringR;
+			drawGlow(ctx, px, py, 12 * k, color, 0.5);
+			diamond(ctx, px, py, 7 * k);
+			ctx.fillStyle = mix(metal, "#ffffff", 0.55);
+			ctx.fill();
+			ctx.strokeStyle = rgba(ARENA_INK, 0.8);
+			ctx.lineWidth = Math.max(0.6, 1.2 * k);
+			ctx.stroke();
+		}
+	}
+
+	if (complexity >= 6)
+	{
+		const gem = complexity >= 7 ? "#e0364b" : "#4fb3d9";
+		for (const side of [-1, 1])
+		{
+			const gx = x + side * ringR;
+			drawGlow(ctx, gx, y, 16 * k, gem, 0.6);
+			fillCircle(ctx, gx, y, 7.5 * k, mix(metal, "#ffffff", 0.3));
+			fillCircle(ctx, gx, y, 5.5 * k, gem);
+			fillCircle(ctx, gx - 1.8 * k, y - 1.8 * k, 1.8 * k, rgba("#ffffff", 0.85));
+		}
+	}
+
+	if (options.detailed)
+	{
+		for (let index = 0; index < 8; index++)
+		{
+			const half = index < 4 ? -1 : 1;
+			const step = index < 4 ? 3 - index : index - 4;
+			const angle = -Math.PI / 2 + half * (0.3 + step * 0.17);
+			const px = x + Math.cos(angle) * (radius + 12 * k);
+			const py = y + Math.sin(angle) * (radius + 12 * k);
+			starPath(ctx, px, py, 8 * k, 3.6 * k, 5);
+			if (index <= complexity)
+			{
+				drawGlow(ctx, px, py, 13 * k, accent, 0.5);
+				starPath(ctx, px, py, 8 * k, 3.6 * k, 5);
+				ctx.fillStyle = mix(accent, "#ffffff", 0.3);
+				ctx.fill();
+				ctx.strokeStyle = rgba(ARENA_INK, 0.8);
+				ctx.lineWidth = Math.max(0.6, 1 * k);
+				ctx.stroke();
+			}
+			else
+			{
+				ctx.fillStyle = rgba(ARENA_INK, 0.8);
+				ctx.fill();
+				ctx.strokeStyle = rgba(color, 0.55);
+				ctx.lineWidth = Math.max(0.6, 1.2 * k);
+				ctx.stroke();
+			}
+		}
+	}
+
+	if (complexity >= 7)
+	{
+		drawGlow(ctx, x, y - ringR - 10 * k, 40 * k, accent, 0.45);
+		drawCrown(ctx, x, y - ringR - 10 * k, 50 * k, accent);
+	}
+	else if (complexity >= 3)
+	{
+		drawGlow(ctx, x, y - ringR, 14 * k, color, 0.6);
+		diamond(ctx, x, y - ringR, 10 * k);
+		ctx.fillStyle = mix(metal, "#ffffff", 0.5);
+		ctx.fill();
+		ctx.strokeStyle = rgba(ARENA_INK, 0.8);
+		ctx.lineWidth = Math.max(0.6, 1.2 * k);
+		ctx.stroke();
 	}
 	ctx.restore();
 }

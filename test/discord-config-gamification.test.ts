@@ -381,7 +381,7 @@ describe("định nghĩa /config tier, board, poll gioi-han-xp-ngay", () =>
 		assert.equal(role.required, true);
 	});
 
-	test("tier style: 5 bộ (tên kèm bậc đầu → bậc cuối); rename: ten không bắt buộc", () =>
+	test("tier style: 6 bộ (tên kèm bậc đầu → bậc cuối); rename: ten không bắt buộc", () =>
 	{
 		const style = optionAt(json.options, "tier", "style", "bo");
 		assert.equal(style.type, ApplicationCommandOptionType.String);
@@ -391,6 +391,7 @@ describe("định nghĩa /config tier, board, poll gioi-han-xp-ngay", () =>
 			assert.deepEqual(style.choices?.map(choice => choice.value), [...TIER_SET_KEYS]);
 			assert.equal(style.choices?.[0].name, "Tu tiên (Luyện Khí → Độ Kiếp)");
 			assert.equal(style.choices?.[1].name, "Rank game (Đồng → Thách Đấu)");
+			assert.equal(style.choices?.[5].name, "Mobile Legends (Đấu Sĩ → Vinh Quang)");
 		}
 		const ten = optionAt(json.options, "tier", "rename", "ten");
 		assert.equal(ten.type, ApplicationCommandOptionType.String);

@@ -12,7 +12,7 @@ export const TIER_KEYS = ["bac-1", "bac-2", "bac-3", "bac-4", "bac-5", "bac-6", 
 
 export type TierKey = (typeof TIER_KEYS)[number];
 
-export const TIER_SET_KEYS = ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru"] as const;
+export const TIER_SET_KEYS = ["tu-tien", "rank-game", "kiem-hiep", "cay-xanh", "vu-tru", "mobile-legends"] as const;
 
 export type TierSetKey = (typeof TIER_SET_KEYS)[number];
 
@@ -34,6 +34,13 @@ export interface Tier
 	color: string;
 	/** Hai màu gradient "#rrggbb" cho ảnh thẻ, từ trái sang phải. */
 	gradient: readonly [string, string];
+	/**
+	 * Màu chữ "#rrggbb" khi chữ nằm trên nền màu của bậc. Có trường này thì nhãn bậc trên ảnh là chip nền `color`, chữ màu này;
+	 * không có thì nhãn là nền tối pha màu bậc như trước.
+	 */
+	textColor?: string;
+	/** Màu viền "#rrggbb" riêng của bậc (viền nhãn bậc, khung thẻ ở bậc cao nhất); không có thì dùng màu theo bộ. */
+	borderColor?: string;
 	/**
 	 * Vế câu trong thông báo lên bậc: "@A đã {breakthrough}". Chứa tên mặc định của bậc, nên khi admin đổi tên bậc
 	 * thì tầng hiển thị dùng vế trung tính "vượt mốc Level N" thay thế (DEC-033).
@@ -234,6 +241,43 @@ const VU_TRU: TierSet = {
 	]),
 };
 
+const MOBILE_LEGENDS: TierSet = {
+	key: "mobile-legends",
+	name: "Mobile Legends",
+	description: "Đấu Sĩ → Vinh Quang (Warrior → Mythical Glory): leo rank Mobile Legends",
+	texts: {
+		tierLabel: "Rank",
+		levelUp: [
+			"⚔️ {user} vừa lên **Level {level}**, tiếp tục leo rank!",
+			"🎮 Victory! {user} đã đạt **Level {level}**.",
+			"🛡️ Farm đều tay, {user} lên **Level {level}**!",
+			"🔥 Chuỗi thắng chưa dừng: {user} đạt **Level {level}**!",
+		],
+		promotion: "🏆 Thăng hạng! {user} đã {phrase}! {emoji} Rank **{tier}** · Level {level}",
+		maxTier: "Đã đạt Vinh Quang (Mythical Glory)",
+		idleToday: "Hôm nay chưa vào trận",
+		cardName: "thẻ rank",
+	},
+	tiers: buildTiers("mobile-legends", [
+		{ name: "Đấu Sĩ", emoji: "🦅", color: "#b06a3b", gradient: ["#54331c", "#d1a98d"], textColor: "#ffffff", breakthrough: "ra trận với rank Đấu Sĩ (Warrior)" },
+		{ name: "Tinh Anh", emoji: "🐏", color: "#8a9bb0", gradient: ["#424a54", "#bbc5d1"], textColor: "#16212e", breakthrough: "lên hạng Tinh Anh (Elite)" },
+		{ name: "Cao Thủ", emoji: "🦁", color: "#e3a62b", gradient: ["#6d5015", "#efcb84"], textColor: "#3a2500", breakthrough: "leo lên rank Cao Thủ (Master)" },
+		{ name: "Đại Cao Thủ", emoji: "🐺", color: "#4fb3d9", gradient: ["#265668", "#99d3e9"], textColor: "#062f3f", breakthrough: "chinh phục rank Đại Cao Thủ (Grandmaster)" },
+		{ name: "Sử Thi", emoji: "🦏", color: "#22a79a", gradient: ["#10504a", "#7fccc4"], textColor: "#04302b", breakthrough: "bứt phá lên rank Sử Thi (Epic)" },
+		{ name: "Huyền Thoại", emoji: "👑", color: "#e5842a", gradient: ["#6e3f14", "#f0b883"], textColor: "#3a1a00", breakthrough: "ghi danh vào hàng Huyền Thoại (Legend)" },
+		{ name: "Thần Thoại", emoji: "🐉", color: "#b84bd6", gradient: ["#582467", "#d697e7"], textColor: "#ffffff", breakthrough: "chạm mốc Thần Thoại (Mythic)" },
+		{
+			name: "Vinh Quang",
+			emoji: "🐲",
+			color: "#7b3fe4",
+			gradient: ["#3b1e6d", "#b290ef"],
+			textColor: "#ffffff",
+			borderColor: "#e0364b",
+			breakthrough: "đứng trên đỉnh Vinh Quang (Mythical Glory)",
+		},
+	]),
+};
+
 /** Các bộ có sẵn, theo thứ tự hiển thị trong menu chọn. */
 export const TIER_SETS: Readonly<Record<TierSetKey, TierSet>> = {
 	"tu-tien": TU_TIEN,
@@ -241,6 +285,7 @@ export const TIER_SETS: Readonly<Record<TierSetKey, TierSet>> = {
 	"kiem-hiep": KIEM_HIEP,
 	"cay-xanh": CAY_XANH,
 	"vu-tru": VU_TRU,
+	"mobile-legends": MOBILE_LEGENDS,
 };
 
 /** Bộ mặc định (Tu tiên), dùng khi guild chưa chọn bộ. */
