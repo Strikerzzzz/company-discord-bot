@@ -466,6 +466,17 @@ Admin cấu hình bot bằng trình duyệt: thấy toàn bộ kênh cùng lúc,
 
 #### Bật trang web
 
+**Cách nhanh trên server hiện tại (DEC-036):** làm Bước 1 bên dưới trên portal, rồi chạy script `deploy/enable-web.sh` (đã chép vào `~/deploy/`):
+```bash
+ssh -t tiennt@192.168.0.206 "sudo bash ~/deploy/enable-web.sh http://192.168.0.206:8787 && sudo bash ~/deploy/start.sh"
+```
+- Script hỏi Client Secret ngay trong terminal (dán vào không hiện chữ, không vào lịch sử lệnh).
+- Script ghi `WEB_PORT`, `WEB_BASE_URL`, `WEB_HOST` (IP trong URL) và `DISCORD_CLIENT_SECRET` vào `.env`, giữ nguyên các dòng khác.
+- Script mở cổng trên `ufw` chỉ cho các dải mạng nội bộ (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+- `start.sh` chạy selfcheck, không có ❌ thì khởi động lại bot.
+
+Muốn làm tay thì theo các bước dưới.
+
 **Bước 1: Discord Developer Portal.** Vào https://discord.com/developers/applications, chọn app "ezOne Bot" (Application ID `1554342618434109440`). Giao diện portal có thể là tiếng Việt ("Ứng dụng", "OAuth2", "Bot").
 
 1. Tab **OAuth2** → mục **Client Secret** → bấm "Reset Secret" → chép secret mới.
