@@ -438,6 +438,29 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Schema: migration 6 thêm cột `guild_settings.level_up_channel_id` (NULL = kênh vừa nhắn). Backup cũ khôi phục vào code mới thì tự migrate; code cũ gặp DB mới thì từ chối chạy, như mọi migration.
   - Server ezOne sẽ đặt kênh `#🤖bot-commands` sau khi cập nhật.
 
+### DEC-044 — Phase 18: chọn tất cả, nhiều role quyền, bộ danh hiệu Mobile Legends
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("các cái ô checkbox thì cần có ô chọn tất cả nữa nhé", "ô chọn quyền cho chọn nhiều nhiều nhé", "thêm 1 bộ level rank mới như cái ảnh tôi gửi", "bộ kia rank trong Mobile Legends nhé"; kèm ảnh trang Team, trang Quyền và 8 huy hiệu rank)
+- **Nội dung:**
+  - **Chọn tất cả / bỏ chọn tất cả** cho bảng ô tick trên web (trang Team, Kênh tính XP, bảng role của trang Quyền):
+    - làm bằng link `?chon=tat-ca|bo-het`: trang vẽ lại với mọi ô đã tick hoặc bỏ tick; bot chưa lưu gì cho tới khi admin bấm Lưu;
+    - không thêm JavaScript: CSP của web vẫn cấm script (DEC-039).
+  - **Nhiều role admin bot và nhiều role được tạo vote** (quy tắc quyền do người phụ trách quyết):
+    - mỗi loại tối đa 25 role;
+    - có **một** role trong danh sách admin là admin bot, như có quyền Manage Server; có một role trong danh sách tạo vote là tạo được vote;
+    - mỗi role vẫn qua các kiểm tra cũ: không phải @everyone, role do integration quản lý hay role danh hiệu.
+    - Schema: migration 7, bảng `guild_role_grants`, chép giá trị cũ sang; hai cột cũ `admin_role_id` và `poll_creator_role_id` về NULL, không dùng nữa.
+    - Nơi đổi:
+      - lệnh `/config admin-role them|bo|bo-het`;
+      - lệnh `/config poll role-tao-vote|bo-role-tao-vote|xoa-role-tao-vote`;
+      - `/config panel`: menu chọn nhiều role;
+      - web, trang Quyền: bảng ô tick.
+  - **Bộ danh hiệu thứ 6 "Mobile Legends"** (khoá `mobile-legends`):
+    - 8 bậc cùng mốc level như các bộ khác, tên như trong game: Warrior, Elite, Master, Grandmaster, Epic, Legend, Mythic, Mythical Glory;
+    - huy hiệu trên ảnh thẻ do bot tự vẽ bằng canvas, theo màu và hình gợi ý của rank. Không dùng ảnh huy hiệu gốc của game (bản quyền);
+    - chọn được ở mọi nơi như các bộ khác (web, `/config tier style`, bảng danh hiệu).
+  - Làm trên branch `phase-18/quick-wins` (tách từ Phase 17), có review trước khi merge.
+
 ---
 
 ## Đang chờ quyết định
