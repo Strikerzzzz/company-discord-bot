@@ -2,6 +2,7 @@ import {
 	APIInteractionDataResolvedGuildMember,
 	APIInteractionGuildMember,
 	AttachmentBuilder,
+	ButtonInteraction,
 	ChatInputCommandInteraction,
 	GuildMember,
 	ImageURLOptions,
@@ -16,6 +17,7 @@ import { RankCardData, RenderedCard } from "../../discord/cards/types";
 import { requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import { rankEmbed } from "../../discord/views/activity";
+import { parseRankHelpId, RANK_HELP_NAMESPACE, rankCardReply, rankFallbackComponents, rankHelpReply } from "../../discord/views/rank";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
 
@@ -24,9 +26,11 @@ const CARD_AVATAR: ImageURLOptions = { extension: "png", size: 256, forceStatic:
 
 type AnyMember = GuildMember | APIInteractionGuildMember | APIInteractionDataResolvedGuildMember | null;
 
-// Thẻ rank của một thành viên dạng ảnh (DEC-030): level, bậc danh hiệu theo bộ guild đang dùng (DEC-033), Activity XP,
-// Contribution, chuỗi ngày, huy hiệu, team. Bộ danh hiệu đi theo hồ sơ gamification nên ảnh và phần chữ luôn cùng bộ.
-// Hai loại điểm hiển thị tách biệt (DEC-004). Vẽ ảnh lỗi thì trả embed cũ.
+// Thẻ rank của một thành viên dạng ảnh (DEC-030): level, bậc danh hiệu theo bộ hiển thị của người được xem (bộ tự chọn nếu
+// server cho phép, không thì bộ guild đang dùng; DEC-033, DEC-047), Activity XP, Contribution, chuỗi ngày, huy hiệu, team. Bộ
+// danh hiệu đi theo hồ sơ gamification nên ảnh và phần chữ luôn cùng bộ. Hai loại điểm hiển thị tách biệt (DEC-004).
+// Phản hồi là khung Components V2 có nút "❓" ở góc trên bên phải (DEC-047); bấm nút thì người bấm nhận riêng lời giải thích.
+// Vẽ ảnh lỗi thì trả embed cũ kèm nút "❓".
 export default class RankCmd extends Command
 {
 	data = new SlashCommandBuilder()
@@ -35,6 +39,8 @@ export default class RankCmd extends Command
 		.addUserOption(option => option
 			.setName(TARGET_OPTION)
 			.setDescription("Thành viên cần xem (mặc định là bạn)"));
+
+	override buttonIds = [RANK_HELP_NAMESPACE];
 
 	// Hàm vẽ ảnh thẻ; test thay bằng hàm giả để kiểm tra dữ liệu và nhánh dự phòng.
 	renderCard: (data: RankCardData) => Promise<RenderedCard> = renderRankCard;
@@ -72,7 +78,10 @@ export default class RankCmd extends Command
 		const card = await this.tryRender(input, cardAvatarUrlOf(target, member));
 		if (card)
 		{
-			await interaction.editReply({ content, files: [new AttachmentBuilder(card.png, { name: card.fileName })] });
+			await interaction.editReply({
+				...rankCardReply({ displayName: input.displayName, summary: content, fileName: card.fileName, accentColor: input.gamification.tier.color }),
+				files: [new AttachmentBuilder(card.png, { name: card.fileName })],
+			});
 			return;
 		}
 
@@ -85,7 +94,27 @@ export default class RankCmd extends Command
 				contribution: input.contribution,
 				teamRoleIds,
 			})],
+			components: rankFallbackComponents(),
 		});
+	}
+
+	/**
+	 * Nút "❓" trên thẻ: ai bấm cũng được (kể cả không phải chủ thẻ), người bấm nhận riêng lời giải thích dựng từ cấu hình hiện tại
+	 * của server và bộ danh hiệu hiển thị của chính người bấm. Chỉ đọc cấu hình, không ghi gì, không vẽ ảnh nên không cần cooldown.
+	 */
+	override async executeButton(interaction: ButtonInteraction): Promise<void>
+	{
+		const guildId = requireGuildId(interaction);
+		parseRankHelpId(interaction.customId);
+		const { guildConfig, tierSets } = this.client.services;
+		const guild = interaction.guild;
+		// Chỉ liệt kê kênh còn trong server; không có cache của guild thì giữ nguyên danh sách đã cấu hình.
+		const channels = guildConfig.listChannels(guildId).filter(channel => guild === null || guild.channels.cache.has(channel.channelId));
+		await interaction.reply(rankHelpReply({
+			settings: guildConfig.getSettings(guildId),
+			channels,
+			display: tierSets.displayFor(guildId, interaction.user.id),
+		}));
 	}
 
 	/**

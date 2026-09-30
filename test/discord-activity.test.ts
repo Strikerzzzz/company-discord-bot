@@ -1,10 +1,16 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	ActionRowBuilder,
+	APIButtonComponentWithCustomId,
 	APIEmbed,
 	ApplicationCommandOptionType,
 	AttachmentBuilder,
+	ButtonBuilder,
+	ButtonStyle,
 	ChatInputCommandInteraction,
+	ComponentType,
+	ContainerBuilder,
 	EmbedBuilder,
 	InteractionEditReplyOptions,
 	Message,
@@ -19,6 +25,7 @@ import { leaderboardEmbed, rankEmbed, RankView } from "../src/discord/views/acti
 import MessageCreate from "../src/events/messageCreate";
 import { GuildMember } from "discord.js";
 import { levelUpText, promotionText } from "../src/discord/views/progression";
+import { RANK_HELP_ID } from "../src/discord/views/rank";
 import { applyTierOverrides, TIER_SETS, tierByKey, TierSet } from "../src/modules/activity/tiers";
 import { TierRoleServiceApi, TierRoleSyncPlan } from "../src/modules/gamification/types";
 import { cooldownMessage, RenderGate } from "../src/discord/renderGate";
@@ -28,7 +35,7 @@ import { levelInfo } from "../src/modules/activity/levels";
 import { DEFAULT_TIER_SET, nextTier, tierForLevel } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageInput, MessageXpResult } from "../src/modules/activity/types";
 import { ContributionProfile, ContributionServiceApi } from "../src/modules/contribution/types";
-import { TierSetServiceApi } from "../src/modules/gamification/TierSetService";
+import { MemberTierDisplay, TierSetServiceApi } from "../src/modules/gamification/TierSetService";
 import { ACHIEVEMENTS } from "../src/modules/gamification/achievements";
 import { GamificationServiceApi } from "../src/modules/gamification/types";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
@@ -59,6 +66,8 @@ interface FakeServiceOptions
 	board?: LeaderboardPage;
 	/** Bộ danh hiệu guild đang dùng (mặc định Tu tiên). */
 	tierSet?: TierSet;
+	/** Bộ người nhắn tự chọn và đang được dùng (DEC-047); không có = theo server. */
+	personalTierSet?: TierSet;
 }
 
 interface BoardCall
@@ -76,8 +85,10 @@ interface FakeServices
 	messages: MessageInput[];
 	profileCalls: string[];
 	boardCalls: BoardCall[];
-	/** Guild đã được hỏi bộ danh hiệu (tierSets.current). */
+	/** Guild đã được hỏi bộ danh hiệu (tierSets.current hoặc tierSets.displayFor). */
 	tierSetCalls: string[];
+	/** Các lần hỏi bộ hiển thị của một người: "<guildId>:<userId>" (tierSets.displayFor). */
+	displayCalls: string[];
 }
 
 function activityProfile(userId: string, totalXp: number, rank: number | null, totalRanked: number): ActivityProfile
@@ -98,6 +109,7 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 	const profileCalls: string[] = [];
 	const boardCalls: BoardCall[] = [];
 	const tierSetCalls: string[] = [];
+	const displayCalls: string[] = [];
 
 	const activity: Pick<ActivityServiceApi, "handleMessage" | "getProfile"> = {
 		handleMessage: input =>
@@ -140,17 +152,27 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 		userPosition: () => { throw new Error("không dùng trong test này"); },
 	};
 
-	const tierSets: Pick<TierSetServiceApi, "current"> = {
+	const tierSets: Pick<TierSetServiceApi, "current" | "displayFor"> = {
 		current: guildId =>
 		{
 			tierSetCalls.push(guildId);
 			return options.tierSet ?? DEFAULT_TIER_SET;
 		},
+		displayFor: (guildId, userId): MemberTierDisplay =>
+		{
+			tierSetCalls.push(guildId);
+			displayCalls.push(`${guildId}:${userId}`);
+			const serverSet = options.tierSet ?? DEFAULT_TIER_SET;
+			const personal = options.personalTierSet;
+			return personal
+				? { set: personal, source: "personal", choiceKey: personal.key, allowPersonal: true, serverSet }
+				: { set: serverSet, source: "server", choiceKey: null, allowPersonal: true, serverSet };
+		},
 	};
 
 	const clock = { now: (): number => Date.now() };
 	const services = { activity, contributions, teams, guildConfig, leaderboard, tierSets, clock } as unknown as AppServices;
-	return { services, messages, profileCalls, boardCalls, tierSetCalls };
+	return { services, messages, profileCalls, boardCalls, tierSetCalls, displayCalls };
 }
 
 /** Client giả: chỉ phục vụ GUILD; `user` là tài khoản bot (dùng khi kiểm tra quyền gửi tin của bot). */
@@ -365,6 +387,45 @@ function onlyFile(calls: Calls): AttachmentBuilder
 	const [file] = files;
 	assert.ok(file instanceof AttachmentBuilder);
 	return file;
+}
+
+interface RankCardParts
+{
+	title: string;
+	button: APIButtonComponentWithCustomId;
+	imageUrl: string;
+	summary: string;
+	accentColor: number | null;
+}
+
+/** Các phần của thẻ /rank dạng Components V2: đúng một Container gồm Section (tiêu đề + nút ở accessory), MediaGallery, TextDisplay. */
+function rankCardParts(calls: Calls): RankCardParts
+{
+	assert.equal(calls.edits.length, 1);
+	const [top, ...rest] = calls.edits[0].components ?? [];
+	assert.equal(rest.length, 0);
+	assert.ok(top instanceof ContainerBuilder, "một Container");
+	const container = top.toJSON();
+	const [section, gallery, summary, ...others] = container.components;
+	assert.equal(others.length, 0);
+	assert.ok(section?.type === ComponentType.Section, "Section ở trên cùng");
+	assert.ok(gallery?.type === ComponentType.MediaGallery, "ảnh nằm trong MediaGallery");
+	assert.ok(summary?.type === ComponentType.TextDisplay, "phần chữ tóm tắt dưới ảnh");
+	const { accessory } = section;
+	assert.ok(accessory.type === ComponentType.Button && "custom_id" in accessory, "nút là accessory của Section (góc trên bên phải)");
+	assert.equal(gallery.items.length, 1);
+	return {
+		title: section.components.map(text => text.content).join("\n"),
+		button: accessory,
+		imageUrl: gallery.items[0]?.media.url ?? "",
+		summary: summary.content,
+		accentColor: container.accent_color ?? null,
+	};
+}
+
+function isButtonRow(value: unknown): value is ActionRowBuilder<ButtonBuilder>
+{
+	return value instanceof ActionRowBuilder && value.components.every((component: unknown) => component instanceof ButtonBuilder);
 }
 
 function fieldValue(embed: APIEmbed, name: string): string
@@ -623,6 +684,33 @@ describe("event messageCreate", () =>
 		}]);
 	});
 
+	test("bộ tự chọn của người lên level quyết định lời chúc (DEC-047); role vẫn đồng bộ theo level như trước", async () =>
+	{
+		const serverSet = TIER_SETS["rank-game"];
+		const personal = applyTierOverrides(TIER_SETS["cay-xanh"], [{ tierKey: "bac-2", name: "Mầm Xanh", emoji: null }]);
+
+		const plain = messageServices({ xpResult: PLAIN_LEVEL_UP, tierSet: serverSet, personalTierSet: personal }, { add: [TIER_ROLE], remove: [] });
+		const { member, added } = tierMember([ROLE_BACKEND]);
+		const first = fakeMessage();
+		Object.assign(first.message, { member });
+		await new MessageCreate(fakeClient(plain.services)).execute(first.message);
+		assert.deepEqual(first.sent, [{ content: levelUpText(personal, USER_A, 4), allowedMentions: { users: [USER_A] }, flags: MessageFlags.SuppressEmbeds }]);
+		assert.equal(levelUpText(personal, USER_A, 4), `🌱 <@${USER_A}> lớn thêm một chút: **Level 4**!`);
+		assert.notEqual(levelUpText(personal, USER_A, 4), levelUpText(serverSet, USER_A, 4));
+		assert.deepEqual(plain.displayCalls, [`${GUILD}:${USER_A}`], "hỏi bộ hiển thị của đúng người vừa lên level");
+		assert.deepEqual(plain.planCalls, [{ guildId: GUILD, level: 4, roleIds: [ROLE_BACKEND] }], "role đồng bộ theo level, không phụ thuộc bộ");
+		assert.deepEqual(added, [TIER_ROLE]);
+
+		const promoted = messageServices({ xpResult: LEVEL_UP, tierSet: serverSet, personalTierSet: personal });
+		const second = fakeMessage();
+		await new MessageCreate(fakeClient(promoted.services)).execute(second.message);
+		assert.deepEqual(second.sent, [{
+			content: `🌳 Lớn lên rồi! <@${USER_A}> đã vượt mốc Level 3! 🌱 Giai đoạn **Mầm Xanh** · Level 3`,
+			allowedMentions: { users: [USER_A] },
+			flags: MessageFlags.SuppressEmbeds,
+		}]);
+	});
+
 	test("thông báo công khai (lên level và lên bậc) luôn tắt xem trước link, kể cả khi tên bậc trông giống tên miền", async () =>
 	{
 		const lookalike = applyTierOverrides(TIER_SETS["rank-game"], [{ tierKey: "bac-2", name: "example.com", emoji: null }]);
@@ -873,8 +961,28 @@ describe("/rank", () =>
 		assert.deepEqual(avatarUrls, [AVATAR]);
 
 		assert.equal(onlyFile(calls).name, "rank.png");
-		assert.equal(calls.edits[0].content, `🟡 Cảnh giới **Kim Đan** · Level 6\n${NO_BADGE_TEXT}\n🎯 Sắp đạt: 💬 Khai Khẩu (0/100)`);
-		assert.equal(calls.edits[0].embeds, undefined);
+		assert.equal(calls.edits[0].flags, MessageFlags.IsComponentsV2);
+		assert.equal(calls.edits[0].content, undefined, "Components V2 không kèm content");
+		assert.equal(calls.edits[0].embeds, undefined, "Components V2 không kèm embed");
+		const card = rankCardParts(calls);
+		assert.equal(card.title, "🏅 Thẻ rank của **Anh A**");
+		assert.equal(card.imageUrl, "attachment://rank.png");
+		assert.equal(card.summary, `🟡 Cảnh giới **Kim Đan** · Level 6\n${NO_BADGE_TEXT}\n🎯 Sắp đạt: 💬 Khai Khẩu (0/100)`);
+		assert.equal(card.button.custom_id, RANK_HELP_ID);
+		assert.equal(card.button.style, ButtonStyle.Secondary);
+		assert.equal(card.button.emoji?.name, "❓");
+		assert.equal(card.accentColor, Number.parseInt(tierByKey("bac-3").color.slice(1), 16), "viền khung theo màu bậc");
+	});
+
+	test("tên hiển thị có ký tự markdown được escape trong tiêu đề thẻ", async () =>
+	{
+		const { command } = rankCommand(withGamification(createFakeServices().services));
+		const { interaction, calls } = fakeInteraction({ user: fakeUser(USER_B, "B"), member: { nick: "**Sếp** _to_ [x](https://evil.example)", roles: [] } });
+		await command.execute(interaction);
+		const { title } = rankCardParts(calls);
+		assert.ok(!title.includes("**Sếp**"), title);
+		assert.ok(title.includes("\\*\\*Sếp\\*\\*"), title);
+		assert.ok(!title.includes("](https://"), "masked link bị vô hiệu hoá");
 	});
 
 	test("guild dùng bộ khác: ảnh và phần chữ theo bộ đó (tên gọi bậc, tên bậc, emoji)", async () =>
@@ -888,7 +996,8 @@ describe("/rank", () =>
 		assert.equal(cards[0].tierSet.key, "cay-xanh");
 		assert.equal(cards[0].tier.name, "Cây Non");
 		assert.equal(cards[0].nextTier?.name, "Ra Hoa");
-		assert.ok(String(calls.edits[0].content).startsWith("🌿 Giai đoạn **Cây Non** · Level 6\n"), String(calls.edits[0].content));
+		const { summary } = rankCardParts(calls);
+		assert.ok(summary.startsWith("🌿 Giai đoạn **Cây Non** · Level 6\n"), summary);
 	});
 
 	test("người không được gửi tin ở kênh, hoặc bot thiếu Attach Files, chỉ nhận kết quả riêng", async () =>
@@ -900,6 +1009,8 @@ describe("/rank", () =>
 			await command.execute(interaction);
 			assert.deepEqual(calls.deferred, [{ flags: MessageFlags.Ephemeral }]);
 			assert.equal(onlyFile(calls).name, "rank.png");
+			assert.equal(calls.edits[0].flags, MessageFlags.IsComponentsV2, "sửa phản hồi riêng đã defer thành Components V2");
+			assert.equal(rankCardParts(calls).button.custom_id, RANK_HELP_ID);
 		}
 	});
 
@@ -942,6 +1053,13 @@ describe("/rank", () =>
 		assert.equal(fieldValue(embed, "👥 Team"), `<@&${ROLE_BACKEND}>`);
 		assert.match(calls.edits[0].content ?? "", /^🟡 Cảnh giới \*\*Kim Đan\*\* · Level 6/);
 		assert.equal(calls.edits[0].files, undefined);
+		assert.equal(calls.edits[0].flags, undefined, "embed dự phòng là tin nhắn thường, không bật Components V2");
+		const [row, ...rows] = calls.edits[0].components ?? [];
+		assert.equal(rows.length, 0);
+		assert.ok(isButtonRow(row), "một hàng nút");
+		const [button] = row.toJSON().components;
+		assert.ok(button?.type === ComponentType.Button && "custom_id" in button);
+		assert.equal(button.custom_id, RANK_HELP_ID, "vẫn có nút ❓");
 		assert.equal(logged.mock.callCount(), 1);
 		assert.match(String(logged.mock.calls[0].arguments[0]), /\[ERROR\]/);
 	});

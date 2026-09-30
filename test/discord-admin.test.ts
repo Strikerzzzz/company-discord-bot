@@ -87,6 +87,8 @@ const AUDIT_ACTIONS: Record<AuditAction, true> = {
 	"tier_set.set": true,
 	"tier_name.set": true,
 	"tier_name.reset": true,
+	"tier_pref.allow": true,
+	"tier_pref.clear": true,
 	"board.set": true,
 	"board.clear": true,
 	"backup.manual": true,

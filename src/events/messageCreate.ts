@@ -13,8 +13,9 @@ const TIER_ROLE_REASON = "Danh hiệu theo level";
 const BROKEN_CHANNEL_WARN_INTERVAL_MS = 10 * 60 * 1000;
 
 // Cộng Activity XP khi thành viên nhắn tin (DEC-022, DEC-023), thông báo lên level hoặc lên bậc theo giọng văn của bộ danh hiệu
-// guild đang dùng (DEC-029, DEC-033), rồi đồng bộ role danh hiệu (DEC-031). Không ghi log nội dung tin nhắn; lỗi của service
-// để EventHandler bắt và ghi log.
+// hiển thị của người đó (bộ tự chọn nếu server cho phép, không thì bộ của guild; DEC-029, DEC-033, DEC-047), rồi đồng bộ role
+// danh hiệu (DEC-031). Role gán theo vị trí bậc (level), không phụ thuộc bộ nào, nên bộ cá nhân không đổi role. Không ghi log nội
+// dung tin nhắn; lỗi của service để EventHandler bắt và ghi log.
 export default class MessageCreate extends Event
 {
 	name = Events.MessageCreate;
@@ -47,9 +48,10 @@ export default class MessageCreate extends Event
 	}
 
 	/**
-	 * Thông báo lên level, hoặc lên bậc nếu vượt mốc bậc, theo bộ danh hiệu của guild (đã áp tên tuỳ chỉnh). Gửi vào kênh
-	 * thông báo admin đã chọn (DEC-043), chưa chọn thì gửi ở kênh vừa nhắn. Kênh đã chọn không còn hoặc bot mất quyền thì bỏ qua,
-	 * không gửi về kênh vừa nhắn. Không ném lỗi khi gửi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo.
+	 * Thông báo lên level, hoặc lên bậc nếu vượt mốc bậc, theo bộ danh hiệu hiển thị của người vừa lên level (DEC-047; đã áp tên
+	 * tuỳ chỉnh của server cho bộ đó). Gửi vào kênh thông báo admin đã chọn (DEC-043), chưa chọn thì gửi ở kênh vừa nhắn. Kênh đã
+	 * chọn không còn hoặc bot mất quyền thì bỏ qua, không gửi về kênh vừa nhắn. Không ném lỗi khi gửi: XP đã được cộng, gửi thất
+	 * bại chỉ ghi cảnh báo.
 	 */
 	private async announceLevelUp(message: Message<true>, levelBefore: number, levelAfter: number): Promise<void>
 	{
@@ -58,7 +60,7 @@ export default class MessageCreate extends Event
 		const channel = this.announceChannel(message, settings.levelUpChannelId);
 		if (!channel) return;
 
-		const set = this.client.services.tierSets.current(message.guildId);
+		const set = this.client.services.tierSets.displayFor(message.guildId, message.author.id).set;
 		const tier = tierUp(levelBefore, levelAfter, set);
 		const content = tier ? promotionText(set, message.author.id, tier, levelAfter) : levelUpText(set, message.author.id, levelAfter);
 		try

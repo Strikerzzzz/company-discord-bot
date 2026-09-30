@@ -8,7 +8,10 @@ import { GamificationRepository } from "./GamificationRepository";
 import { computeStreak } from "./streaks";
 import { AchievementProgress, AchievementStats, GamificationProfile, GamificationServiceApi } from "./types";
 
-/** Bậc danh hiệu theo bộ của guild (DEC-033), chuỗi ngày hoạt động, huy hiệu và XP tuần (DEC-029). Chỉ đọc dữ liệu, không ghi gì. */
+/**
+ * Bậc danh hiệu theo bộ hiển thị của người đó (bộ tự chọn nếu server cho phép, không thì bộ của guild; DEC-033, DEC-047), chuỗi
+ * ngày hoạt động, huy hiệu và XP tuần (DEC-029). Chỉ đọc dữ liệu, không ghi gì.
+ */
 export class GamificationService implements GamificationServiceApi
 {
 	private readonly repo: GamificationRepository;
@@ -24,7 +27,7 @@ export class GamificationService implements GamificationServiceApi
 		const now = clock.now();
 
 		const level = levelInfo(xpLedger.total(guildId, userId));
-		const tierSet = this.deps.tierSets.current(guildId);
+		const tierSet = this.deps.tierSets.displayFor(guildId, userId).set;
 		// Chuỗi ngày chỉ tính tin nhắn được XP (event "message" chưa huỷ), không tính XP từ vote hay admin.
 		const streak = computeStreak(xpLedger.activeDays(guildId, userId, "message"), vnDayNumber(now));
 		const stats: AchievementStats = {

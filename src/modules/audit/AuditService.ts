@@ -23,6 +23,8 @@ export type AuditAction =
 	| "tier_set.set"
 	| "tier_name.set"
 	| "tier_name.reset"
+	| "tier_pref.allow"
+	| "tier_pref.clear"
 	| "board.set"
 	| "board.clear"
 	| "backup.manual";

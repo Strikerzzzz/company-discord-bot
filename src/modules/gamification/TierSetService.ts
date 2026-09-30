@@ -7,6 +7,7 @@ import {
 	DEFAULT_TIER_SET_KEY,
 	isTierKey,
 	isTierSetKey,
+	TIER_SET_KEYS,
 	TIER_SETS,
 	TierKey,
 	TierNameOverride,
@@ -15,6 +16,35 @@ import {
 	tierIndex,
 } from "../activity/tiers";
 import { AuditService } from "../audit/AuditService";
+
+/** Thành viên chọn một bộ khi admin đang tắt tự chọn (DEC-047). */
+export const PERSONAL_TIER_DISABLED = "Admin đang tắt tính năng tự chọn: server đang dùng một bộ danh hiệu chung cho mọi người.";
+export const INVALID_TIER_SET_KEY = "Bộ danh hiệu không hợp lệ.";
+
+/** Nguồn bộ danh hiệu hiển thị của một thành viên (DEC-047): lựa chọn của chính người đó, hoặc bộ chung của server. */
+export type TierDisplaySource = "personal" | "server";
+
+/** Bộ danh hiệu hiển thị của một thành viên (DEC-047) và các thông tin để giải thích vì sao. */
+export interface MemberTierDisplay
+{
+	/** Bộ dùng cho thẻ /rank và lời chúc lên level/lên bậc của người này, đã áp tên/emoji tuỳ chỉnh của server cho bộ đó. */
+	set: TierSet;
+	/** "personal" = đang dùng lựa chọn của người này; "server" = bộ chung (chưa chọn, hoặc admin đang tắt tự chọn). */
+	source: TierDisplaySource;
+	/** Lựa chọn đã lưu của người này, kể cả khi admin đang tắt tự chọn; null = theo server (khoá lạ trong DB cũng là null). */
+	choiceKey: TierSetKey | null;
+	/** Công tắc "cho phép thành viên tự chọn bộ danh hiệu" của server. */
+	allowPersonal: boolean;
+	/** Bộ chung của server (đã áp tên tuỳ chỉnh): role Discord, bảng xếp hạng và Bảng vàng luôn theo bộ này. */
+	serverSet: TierSet;
+}
+
+/** Số thành viên đang lưu lựa chọn một bộ (kể cả khi admin đang tắt tự chọn). */
+export interface TierSetChoiceCount
+{
+	setKey: TierSetKey;
+	count: number;
+}
 
 /** Giới hạn tên bậc tuỳ chỉnh (tính theo ký tự hiển thị). */
 export const TIER_NAME_MAX = 32;
@@ -70,6 +100,29 @@ export interface TierSetServiceApi
 	rename(guildId: string, entries: readonly TierRenameInput[], actorId: string): TierSet;
 	/** Xoá mọi tên tuỳ chỉnh của bộ đang dùng. Ghi audit "tier_name.reset" (details { setKey, count }) nếu có gì để xoá. */
 	resetNames(guildId: string, actorId: string): TierSet;
+	/** Công tắc "cho phép thành viên tự chọn bộ danh hiệu" (DEC-047); mặc định bật. */
+	allowPersonal(guildId: string): boolean;
+	/**
+	 * Bật/tắt cho phép thành viên tự chọn bộ. Lựa chọn đã lưu không bị xoá khi tắt. Giá trị không đổi thì không ghi gì và trả false;
+	 * đổi thì ghi audit "tier_pref.allow" (target null, details { allowPersonal }) và trả true.
+	 */
+	setAllowPersonal(guildId: string, allowed: boolean, actorId: string): boolean;
+	/** Bộ thành viên đã tự chọn (kể cả khi admin đang tắt tự chọn); null = theo server, hoặc khoá lạ trong DB. */
+	memberChoice(guildId: string, userId: string): TierSetKey | null;
+	/** Bộ danh hiệu hiển thị của một thành viên: bộ tự chọn nếu có và server cho phép, không thì bộ chung. */
+	displayFor(guildId: string, userId: string): MemberTierDisplay;
+	/**
+	 * Thành viên tự chọn bộ cho chính mình (lệnh /rank-style), không ghi audit. `setKey` null = về theo server (xoá lựa chọn,
+	 * luôn được). UserError nếu khoá bộ không hợp lệ, hoặc chọn một bộ khi admin đang tắt tự chọn (không ghi gì).
+	 */
+	chooseForMember(guildId: string, userId: string, setKey: TierSetKey | null): MemberTierDisplay;
+	/**
+	 * Admin xoá lựa chọn của một thành viên (người đó về theo server). Có lựa chọn thì ghi audit "tier_pref.clear"
+	 * (target = userId, details { setKey } là khoá đã lưu) và trả khoá đó; không có thì không ghi gì và trả null.
+	 */
+	clearMemberChoice(guildId: string, userId: string, actorId: string): string | null;
+	/** Số thành viên đang lưu lựa chọn từng bộ, theo thứ tự TIER_SET_KEYS (bộ không ai chọn là 0; khoá lạ không tính). */
+	choiceCounts(guildId: string): TierSetChoiceCount[];
 }
 
 interface OverrideRow
@@ -163,8 +216,9 @@ export function normalizeTierEmoji(raw: string): string
 }
 
 /**
- * Bộ danh hiệu của từng guild (DEC-033): chọn một trong các bộ có sẵn, đổi tên/emoji từng bậc.
- * Mốc level và màu luôn theo bộ. Đây là cấu hình (không phải điểm), nên xoá tuỳ chỉnh thì xoá dòng.
+ * Bộ danh hiệu của từng guild (DEC-033): chọn một trong các bộ có sẵn, đổi tên/emoji từng bậc. Mốc level và màu luôn theo bộ.
+ * Thêm bộ hiển thị cá nhân (DEC-047): mỗi thành viên tự chọn bộ cho thẻ /rank và lời chúc lên level của mình, khi server cho
+ * phép (cột tier_set_config.allow_personal). Đây là cấu hình (không phải điểm), nên xoá tuỳ chỉnh hay lựa chọn thì xoá dòng.
  */
 export class TierSetService implements TierSetServiceApi
 {
@@ -174,6 +228,12 @@ export class TierSetService implements TierSetServiceApi
 	private readonly upsertOverride: Statement<[string, string, string, string | null, string | null, number]>;
 	private readonly deleteOverride: Statement<[string, string, string]>;
 	private readonly deleteOverrides: Statement<[string, string]>;
+	private readonly selectAllowPersonal: Statement<[string], { allow_personal: number }>;
+	private readonly upsertAllowPersonal: Statement<[string, string, number, number]>;
+	private readonly selectChoice: Statement<[string, string], { set_key: string }>;
+	private readonly upsertChoice: Statement<[string, string, string, number]>;
+	private readonly deleteChoice: Statement<[string, string]>;
+	private readonly countChoices: Statement<[string], { set_key: string; n: number }>;
 
 	constructor(private readonly db: Db, private readonly clock: Clock, private readonly audit: AuditService)
 	{
@@ -187,6 +247,17 @@ export class TierSetService implements TierSetServiceApi
 			ON CONFLICT (guild_id, set_key, tier_key) DO UPDATE SET name = excluded.name, emoji = excluded.emoji, updated_at = excluded.updated_at`);
 		this.deleteOverride = db.prepare("DELETE FROM tier_name_overrides WHERE guild_id = ? AND set_key = ? AND tier_key = ?");
 		this.deleteOverrides = db.prepare("DELETE FROM tier_name_overrides WHERE guild_id = ? AND set_key = ?");
+		this.selectAllowPersonal = db.prepare("SELECT allow_personal FROM tier_set_config WHERE guild_id = ?");
+		// Guild chưa có dòng thì tạo dòng với bộ đang dùng (mặc định); dòng đã có chỉ đổi công tắc, giữ nguyên bộ.
+		this.upsertAllowPersonal = db.prepare(`
+			INSERT INTO tier_set_config (guild_id, set_key, updated_at, allow_personal) VALUES (?, ?, ?, ?)
+			ON CONFLICT (guild_id) DO UPDATE SET allow_personal = excluded.allow_personal, updated_at = excluded.updated_at`);
+		this.selectChoice = db.prepare("SELECT set_key FROM member_tier_prefs WHERE guild_id = ? AND user_id = ?");
+		this.upsertChoice = db.prepare(`
+			INSERT INTO member_tier_prefs (guild_id, user_id, set_key, updated_at) VALUES (?, ?, ?, ?)
+			ON CONFLICT (guild_id, user_id) DO UPDATE SET set_key = excluded.set_key, updated_at = excluded.updated_at`);
+		this.deleteChoice = db.prepare("DELETE FROM member_tier_prefs WHERE guild_id = ? AND user_id = ?");
+		this.countChoices = db.prepare("SELECT set_key, COUNT(*) AS n FROM member_tier_prefs WHERE guild_id = ? GROUP BY set_key");
 	}
 
 	currentKey(guildId: string): TierSetKey
@@ -212,7 +283,7 @@ export class TierSetService implements TierSetServiceApi
 
 	select(guildId: string, setKey: TierSetKey, actorId: string): TierSet
 	{
-		if (!isTierSetKey(setKey)) throw new UserError("Bộ danh hiệu không hợp lệ.");
+		if (!isTierSetKey(setKey)) throw new UserError(INVALID_TIER_SET_KEY);
 		return this.db.transaction((): TierSet =>
 		{
 			const from = this.currentKey(guildId);
@@ -265,5 +336,74 @@ export class TierSetService implements TierSetServiceApi
 			if (count > 0) this.audit.record(guildId, actorId, "tier_name.reset", null, { setKey, count });
 			return this.current(guildId);
 		})();
+	}
+
+	allowPersonal(guildId: string): boolean
+	{
+		return (this.selectAllowPersonal.get(guildId)?.allow_personal ?? 1) !== 0;
+	}
+
+	setAllowPersonal(guildId: string, allowed: boolean, actorId: string): boolean
+	{
+		return this.db.transaction((): boolean =>
+		{
+			if (this.allowPersonal(guildId) === allowed) return false;
+			this.upsertAllowPersonal.run(guildId, this.currentKey(guildId), this.clock.now(), allowed ? 1 : 0);
+			this.audit.record(guildId, actorId, "tier_pref.allow", null, { allowPersonal: allowed });
+			return true;
+		})();
+	}
+
+	memberChoice(guildId: string, userId: string): TierSetKey | null
+	{
+		const stored = this.selectChoice.get(guildId, userId)?.set_key;
+		// Khoá lạ (sửa tay DB, hoặc bộ đã bị bỏ ở phiên bản sau) thì coi như theo server.
+		return stored !== undefined && isTierSetKey(stored) ? stored : null;
+	}
+
+	displayFor(guildId: string, userId: string): MemberTierDisplay
+	{
+		const serverSet = this.current(guildId);
+		const choiceKey = this.memberChoice(guildId, userId);
+		const allowPersonal = this.allowPersonal(guildId);
+		if (choiceKey === null || !allowPersonal) return { set: serverSet, source: "server", choiceKey, allowPersonal, serverSet };
+		const set = choiceKey === serverSet.key ? serverSet : applyTierOverrides(TIER_SETS[choiceKey], this.overrides(guildId, choiceKey));
+		return { set, source: "personal", choiceKey, allowPersonal, serverSet };
+	}
+
+	chooseForMember(guildId: string, userId: string, setKey: TierSetKey | null): MemberTierDisplay
+	{
+		if (setKey !== null && !isTierSetKey(setKey)) throw new UserError(INVALID_TIER_SET_KEY);
+		return this.db.transaction((): MemberTierDisplay =>
+		{
+			if (setKey === null)
+			{
+				this.deleteChoice.run(guildId, userId);
+			}
+			else
+			{
+				if (!this.allowPersonal(guildId)) throw new UserError(PERSONAL_TIER_DISABLED);
+				this.upsertChoice.run(guildId, userId, setKey, this.clock.now());
+			}
+			return this.displayFor(guildId, userId);
+		})();
+	}
+
+	clearMemberChoice(guildId: string, userId: string, actorId: string): string | null
+	{
+		return this.db.transaction((): string | null =>
+		{
+			const stored = this.selectChoice.get(guildId, userId)?.set_key;
+			if (stored === undefined) return null;
+			this.deleteChoice.run(guildId, userId);
+			this.audit.record(guildId, actorId, "tier_pref.clear", userId, { setKey: stored });
+			return stored;
+		})();
+	}
+
+	choiceCounts(guildId: string): TierSetChoiceCount[]
+	{
+		const counts = new Map(this.countChoices.all(guildId).map(row => [row.set_key, row.n]));
+		return TIER_SET_KEYS.map(setKey => ({ setKey, count: counts.get(setKey) ?? 0 }));
 	}
 }
