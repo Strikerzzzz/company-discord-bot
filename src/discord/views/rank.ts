@@ -3,7 +3,6 @@ import {
 	ButtonBuilder,
 	ButtonStyle,
 	ContainerBuilder,
-	escapeMarkdown,
 	InteractionEditReplyOptions,
 	InteractionReplyOptions,
 	MediaGalleryBuilder,
@@ -69,10 +68,14 @@ function colorOf(hex: string): number
 	return HEX_COLOR.test(hex) ? Number.parseInt(hex.slice(1), 16) : COLORS.primary;
 }
 
-/** Tên do người dùng đặt, đưa vào chữ của tin nhắn: một dòng, vô hiệu hoá masked link, escape markdown, cắt cho vừa. */
+/**
+ * Tên do người dùng đặt, đưa vào chữ của tin nhắn: một dòng, vô hiệu hoá masked link, cắt cho vừa, rồi thêm `\` trước mọi ký tự
+ * markdown và ký tự mở mention (`<`, `>`, `@`), để nickname như `<@&id>` hay `****` không thành mention hay phá định dạng
+ * (escapeMarkdown của discord.js bỏ sót các trường hợp này, review Phase 18).
+ */
 function plainName(name: string): string
 {
-	return escapeMarkdown(truncate(disableMaskedLinks(name.replace(/\s+/gu, " ").trim()), TITLE_NAME_MAX));
+	return truncate(disableMaskedLinks(name.replace(/\s+/gu, " ").trim()), TITLE_NAME_MAX).replace(/[\\*_~`|<>@]/gu, "\\$&");
 }
 
 // ---------- Thẻ /rank ----------
@@ -191,12 +194,19 @@ function skippedLine(settings: GuildSettings): string
 function xpSection({ settings, channels }: RankHelpData): string
 {
 	const lines = ["### ⚡ Activity XP: nhắn tin để lên level"];
-	lines.push(settings.xpPerMessage > 0
-		? `• Mỗi tin nhắn hợp lệ được **${formatNumber(settings.xpPerMessage)} XP**.`
-		: "• Tin nhắn hiện **không được XP** (admin đặt 0 XP mỗi tin); XP vẫn đến từ vote.");
-	lines.push(settings.xpCooldownSeconds > 0
-		? `• Cooldown **${durationText(settings.xpCooldownSeconds)}**: được XP xong phải chờ hết khoảng này tin sau mới được tính (theo từng người, chung mọi kênh).`
-		: "• Không có cooldown: tin hợp lệ nào cũng được tính.");
+	const ownXp = channels.some(channel => channel.xpEnabled && channel.xpPerMessage !== null && channel.xpPerMessage > 0);
+	const ownCooldown = channels.some(channel => channel.xpEnabled && channel.xpCooldownSeconds !== null && channel.xpCooldownSeconds > 0);
+	if (settings.xpPerMessage > 0) lines.push(`• Mỗi tin nhắn hợp lệ được **${formatNumber(settings.xpPerMessage)} XP**.`);
+	else if (ownXp) lines.push("• XP chung của server là 0: chỉ tin ở kênh admin đặt XP riêng mới được XP.");
+	else lines.push("• Tin nhắn hiện **không được XP** (admin đặt 0 XP mỗi tin); XP vẫn đến từ vote.");
+	if (settings.xpCooldownSeconds > 0)
+	{
+		lines.push(`• Cooldown **${durationText(settings.xpCooldownSeconds)}**: được XP xong phải chờ hết khoảng này tin sau mới được tính (theo từng người, chung mọi kênh).`);
+	}
+	else
+	{
+		lines.push(ownCooldown ? "• Không có cooldown chung; một số kênh có cooldown riêng." : "• Không có cooldown: tin hợp lệ nào cũng được tính.");
+	}
 	lines.push(channelModeLine(settings, channels));
 	if (channels.some(channel => channel.xpEnabled && (channel.xpPerMessage !== null || channel.xpCooldownSeconds !== null)))
 	{
@@ -349,7 +359,7 @@ export function fitTextSections(sections: readonly string[], max: number): strin
 	return kept;
 }
 
-/** Khung lời giải thích (Components V2): mỗi phần một TextDisplay, ngăn bằng đường kẻ; tối đa 17 component. */
+/** Khung lời giải thích (Components V2): mỗi phần một TextDisplay, ngăn bằng đường kẻ; tối đa 18 component (1 Container, 9 TextDisplay, 8 Separator). */
 export function buildRankHelp(data: RankHelpData): ContainerBuilder
 {
 	const container = new ContainerBuilder().setAccentColor(colorOf(data.display.set.tiers[data.display.set.tiers.length - 1].color));

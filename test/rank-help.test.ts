@@ -11,8 +11,11 @@ import {
 	Collection,
 	ComponentType,
 	ContainerBuilder,
+	GuildMember,
 	InteractionReplyOptions,
 	MessageFlags,
+	PermissionFlagsBits,
+	PermissionsBitField,
 } from "discord.js";
 import type Command from "../src/classes/Command";
 import type DiscordClient from "../src/classes/DiscordClient";
@@ -390,15 +393,24 @@ function styleInteraction(value: string, options: { userId?: string; inGuild?: b
 	return { interaction: interaction as unknown as ChatInputCommandInteraction, replies };
 }
 
-function helpButton(customId: string, userId: string, channelIds: readonly string[] = []): { interaction: ButtonInteraction } & Replies
+/**
+ * Nút ❓ giả: `channelIds` là kênh có trong cache của server; người bấm là GuildMember xem được mọi kênh đó trừ `hiddenIds`
+ * (kênh riêng tư với họ).
+ */
+function helpButton(customId: string, userId: string, channelIds: readonly string[] = [], hiddenIds: readonly string[] = []): { interaction: ButtonInteraction } & Replies
 {
 	const replies: InteractionReplyOptions[] = [];
+	const cachedChannel = (id: string): object => ({
+		id,
+		permissionsFor: (): PermissionsBitField => new PermissionsBitField(hiddenIds.includes(id) ? [] : [PermissionFlagsBits.ViewChannel]),
+	});
 	const interaction = {
 		inGuild: () => true,
 		guildId: GUILD,
 		customId,
 		user: { id: userId },
-		guild: { id: GUILD, channels: { cache: new Map(channelIds.map(id => [id, { id }])) } },
+		member: Object.setPrototypeOf({ id: userId, user: { id: userId } }, GuildMember.prototype) as GuildMember,
+		guild: { id: GUILD, channels: { cache: new Map(channelIds.map(id => [id, cachedChannel(id)])) } },
 		reply: (payload: InteractionReplyOptions) =>
 		{
 			replies.push(payload);
@@ -515,6 +527,13 @@ describe("nút ❓ của /rank (service thật)", () =>
 		}
 		assert.ok(ownerText.includes(`Đang bật: <#${CHANNEL_GENERAL}>.`), "chỉ liệt kê kênh còn trong server");
 		assert.ok(!ownerText.includes(CHANNEL_BOT));
+
+		const restricted = helpButton(RANK_HELP_ID, USER_A, [CHANNEL_GENERAL, CHANNEL_BOT], [CHANNEL_BOT]);
+		await rank.executeButton(restricted.interaction);
+		const restrictedReply = restricted.replies[0];
+		assert.ok(restrictedReply);
+		const restrictedText = replyTexts(restrictedReply).join("\n");
+		assert.ok(restrictedText.includes(`Đang bật: <#${CHANNEL_GENERAL}>.`) && !restrictedText.includes(CHANNEL_BOT), "không nêu kênh người bấm không xem được (ID hay số lượng)");
 
 		const other = helpButton(RANK_HELP_ID, USER_B, [CHANNEL_GENERAL, CHANNEL_BOT]);
 		await rank.executeButton(other.interaction);

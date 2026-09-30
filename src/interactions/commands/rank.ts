@@ -7,6 +7,7 @@ import {
 	GuildMember,
 	ImageURLOptions,
 	MessageFlags,
+	PermissionFlagsBits,
 	SlashCommandBuilder,
 	User,
 } from "discord.js";
@@ -108,8 +109,14 @@ export default class RankCmd extends Command
 		parseRankHelpId(interaction.customId);
 		const { guildConfig, tierSets } = this.client.services;
 		const guild = interaction.guild;
-		// Chỉ liệt kê kênh còn trong server; không có cache của guild thì giữ nguyên danh sách đã cấu hình.
-		const channels = guildConfig.listChannels(guildId).filter(channel => guild === null || guild.channels.cache.has(channel.channelId));
+		const member = interaction.member instanceof GuildMember ? interaction.member : null;
+		// Chỉ nêu kênh người bấm xem được (LL-013, review Phase 18): kênh riêng tư không lộ ID hay số lượng. Không có cache của guild
+		// hoặc của người bấm thì không nêu kênh nào.
+		const channels = guildConfig.listChannels(guildId).filter(channel =>
+		{
+			const found = guild?.channels.cache.get(channel.channelId);
+			return found !== undefined && member !== null && (found.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel) ?? false);
+		});
 		await interaction.reply(rankHelpReply({
 			settings: guildConfig.getSettings(guildId),
 			channels,

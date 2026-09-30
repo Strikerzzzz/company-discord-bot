@@ -12,7 +12,7 @@
   - Trang web quản trị **đã bật** ở `http://192.168.0.206:8787`, bằng `deploy/enable-web.sh`: `ufw` chỉ mở cổng 8787 cho 10/8, 172.16/12, 192.168/16. Ngày 2026-09-30 đã có lượt đăng nhập admin thành công.
   - `main` mới hơn bản đang chạy chỉ ở script `deploy/enable-web.sh`, tài liệu và test.
 - **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động.
-- **Phase 17 đã merge vào `main` (DEC-046, `c8359b6`)**, đã build và chạy 1027/1027 test trên server ở `~/deploy/src`; **chờ người phụ trách chạy `install.sh` và `start.sh`** (sao lưu bằng `/admin backup` trước, vì có migration 6).
+- **Phase 17 đã merge vào `main` (DEC-046, `c8359b6`) và đang chạy trên server** từ 2026-09-30 16:01 (migration 6 đã áp dụng). Còn: bot thiếu quyền ở kênh Bảng vàng (`1554360825995726899`), người phụ trách cấp quyền hoặc đổi kênh.
 - **Phase 18 (DEC-044, DEC-047) trên branch `phase-18/quick-wins`**, chưa merge:
   - đã gộp:
     - "Chọn tất cả" cho bảng ô tick;
@@ -20,7 +20,13 @@
     - bộ danh hiệu thứ 6 Mobile Legends, có `textColor`/`borderColor` cho bậc;
     - trang Kênh tính XP hiện mọi kênh cho admin (DEC-045);
   - kết quả: 1049/1050 test pass;
-  - đang làm (agent): bộ danh hiệu cá nhân (migration 8, `/rank-style`) và nút "?" giải thích trên thẻ `/rank`; sau đó review độc lập rồi merge.
+  - bộ danh hiệu cá nhân (migration 8, `/rank-style`) và nút ❓ trên thẻ `/rank` (DEC-047);
+  - 3 review độc lập (bảo mật, đúng đắn; riêng phần DEC-047) không có lỗi CAO; đã sửa:
+    - bảng role admin không có "Chọn tất cả", thêm role admin phải tick xác nhận;
+    - nút ❓ chỉ nêu kênh người bấm xem được;
+    - tiêu đề thẻ escape mention;
+  - 1094/1095 test pass trên Windows; 1095/1095 trên server Linux (thư mục thử `~/deploy/p18-test`);
+  - **chờ người phụ trách duyệt merge vào `main` và cài lên server** (migration 7 và 8: sao lưu trước).
 - Chi tiết Phase 17 (giữ để tra cứu):
   - 7 trang web mới: Thành viên, Bảng xếp hạng, Contribution, Vote, Thống kê, Reset điểm, Sao lưu. `test/web-parity.test.ts` không còn mục nào thiếu.
   - Nền móng `src/discord/adminOps.ts`, dùng chung cho `/admin` và web.
