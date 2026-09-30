@@ -175,14 +175,14 @@ describe("canViewChannel", () =>
 
 	test("admin bot không xem được kênh riêng tư mà Discord không cho họ xem", async () =>
 	{
-		const { client } = clientOf({ adminRoleId: ROLE_BACKEND });
+		const { client } = clientOf({ adminRoleIds: [ROLE_BACKEND] });
 		assert.equal(await canViewChannel(client, interactionOf({ userId: ADMIN, permissions: MANAGE_GUILD }), CHANNEL_PRIVATE), false);
 		assert.equal(await canViewChannel(client, interactionOf({ userId: USER_B, roleIds: [ROLE_BACKEND] }), CHANNEL_PRIVATE), false);
 	});
 
 	test("kênh không còn, không lấy được, thuộc guild khác, là DM hoặc không tính được quyền: chỉ admin xem được", async () =>
 	{
-		const { client } = clientOf({ adminRoleId: ROLE_BACKEND });
+		const { client } = clientOf({ adminRoleIds: [ROLE_BACKEND] });
 		const unreachable = [CHANNEL_DELETED, "400000000000000404", CHANNEL_FOREIGN, DM_CHANNEL, CHANNEL_UNKNOWN_PERMS];
 		for (const channelId of unreachable)
 		{

@@ -7,17 +7,23 @@ export interface MemberAccess
 	roleIds: readonly string[];
 }
 
-/**
- * Lớp kiểm tra quyền thứ hai (PROP-013): người có quyền Manage Server hoặc role admin do bot cấu hình.
- * Lớp thứ nhất là setDefaultMemberPermissions trên command, nhưng admin server có thể nới lỏng lớp đó.
- */
-export function isAdmin(access: MemberAccess, settings: Pick<GuildSettings, "adminRoleId">): boolean
+/** Người có ít nhất một role trong `roleIds`. */
+function hasAnyRole(access: MemberAccess, roleIds: readonly string[]): boolean
 {
-	return access.hasManageGuild || (settings.adminRoleId !== null && access.roleIds.includes(settings.adminRoleId));
+	return roleIds.some(roleId => access.roleIds.includes(roleId));
 }
 
-/** Admin, hoặc người có role được cấp quyền tạo vote (DEC-026). */
-export function canCreatePoll(access: MemberAccess, settings: Pick<GuildSettings, "adminRoleId" | "pollCreatorRoleId">): boolean
+/**
+ * Lớp kiểm tra quyền thứ hai (PROP-013): người có quyền Manage Server, hoặc có ít nhất một role trong danh sách role admin bot
+ * (DEC-044). Lớp thứ nhất là setDefaultMemberPermissions trên command, nhưng admin server có thể nới lỏng lớp đó.
+ */
+export function isAdmin(access: MemberAccess, settings: Pick<GuildSettings, "adminRoleIds">): boolean
 {
-	return isAdmin(access, settings) || (settings.pollCreatorRoleId !== null && access.roleIds.includes(settings.pollCreatorRoleId));
+	return access.hasManageGuild || hasAnyRole(access, settings.adminRoleIds);
+}
+
+/** Admin, hoặc người có ít nhất một role trong danh sách role được tạo vote (DEC-026, DEC-044). */
+export function canCreatePoll(access: MemberAccess, settings: Pick<GuildSettings, "adminRoleIds" | "pollCreatorRoleIds">): boolean
+{
+	return isAdmin(access, settings) || hasAnyRole(access, settings.pollCreatorRoleIds);
 }

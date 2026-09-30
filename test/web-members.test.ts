@@ -480,7 +480,7 @@ describe("web thành viên: điều chỉnh điểm", () =>
 	{
 		const harness = createWebHarness();
 		await assert.rejects(login(harness, PLAIN_USER));
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const spec = harness.world.members.get(PLAIN_USER);
 		assert.ok(spec);
 		spec.roleIds = [ROLE_ADMIN_BOT];

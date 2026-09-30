@@ -267,7 +267,7 @@ function auditActions(t: TierTest, action: string): { actorId: string }[]
 
 function useAdminRole(t: TierTest): void
 {
-	t.harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+	t.harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 }
 
 // ---------- Kiểm tra ----------

@@ -333,6 +333,31 @@ export const MIGRATIONS: readonly Migration[] = [
 			ALTER TABLE guild_settings ADD COLUMN level_up_channel_id TEXT;
 		`,
 	},
+	{
+		version: 7,
+		name: "role_grants",
+		sql: `
+			-- Nhiều role admin bot và nhiều role được tạo vote (DEC-044): mỗi dòng cấp một quyền cho một role. kind 'admin' = role
+			-- admin bot (ngoài người có Manage Server), 'poll_creator' = role được tạo vote (ngoài admin). Thứ tự hiển thị theo
+			-- created_at rồi role_id; tối đa 25 role mỗi loại do GuildConfigService kiểm tra.
+			CREATE TABLE guild_role_grants (
+				guild_id TEXT NOT NULL,
+				kind TEXT NOT NULL CHECK (kind IN ('admin', 'poll_creator')),
+				role_id TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, kind, role_id)
+			);
+
+			-- Chép role đang đặt ở hai cột cũ (mỗi loại một role) sang bảng mới, giữ mốc thời gian lần sửa cấu hình cuối.
+			INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at)
+				SELECT guild_id, 'admin', admin_role_id, updated_at FROM guild_settings WHERE admin_role_id IS NOT NULL;
+			INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at)
+				SELECT guild_id, 'poll_creator', poll_creator_role_id, updated_at FROM guild_settings WHERE poll_creator_role_id IS NOT NULL;
+
+			-- Hai cột cũ giữ lại (không xoá cột) nhưng về NULL: từ version 7 code không đọc hay ghi hai cột này nữa.
+			UPDATE guild_settings SET admin_role_id = NULL, poll_creator_role_id = NULL;
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

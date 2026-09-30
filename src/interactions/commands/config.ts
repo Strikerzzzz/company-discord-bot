@@ -28,6 +28,9 @@ import {
 	moveLiveBoard,
 	renameInput,
 	resolveLevelUpChannel,
+	ROLE_GRANT_PURPOSES,
+	roleGrantChanged,
+	roleGrantChangeLines,
 	turnOffLiveBoard,
 } from "../../discord/configOps";
 import { requireGuildId } from "../../discord/guards";
@@ -63,12 +66,14 @@ import {
 	ConfigPanelPage,
 	configPanelReply,
 	configPanelUpdate,
+	GRANT_ACTION_KEYS,
 	INVALID_CONFIG_PANEL,
 	isConfigPanelPage,
 	pageOfAction,
 	parseConfigPanelId,
 	parseFormNumber,
 	POLL_FORM_KEYS,
+	roleListFingerprint,
 	XP_CHANNEL_TYPES,
 	XP_FORM_KEYS,
 } from "../../discord/views/configPanel";
@@ -103,12 +108,13 @@ import {
 	TierSetKey,
 } from "../../modules/activity/tiers";
 import { TierRoleMapping } from "../../modules/gamification/types";
-import { BulkChannelResult } from "../../modules/guild-config/GuildConfigService";
+import { BulkChannelResult, RoleGrantResult } from "../../modules/guild-config/GuildConfigService";
 import {
 	ChannelSettings,
 	GuildSettings,
 	isXpChannelMode,
 	NumericSettingKey,
+	RoleGrantKey,
 	SETTING_LIMITS,
 	XP_CHANNEL_MODES,
 	XpChannelMode,
@@ -127,15 +133,32 @@ const ADMIN_ROLE_INTEGRATION_HINT = "⚠️ Lưu ý: `/admin` và `/config` mặ
 	+ "Discord chặn những người khác trước khi lệnh tới bot. Để role này dùng được, vào **Server Settings → Integrations → chọn bot** "
 	+ "rồi cho phép role này dùng `/admin` và `/config`.";
 
-const ADMIN_ROLE_CLEARED = "Đã xoá role admin bot. Chỉ người có quyền Manage Server dùng được lệnh admin.";
+const ADMIN_ROLE_ADD_OPTION = "them";
+const ADMIN_ROLE_REMOVE_OPTION = "bo";
+const ADMIN_ROLE_CLEAR_OPTION = "bo-het";
+const POLL_ROLE_ADD_OPTION = "role-tao-vote";
+const POLL_ROLE_REMOVE_OPTION = "bo-role-tao-vote";
+const POLL_ROLE_CLEAR_OPTION = "xoa-role-tao-vote";
 
-/** Phản hồi sau khi đặt role admin bot (lệnh `/config admin-role` và bảng cấu hình). */
-function adminRoleSetText(roleId: string): string
+export const ADMIN_ROLE_NO_OPTION = "Hãy chọn ít nhất một: `them` để thêm role admin bot, `bo` để bỏ một role, hoặc `bo-het` = True để xoá hết.";
+export const ADMIN_ROLE_CONFLICT = "`bo-het` = True xoá mọi role admin bot, nên không dùng cùng `them` hay `bo`.";
+export const POLL_ROLE_CONFLICT = "`xoa-role-tao-vote` = True xoá mọi role tạo vote, nên không dùng cùng `role-tao-vote` hay `bo-role-tao-vote`.";
+
+/** Dòng đầu phản hồi khi một danh sách role được cấp quyền vừa đổi (DEC-044). */
+const ROLE_GRANT_HEADINGS: Readonly<Record<RoleGrantKey, string>> = {
+	adminRoleIds: "Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.",
+	pollCreatorRoleIds: "Đã cập nhật cấu hình vote:",
+};
+
+/**
+ * Phản hồi sau khi đổi danh sách role admin bot hoặc role tạo vote (lệnh `/config admin-role`, bảng cấu hình): kết quả từng role
+ * và danh sách sau khi lưu; có thêm role admin bot thì nhắc cho phép role trong Integrations.
+ */
+function roleGrantNotice(key: RoleGrantKey, result: RoleGrantResult): string
 {
-	return [
-		`Đã đặt ${roleMention(roleId)} làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.`,
-		ADMIN_ROLE_INTEGRATION_HINT,
-	].join("\n");
+	const lines = [roleGrantChanged(result) ? ROLE_GRANT_HEADINGS[key] : "Không có gì thay đổi:", ...roleGrantChangeLines(key, result)];
+	if (key === "adminRoleIds" && result.added.length > 0) lines.push(ADMIN_ROLE_INTEGRATION_HINT);
+	return lines.join("\n");
 }
 
 /** Lựa chọn bậc dạng trung tính "Bậc 3 (Lv 6+)", vì tên bậc đổi theo bộ và theo từng server (DEC-033); value là khoá bậc. */
@@ -184,8 +207,8 @@ export const PANEL_ROLE_CHANGED = "Role của bậc này vừa được đổi �
 
 // ---------- Bảng cấu hình chung `/config panel` (PROP-033, DEC-037) ----------
 
-export const CONFIG_ROLE_CHANGED = "Role này vừa được đổi ở nơi khác sau khi bảng được vẽ, nên bot chưa xoá gì. "
-	+ "Bảng đã được cập nhật; hãy kiểm tra rồi thao tác lại.";
+export const CONFIG_ROLES_CHANGED = "Danh sách role này vừa được đổi ở nơi khác sau khi bảng được vẽ, nên bot chưa lưu gì. "
+	+ "Bảng đã được cập nhật; hãy kiểm tra rồi chọn lại.";
 export const SELECT_AT_LEAST_ONE_ROLE = "Hãy chọn ít nhất một role.";
 export const SELECTED_CHANNEL_UNAVAILABLE = "Không tìm thấy kênh vừa chọn trong server. Vui lòng thử lại.";
 export const BOARD_CHANNEL_NOT_VISIBLE = "Bot không thấy kênh vừa chọn: có thể bot chưa có quyền **View Channel** ở kênh đó. "
@@ -194,34 +217,6 @@ export const FORM_UNCHANGED = "Không có gì thay đổi: bạn chưa sửa ô 
 
 /** Component của bảng cấu hình trả lời bằng cách sửa chính bảng (update hoặc deferUpdate + editReply). */
 type PanelComponentInteraction = ButtonInteraction | AnySelectMenuInteraction;
-
-/** Role cấu hình được từ ô chọn role (cho phép bỏ chọn) của bảng cấu hình. */
-type PanelRoleKey = "pollCreatorRoleId" | "adminRoleId";
-
-interface PanelRoleSetting
-{
-	/** Việc của role, dùng trong thông báo lỗi ("làm role tạo vote"), giống lệnh gõ tương ứng. */
-	purpose: string;
-	setText: (roleId: string) => string;
-	clearedText: string;
-	/** Bỏ chọn khi role vốn chưa đặt: không ghi gì. */
-	unsetText: string;
-}
-
-const PANEL_ROLE_SETTINGS: Readonly<Record<PanelRoleKey, PanelRoleSetting>> = {
-	pollCreatorRoleId: {
-		purpose: "làm role tạo vote",
-		setText: roleId => `Đã cập nhật cấu hình vote:\n${settingLine("pollCreatorRoleId", roleId)}`,
-		clearedText: `Đã cập nhật cấu hình vote:\n${settingLine("pollCreatorRoleId", null)}`,
-		unsetText: `Không có gì thay đổi:\n${settingLine("pollCreatorRoleId", null)}`,
-	},
-	adminRoleId: {
-		purpose: "làm role admin bot",
-		setText: adminRoleSetText,
-		clearedText: ADMIN_ROLE_CLEARED,
-		unsetText: `Không có gì thay đổi:\n${settingLine("adminRoleId", null)}`,
-	},
-};
 
 export type { LiveBoardActions } from "../../discord/configOps";
 
@@ -314,7 +309,7 @@ function channelOverride(value: number | null, useGuild: boolean, conflict: stri
 
 function pollSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
 {
-	sub.setName("poll").setDescription("Cấu hình vote: XP mặc định, giới hạn XP mỗi ngày và role được tạo vote");
+	sub.setName("poll").setDescription("Cấu hình vote: XP mặc định, giới hạn XP mỗi ngày và các role được tạo vote");
 	addSettingOption(sub, { name: "xp-mac-dinh", key: "defaultPollXp", description: "XP mặc định cho người tham gia vote" });
 	addSettingOption(sub, {
 		name: "gioi-han-xp-ngay",
@@ -322,8 +317,21 @@ function pollSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcomm
 		description: "XP tối đa một người nhận từ vote trong một ngày (0 = không giới hạn)",
 	});
 	return sub
-		.addRoleOption(option => option.setName("role-tao-vote").setDescription("Role được phép tạo vote (ngoài admin)"))
-		.addBooleanOption(option => option.setName("xoa-role-tao-vote").setDescription("Xoá role tạo vote (chỉ admin tạo được vote)"));
+		.addRoleOption(option => option.setName(POLL_ROLE_ADD_OPTION).setDescription("Thêm một role được phép tạo vote (ngoài admin)"))
+		.addRoleOption(option => option.setName(POLL_ROLE_REMOVE_OPTION).setDescription("Bỏ một role khỏi danh sách role được tạo vote"))
+		.addBooleanOption(option => option.setName(POLL_ROLE_CLEAR_OPTION).setDescription("True: xoá hết role tạo vote (chỉ admin tạo được vote)"));
+}
+
+function adminRoleSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
+{
+	return sub
+		.setName("admin-role")
+		.setDescription("Thêm hoặc bỏ role được dùng lệnh admin của bot (được đặt nhiều role)")
+		.addRoleOption(option => option.setName(ADMIN_ROLE_ADD_OPTION).setDescription("Thêm role này vào danh sách role admin bot"))
+		.addRoleOption(option => option.setName(ADMIN_ROLE_REMOVE_OPTION).setDescription("Bỏ role này khỏi danh sách role admin bot"))
+		.addBooleanOption(option => option
+			.setName(ADMIN_ROLE_CLEAR_OPTION)
+			.setDescription("True: xoá hết role admin bot (chỉ người có Manage Server là admin)"));
 }
 
 function contributionSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
@@ -553,9 +561,7 @@ export default class ConfigCmd extends Command
 			.addSubcommand(sub => sub
 				.setName("list")
 				.setDescription("Xem danh sách team")))
-		.addSubcommand(sub => addRole(sub
-			.setName("admin-role")
-			.setDescription("Đặt hoặc xoá role được dùng lệnh admin của bot"), "Role admin bot (bỏ trống để xoá role admin)", false))
+		.addSubcommand(adminRoleSubcommand)
 		.addSubcommand(pollSubcommand)
 		.addSubcommand(contributionSubcommand)
 		.addSubcommandGroup(tierGroup)
@@ -851,20 +857,29 @@ export default class ConfigCmd extends Command
 			: `${roleMention(role.id)} không phải team.`));
 	}
 
+	/**
+	 * `/config admin-role` (DEC-044): `them` thêm một role (qua assertUsableRole), `bo` bỏ một role, `bo-het` xoá hết; `them` và
+	 * `bo` dùng cùng lúc được, `bo-het` thì không đi cùng option khác.
+	 */
 	private async updateAdminRole(context: ConfigContext): Promise<void>
 	{
-		const role = context.interaction.options.getRole("role");
-		if (role)
-		{
-			this.assertUsableRole(context.guildId, role, PANEL_ROLE_SETTINGS.adminRoleId.purpose);
-			this.updateSettings(context, { adminRoleId: role.id });
-			await context.interaction.reply(ephemeral(adminRoleSetText(role.id)));
-			return;
-		}
-		this.updateSettings(context, { adminRoleId: null });
-		await context.interaction.reply(ephemeral(ADMIN_ROLE_CLEARED));
+		const { options } = context.interaction;
+		const add = options.getRole(ADMIN_ROLE_ADD_OPTION);
+		const remove = options.getRole(ADMIN_ROLE_REMOVE_OPTION);
+		const clear = options.getBoolean(ADMIN_ROLE_CLEAR_OPTION) ?? false;
+		if (clear && (add || remove)) throw new UserError(ADMIN_ROLE_CONFLICT);
+		if (!add && !remove && !clear) throw new UserError(ADMIN_ROLE_NO_OPTION);
+		if (add) this.assertUsableRole(context.guildId, add, ROLE_GRANT_PURPOSES.adminRoleIds);
+
+		const result = this.changeRoleGrants(context, "adminRoleIds", add?.id ?? null, remove?.id ?? null, clear);
+		await context.interaction.reply(ephemeral(roleGrantNotice("adminRoleIds", result)));
 	}
 
+	/**
+	 * `/config poll`: số (XP mặc định, giới hạn XP mỗi ngày) và danh sách role tạo vote (`role-tao-vote` thêm, `bo-role-tao-vote`
+	 * bỏ, `xoa-role-tao-vote` xoá hết; DEC-044). Đổi role trước (có thể bị từ chối vì quá giới hạn), rồi mới lưu số, để lỗi
+	 * không để lại thay đổi dở.
+	 */
 	private async updatePoll(context: ConfigContext): Promise<void>
 	{
 		const { options } = context.interaction;
@@ -873,19 +888,38 @@ export default class ConfigCmd extends Command
 		if (xp !== null) patch.defaultPollXp = xp;
 		const dailyCap = options.getInteger("gioi-han-xp-ngay");
 		if (dailyCap !== null) patch.pollXpDailyCap = dailyCap;
-		const role = options.getRole("role-tao-vote");
-		const clearRole = options.getBoolean("xoa-role-tao-vote") ?? false;
-		if (role && clearRole) throw new UserError("Không thể vừa đặt vừa xoá role tạo vote.");
-		if (role)
-		{
-			this.assertUsableRole(context.guildId, role, PANEL_ROLE_SETTINGS.pollCreatorRoleId.purpose);
-			patch.pollCreatorRoleId = role.id;
-		}
-		if (clearRole) patch.pollCreatorRoleId = null;
-		requireChange(patch);
+		const add = options.getRole(POLL_ROLE_ADD_OPTION);
+		const remove = options.getRole(POLL_ROLE_REMOVE_OPTION);
+		const clear = options.getBoolean(POLL_ROLE_CLEAR_OPTION) ?? false;
+		if (clear && (add || remove)) throw new UserError(POLL_ROLE_CONFLICT);
+		const hasNumbers = Object.keys(patch).length > 0;
+		if (!hasNumbers && !add && !remove && !clear) throw new UserError(NO_CHANGE_MESSAGE);
+		if (add) this.assertUsableRole(context.guildId, add, ROLE_GRANT_PURPOSES.pollCreatorRoleIds);
 
-		this.updateSettings(context, patch);
-		await context.interaction.reply(ephemeral(`Đã cập nhật cấu hình vote:\n${describeSettingsPatch(patch).join("\n")}`));
+		const roles = add || remove || clear
+			? this.changeRoleGrants(context, "pollCreatorRoleIds", add?.id ?? null, remove?.id ?? null, clear)
+			: null;
+		if (hasNumbers) this.updateSettings(context, patch);
+		const changed = hasNumbers || (roles !== null && roleGrantChanged(roles));
+		const lines = [
+			changed ? "Đã cập nhật cấu hình vote:" : "Không có gì thay đổi:",
+			...describeSettingsPatch(patch),
+			...(roles === null ? [] : roleGrantChangeLines("pollCreatorRoleIds", roles)),
+		];
+		await context.interaction.reply(ephemeral(lines.join("\n")));
+	}
+
+	/**
+	 * Đổi danh sách role `key` theo option của lệnh gõ: thêm `add` (đã qua assertUsableRole), bỏ `remove`, hoặc bỏ hết (`clear`),
+	 * qua changeRoleGrants (một transaction, một audit; role vốn đúng trạng thái thì bỏ qua).
+	 */
+	private changeRoleGrants(context: ConfigContext, key: RoleGrantKey, add: string | null, remove: string | null, clear: boolean): RoleGrantResult
+	{
+		const { guildConfig } = this.services;
+		const change = clear
+			? { remove: guildConfig.getSettings(context.guildId)[key] }
+			: { add: add === null ? [] : [add], remove: remove === null ? [] : [remove] };
+		return guildConfig.changeRoleGrants(context.guildId, key, change, context.actorId);
 	}
 
 	private async updateContribution(context: ConfigContext): Promise<void>
@@ -1204,9 +1238,9 @@ export default class ConfigCmd extends Command
 		const missingIds = new Set<string>();
 		if (guild)
 		{
-			for (const roleId of [settings.adminRoleId, settings.pollCreatorRoleId, ...teamIds])
+			for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...teamIds])
 			{
-				if (roleId !== null && !guild.roles.cache.has(roleId)) missingIds.add(roleId);
+				if (!guild.roles.cache.has(roleId)) missingIds.add(roleId);
 			}
 			if (boardChannelId !== null && !guild.channels.cache.has(boardChannelId)) missingIds.add(boardChannelId);
 		}
@@ -1304,8 +1338,8 @@ export default class ConfigCmd extends Command
 		else if (action.type === "channels" && interaction.isChannelSelectMenu()) await this.panelToggleChannels(interaction, action.enabled, page);
 		else if (action.type === "board" && interaction.isChannelSelectMenu()) await this.panelSetBoard(interaction, page);
 		else if (action.type === "teams" && interaction.isRoleSelectMenu()) await this.panelTeams(interaction, action.add, page);
-		else if (action.type === "pollRole" && interaction.isRoleSelectMenu()) await this.panelSettingRole(interaction, "pollCreatorRoleId", action.drawnRoleId, page);
-		else if (action.type === "adminRole" && interaction.isRoleSelectMenu()) await this.panelSettingRole(interaction, "adminRoleId", action.drawnRoleId, page);
+		else if (action.type === "pollRoles" && interaction.isRoleSelectMenu()) await this.panelRoleGrants(interaction, GRANT_ACTION_KEYS.pollRoles, action.fingerprint, page);
+		else if (action.type === "adminRoles" && interaction.isRoleSelectMenu()) await this.panelRoleGrants(interaction, GRANT_ACTION_KEYS.adminRoles, action.fingerprint, page);
 		else throw new UserError(INVALID_CONFIG_PANEL);
 	}
 
@@ -1380,48 +1414,32 @@ export default class ConfigCmd extends Command
 	}
 
 	/**
-	 * Ô chọn role tạo vote hoặc role admin bot: chọn role là đặt ngay (cùng kiểm tra với `/config poll role-tao-vote` và
-	 * `/config admin-role`); bỏ chọn là xoá, chỉ khi role hiện tại vẫn là role lúc vẽ bảng (`drawnRoleId`), để bảng cũ không
-	 * xoá role vừa được người khác đặt. Bảng cũ thì vẽ lại bảng rồi báo lỗi riêng.
+	 * Ô chọn nhiều role của danh sách role tạo vote hoặc role admin bot (DEC-044). Danh sách hiện tại phải khớp vân tay lúc vẽ
+	 * bảng (`fingerprint`); không khớp (có người vừa đổi) thì vẽ lại bảng rồi báo riêng, không ghi gì. Khớp thì danh sách = các role
+	 * đang chọn: role mới qua cùng kiểm tra với `/config admin-role them` và `/config poll role-tao-vote`; ghi phần chênh lệch bằng
+	 * changeRoleGrants (một transaction, một audit). Role đã lưu mà không còn trong server không được điền sẵn, nên lưu là bỏ.
 	 */
-	private async panelSettingRole(interaction: RoleSelectMenuInteraction, key: PanelRoleKey, drawnRoleId: string | null, page: ConfigPanelPage): Promise<void>
+	private async panelRoleGrants(interaction: RoleSelectMenuInteraction, key: RoleGrantKey, fingerprint: string, page: ConfigPanelPage): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
-		const setting = PANEL_ROLE_SETTINGS[key];
 		const { guildConfig } = this.services;
-		const patch: Partial<GuildSettings> = {};
-		const roleId = interaction.values[0];
-		let notice: string;
-		if (roleId === undefined)
+		const current = guildConfig.getSettings(guildId)[key];
+		if (roleListFingerprint(current) !== fingerprint)
 		{
-			const current = guildConfig.getSettings(guildId)[key];
-			if (current !== drawnRoleId)
-			{
-				await this.updateConfigPanel(interaction, page);
-				throw new UserError(CONFIG_ROLE_CHANGED);
-			}
-			if (current === null)
-			{
-				await this.updateConfigPanel(interaction, page, setting.unsetText);
-				return;
-			}
-			patch[key] = null;
-			notice = setting.clearedText;
+			await this.updateConfigPanel(interaction, page);
+			throw new UserError(CONFIG_ROLES_CHANGED);
 		}
-		else
-		{
-			const role = selectedRole(interaction, roleId);
-			this.assertUsableRole(guildId, role, setting.purpose);
-			if (guildConfig.getSettings(guildId)[key] === role.id)
-			{
-				await this.updateConfigPanel(interaction, page, `Không có gì thay đổi:\n${settingLine(key, role.id)}`);
-				return;
-			}
-			patch[key] = role.id;
-			notice = setting.setText(role.id);
-		}
-		guildConfig.updateSettings(guildId, patch, interaction.user.id);
-		await this.updateConfigPanel(interaction, page, notice);
+		const granted = new Set(current);
+		const selected = new Set(interaction.values);
+		const added = [...selected].filter(roleId => !granted.has(roleId)).map(roleId => selectedRole(interaction, roleId));
+		for (const role of added) this.assertUsableRole(guildId, role, ROLE_GRANT_PURPOSES[key]);
+		const result = guildConfig.changeRoleGrants(
+			guildId,
+			key,
+			{ add: added.map(role => role.id), remove: current.filter(roleId => !selected.has(roleId)) },
+			interaction.user.id,
+		);
+		await this.updateConfigPanel(interaction, page, roleGrantNotice(key, result));
 	}
 
 	/**

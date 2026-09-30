@@ -6,6 +6,7 @@ import { join } from "path";
 import { openDatabase } from "../src/db/connection";
 import { currentSchemaVersion, MIGRATIONS, runMigrations } from "../src/db/migrations";
 import { AuditService } from "../src/modules/audit/AuditService";
+import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
 import { Ledger } from "../src/modules/ledger/Ledger";
 import { TeamService } from "../src/modules/team/TeamService";
 import { FakeClock } from "./helpers";
@@ -19,7 +20,7 @@ describe("migrations", () =>
 		assert.equal(currentSchemaVersion(db), MIGRATIONS[MIGRATIONS.length - 1].version);
 
 		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name);
-		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals"])
+		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals", "guild_role_grants"])
 		{
 			assert.ok(tables.includes(name), `thiếu bảng ${name}`);
 		}
@@ -164,9 +165,46 @@ describe("migrations", () =>
 				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
 			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 6)), 1);
 		assert.equal(currentSchemaVersion(db), 6);
 		assert.deepEqual(db.prepare("SELECT level_up_channel_id FROM guild_settings WHERE guild_id = 'g1'").get(), { level_up_channel_id: null });
+	});
+
+	test("DB đang ở version 6 có role admin và role tạo vote: migration 7 chép sang guild_role_grants, hai cột cũ về NULL (DEC-044)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 6));
+		const insert = db.prepare<[string, string | null, string | null, number]>(`
+			INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
+				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+			VALUES (?, 10, 60, 5, 300, 1, 5, 1, ?, ?, ?)`);
+		insert.run("g1", "500000000000000001", "500000000000000002", 1000);
+		insert.run("g2", "500000000000000003", null, 2000);
+		insert.run("g3", null, null, 3000);
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 7);
+		const grants = db.prepare<[], { guild_id: string; kind: string; role_id: string; created_at: number }>(
+			"SELECT guild_id, kind, role_id, created_at FROM guild_role_grants ORDER BY guild_id, kind").all();
+		assert.deepEqual(grants.map(row => [row.guild_id, row.kind, row.role_id, row.created_at]), [
+			["g1", "admin", "500000000000000001", 1000],
+			["g1", "poll_creator", "500000000000000002", 1000],
+			["g2", "admin", "500000000000000003", 2000],
+		]);
+		const oldColumns = db.prepare<[], { admin_role_id: string | null; poll_creator_role_id: string | null }>(
+			"SELECT admin_role_id, poll_creator_role_id FROM guild_settings").all();
+		assert.ok(oldColumns.every(row => row.admin_role_id === null && row.poll_creator_role_id === null), "hai cột cũ về NULL, không xoá cột");
+		assert.equal(db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM guild_settings").get()?.count, 3);
+
+		const clock = new FakeClock();
+		const config = new GuildConfigService(db, clock, new AuditService(db, clock));
+		assert.deepEqual(config.getSettings("g1").adminRoleIds, ["500000000000000001"]);
+		assert.deepEqual(config.getSettings("g1").pollCreatorRoleIds, ["500000000000000002"]);
+		assert.deepEqual(config.getSettings("g2").pollCreatorRoleIds, []);
+		assert.deepEqual(config.getSettings("g3").adminRoleIds, []);
+
+		assert.throws(() => db.prepare("INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at) VALUES ('g1', 'khac', 'r', 0)").run(), /CHECK/);
+		assert.throws(() => db.prepare("INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at) VALUES ('g1', 'admin', '500000000000000001', 0)").run(), /UNIQUE|PRIMARY/);
 	});
 
 	test("từ chối database mới hơn code", () =>

@@ -30,7 +30,7 @@ const VN_TIME = new Intl.DateTimeFormat("vi-VN", {
 
 const XP_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"] as const;
 const POLL_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints"] as const;
-const ROLE_KEYS = ["adminRoleId", "pollCreatorRoleId"] as const;
+const ROLE_KEYS = ["adminRoleIds", "pollCreatorRoleIds"] as const;
 
 /** Danh sách dòng kiểu Discord ("• Nhãn: **giá trị**", mention) thành <ul>; bỏ dấu "• " đầu dòng. */
 function lines(ctx: GuildPageContext, texts: readonly string[]): RawHtml

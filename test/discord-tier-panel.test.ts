@@ -721,7 +721,7 @@ describe("bảng điều khiển danh hiệu: quyền", () =>
 	test("admin bot (role admin) nhưng thiếu Manage Roles: chọn bộ được, gán role thì bị từ chối như lệnh gõ", async () =>
 	{
 		const harness = createHarness(createWorld([{ id: ROLE_A, position: 5 }]));
-		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleId: ADMIN_ROLE }, ADMIN);
+		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: [ADMIN_ROLE] }, ADMIN);
 		const caller: CallerSpec = { id: USER_A, manageGuild: false, manageRoles: false, roleIds: [ADMIN_ROLE] };
 
 		const set = await dispatch(harness, { kind: "string", id: "tierui:set", values: ["cay-xanh"], caller });
@@ -850,7 +850,7 @@ describe("bảng điều khiển danh hiệu: chọn bộ, gán role, đổi tê
 		]);
 		const harness = createHarness(world);
 		harness.tierRoles.set(GUILD, "bac-2", ROLE_A, ADMIN);
-		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_E }, ADMIN);
+		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_E] }, ADMIN);
 
 		const cases: [string, string, CallerSpec?][] = [
 			[ROLE_B, "có quyền quản trị hoặc kiểm duyệt (Manage Messages)"],

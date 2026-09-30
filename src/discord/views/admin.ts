@@ -62,6 +62,12 @@ function seconds(value: number): string
 	return `${formatNumber(value)} giây`;
 }
 
+/** Danh sách role dạng mention cách nhau bằng dấu phẩy; rỗng thì `empty` (danh sách role được cấp quyền, DEC-044). */
+function roleListOr(roleIds: readonly string[], empty: string): string
+{
+	return roleIds.length === 0 ? empty : roleIds.map(roleMention).join(", ");
+}
+
 /** Nhãn chế độ kênh tính XP (DEC-037). */
 export function xpChannelModeLabel(mode: XpChannelMode): string
 {
@@ -88,9 +94,9 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 	xpChannelMode: { label: "Kênh tính XP", format: xpChannelModeLabel },
 	defaultPollXp: { label: "XP mặc định khi vote", format: value => `${formatNumber(value)} XP` },
 	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP` },
-	pollCreatorRoleId: { label: "Role tạo vote", format: value => value === null ? "chưa đặt (chỉ admin)" : roleMention(value) },
+	pollCreatorRoleIds: { label: "Role tạo vote", format: value => roleListOr(value, "chưa đặt (chỉ admin)") },
 	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", format: value => `${formatNumber(value)} điểm` },
-	adminRoleId: { label: "Role admin bot", format: value => value === null ? "chưa đặt" : roleMention(value) },
+	adminRoleIds: { label: "Role admin bot", format: value => roleListOr(value, "chưa đặt") },
 };
 
 const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
@@ -103,9 +109,9 @@ const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
 	"levelUpChannelId",
 	"defaultPollXp",
 	"pollXpDailyCap",
-	"pollCreatorRoleId",
+	"pollCreatorRoleIds",
 	"contributionVotePoints",
-	"adminRoleId",
+	"adminRoleIds",
 ];
 
 function isSettingKey(key: string): key is keyof GuildSettings
@@ -223,9 +229,9 @@ export function buildConfigEmbed(
 				name: "⭐ Activity XP",
 				value: settingLines(settings, ["xpChannelMode", "xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"]),
 			},
-			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleId"]) },
+			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleIds"]) },
 			{ name: "🤝 Contribution", value: settingLines(settings, ["contributionVotePoints"]) },
-			{ name: "🔐 Quyền admin", value: `${settingLines(settings, ["adminRoleId"])}\nNgười có quyền Manage Server luôn là admin.` },
+			{ name: "🔐 Quyền admin", value: `${settingLines(settings, ["adminRoleIds"])}\nNgười có quyền Manage Server luôn là admin.` },
 			{ name: `👥 Team (${teams.length}/${MAX_TEAMS})`, value: teamText },
 			{ name: `📺 Channel có cấu hình riêng (${channels.length})`, value: channelText },
 			{ name: "🏆 Bảng vàng", value: boardText },
@@ -470,6 +476,10 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"backup.manual": "none",
 };
 
+/**
+ * Nhãn các khoá khác trong details của audit (khoá cấu hình dùng nhãn của SETTING_DISPLAY). `addedRoles`/`removedRoles` do
+ * GuildConfigService.changeRoleGrants ghi; `adminRoleId`/`pollCreatorRoleId` là khoá một role của audit cũ, trước DEC-044.
+ */
 const DETAIL_LABELS = new Map<string, string>([
 	["delta", "Thay đổi"],
 	["reason", "Lý do"],
@@ -500,6 +510,10 @@ const DETAIL_LABELS = new Map<string, string>([
 	["orphanedRoles", "Role không xoá được"],
 	["deletedRoleId", "Role đã xoá"],
 	["compensated", "Điểm bù tự động"],
+	["addedRoles", "Role thêm"],
+	["removedRoles", "Role bỏ"],
+	["adminRoleId", "Role admin bot"],
+	["pollCreatorRoleId", "Role tạo vote"],
 ]);
 
 /** Khoá cảnh giới tu tiên dùng trước migration 4 (DEC-033), theo thứ tự bậc; audit cũ vẫn giữ nguyên các khoá này. */
@@ -599,7 +613,7 @@ function detailValue(key: string, value: unknown, action: AuditAction | null): s
 		}
 		return inlineText(value, DETAIL_VALUE_MAX);
 	}
-	if (Array.isArray(value) && key.endsWith("Roles"))
+	if (Array.isArray(value) && (key.endsWith("Roles") || key.endsWith("RoleIds")))
 	{
 		const roles = roleListText(value);
 		if (roles !== null) return roles;
