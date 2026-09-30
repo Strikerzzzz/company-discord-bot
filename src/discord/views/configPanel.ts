@@ -290,7 +290,7 @@ const PAGE_INFO: Readonly<Record<ConfigPanelPage, PageInfo>> = {
 	board: { emoji: "🏆", label: "Bảng vàng và quyền", description: "Kênh Bảng vàng, role admin bot, bảng danh hiệu" },
 };
 
-const XP_SETTING_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"] as const;
+const XP_SETTING_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"] as const;
 const POLL_SETTING_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints", "pollCreatorRoleId"] as const;
 
 const MODE_BUTTON_LABELS: Readonly<Record<XpChannelMode, string>> = {
@@ -316,6 +316,7 @@ const XP_NOTE = [
 	"-# Cooldown là thời gian chờ giữa hai lần một người được XP từ tin nhắn. Tin ngắn hơn độ dài tối thiểu, hoặc trùng tin trước đó "
 		+ "của cùng người trong khoảng chống trùng, không được XP.",
 	"-# XP hoặc cooldown riêng của từng kênh chỉnh bằng `/config channel set`.",
+	"-# Kênh nhận thông báo lên level đặt bằng `/config xp kenh-thong-bao` hoặc trên trang web quản trị (Cài đặt điểm).",
 ].join("\n");
 
 const POLL_NOTE = "-# XP mặc định dùng khi admin không đặt XP riêng lúc tạo vote. Giới hạn XP từ vote tính theo ngày giờ Việt Nam; "

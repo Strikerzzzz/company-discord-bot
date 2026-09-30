@@ -1,11 +1,14 @@
-// Trang "Cài đặt điểm" của web quản trị (DEC-039): số của Activity XP, vote, contribution và thông báo lên level. Cùng quy tắc
-// với `/config xp`, `/config poll`, `/config contribution` và form của `/config panel` (panelSaveForm): đọc và kiểm tra mọi ô
-// trước khi ghi, chỉ ghi ô có giá trị khác lúc vẽ trang để không đè thay đổi của admin khác.
+// Trang "Cài đặt điểm" của web quản trị (DEC-039): số của Activity XP, vote, contribution, thông báo lên level và kênh nhận
+// thông báo (DEC-043). Cùng quy tắc với `/config xp`, `/config poll`, `/config contribution` và form của `/config panel`
+// (panelSaveForm): đọc và kiểm tra mọi ô trước khi ghi, chỉ ghi ô có giá trị khác lúc vẽ trang để không đè thay đổi của admin khác.
+import { Guild, GuildMember } from "discord.js";
+import { isBoardChannel, resolveLevelUpChannel } from "../../discord/configOps";
 import { formatNumber } from "../../discord/format";
 import { describeSettingsPatch } from "../../discord/views/admin";
 import { parseFormNumber } from "../../discord/views/configPanel";
 import { DEFAULT_GUILD_SETTINGS, GuildSettings, NumericSettingKey, SETTING_LIMITS } from "../../modules/guild-config/types";
 import { UserError } from "../../shared/errors";
+import { canViewChannel, channelLabel } from "../format";
 import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
@@ -15,6 +18,8 @@ const PATH = "/settings";
 /** Tên input ẩn mang giá trị lúc vẽ của ô `key`. */
 const DRAWN_PREFIX = "d:";
 const ANNOUNCE_KEY = "levelUpAnnouncements";
+const ANNOUNCE_CHANNEL_KEY = "levelUpChannelId";
+const SNOWFLAKE = /^\d{17,20}$/u;
 
 export const SETTINGS_STALE_FORM = "Form đã cũ hoặc không hợp lệ, nên bot chưa lưu gì. Hãy tải lại trang rồi thử lại.";
 export const SETTINGS_UNCHANGED = "Không có gì thay đổi.";
@@ -96,7 +101,30 @@ function announceField(enabled: boolean): RawHtml
 <label class="check" for="st-${ANNOUNCE_KEY}"><input type="checkbox" id="st-${ANNOUNCE_KEY}" name="${ANNOUNCE_KEY}" value="1"${enabled ? html` checked` : ""}>
 Thông báo khi thành viên lên level</label>
 <input type="hidden" name="${drawnName(ANNOUNCE_KEY)}" value="${enabled ? "1" : "0"}">
-<span class="hint">Bật thì khi một người lên level (hoặc lên bậc danh hiệu), bot gửi lời chúc mừng ở kênh người đó vừa nhắn.</span>
+<span class="hint">Bật thì khi một người lên level (hoặc lên bậc danh hiệu), bot gửi lời chúc mừng vào kênh chọn ở ô dưới.</span>
+</div>`;
+}
+
+/**
+ * Ô chọn kênh nhận thông báo lên level (DEC-043): kênh văn bản và kênh thông báo mà người đăng nhập xem được, theo thứ tự trong
+ * server. Kênh đang đặt luôn có trong danh sách (tên bị giấu nếu người đăng nhập không xem được, ghi rõ nếu kênh không còn).
+ */
+function announceChannelField(guild: Guild, viewer: GuildMember, current: string | null): RawHtml
+{
+	const channels = [...guild.channels.cache.values()]
+		.filter(channel => isBoardChannel(channel) && canViewChannel(guild, channel.id, viewer))
+		.sort((a, b) => ("rawPosition" in a ? a.rawPosition : 0) - ("rawPosition" in b ? b.rawPosition : 0));
+	const listed = new Set(channels.map(channel => channel.id));
+	const options = channels.map(channel => html`<option value="${channel.id}"${channel.id === current ? html` selected` : ""}>${channelLabel(guild, channel.id, viewer)}</option>`);
+	const currentOption = current !== null && !listed.has(current) ? html`<option value="${current}" selected>${channelLabel(guild, current, viewer)}</option>` : "";
+	return html`<div class="field">
+<label for="st-${ANNOUNCE_CHANNEL_KEY}">Kênh nhận thông báo lên level</label>
+<select id="st-${ANNOUNCE_CHANNEL_KEY}" name="${ANNOUNCE_CHANNEL_KEY}">
+<option value=""${current === null ? html` selected` : ""}>Kênh thành viên vừa nhắn (mặc định)</option>
+${currentOption}${options}
+</select>
+<input type="hidden" name="${drawnName(ANNOUNCE_CHANNEL_KEY)}" value="${current ?? ""}">
+<span class="hint">Chọn một kênh (ví dụ kênh lệnh bot) thì bot chỉ gửi thông báo vào kênh đó, không gửi vào kênh hay thread công việc. Bot cần quyền View Channel và Send Messages ở kênh này; kênh bị xoá hoặc bot mất quyền thì bot không gửi thông báo.</span>
 </div>`;
 }
 
@@ -104,7 +132,7 @@ function renderSettings(ctx: GuildPageContext): WebResponse
 {
 	const settings = ctx.deps.services.guildConfig.getSettings(ctx.guild.id);
 	const body = html`<form method="post" action="${guildUrl(ctx, PATH)}" class="st-form">${csrfField(ctx)}
-${groupCard(XP_GROUP, settings, announceField(settings.levelUpAnnouncements))}
+${groupCard(XP_GROUP, settings, html`${announceField(settings.levelUpAnnouncements)}${announceChannelField(ctx.guild, ctx.member, settings.levelUpChannelId)}`)}
 ${groupCard(POLL_GROUP, settings)}
 ${groupCard(CONTRIBUTION_GROUP, settings)}
 <div class="actions"><button class="btn btn-primary" type="submit">Lưu cài đặt</button>
@@ -133,12 +161,24 @@ function drawnFlag(form: URLSearchParams, key: string): boolean
 	return text === "1";
 }
 
+/** Giá trị (lúc vẽ hoặc đã chọn) của ô kênh thông báo: "" hoặc ID kênh; UserError nếu sai định dạng. */
+function channelValue(form: URLSearchParams, name: string): string
+{
+	const text = form.get(name) ?? "";
+	if (text !== "" && !SNOWFLAKE.test(text)) throw new UserError(SETTINGS_STALE_FORM);
+	return text;
+}
+
 /** Phần cấu hình admin thật sự đổi trên form: đọc và kiểm tra mọi ô trước (lỗi thì không ghi gì), rồi so với giá trị lúc vẽ. */
-function settingsPatchFromForm(form: URLSearchParams): Partial<GuildSettings>
+function settingsPatchFromForm(ctx: GuildPageContext, form: URLSearchParams): Partial<GuildSettings>
 {
 	const values = NUMBER_KEYS.map(key => ({ key, value: parseFormNumber(form.get(key) ?? "", key), drawn: drawnNumber(form, key) }));
 	const announce = form.has(ANNOUNCE_KEY);
 	const announceDrawn = drawnFlag(form, ANNOUNCE_KEY);
+	const announceChannel = channelValue(form, ANNOUNCE_CHANNEL_KEY);
+	const announceChannelDrawn = channelValue(form, drawnName(ANNOUNCE_CHANNEL_KEY));
+	const announceChannelChanged = announceChannel !== announceChannelDrawn;
+	const levelUpChannelId = announceChannelChanged && announceChannel !== "" ? resolveLevelUpChannel(ctx.guild, announceChannel, ctx.member) : null;
 
 	const patch: Partial<GuildSettings> = {};
 	for (const { key, value, drawn } of values)
@@ -146,12 +186,13 @@ function settingsPatchFromForm(form: URLSearchParams): Partial<GuildSettings>
 		if (value !== drawn) patch[key] = value;
 	}
 	if (announce !== announceDrawn) patch.levelUpAnnouncements = announce;
+	if (announceChannelChanged) patch.levelUpChannelId = levelUpChannelId;
 	return patch;
 }
 
 function saveSettings(ctx: GuildPageContext): WebResponse
 {
-	const patch = settingsPatchFromForm(ctx.req.form ?? new URLSearchParams());
+	const patch = settingsPatchFromForm(ctx, ctx.req.form ?? new URLSearchParams());
 	if (Object.keys(patch).length === 0) return redirectWithFlash(ctx, PATH, "ok", SETTINGS_UNCHANGED);
 	ctx.deps.services.guildConfig.updateSettings(ctx.guild.id, patch, ctx.actorId);
 	return redirectWithFlash(ctx, PATH, "ok", `Đã cập nhật cài đặt điểm:\n${describeSettingsPatch(patch).join("\n")}`);

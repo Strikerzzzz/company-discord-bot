@@ -32,6 +32,7 @@ interface GuildRow
 	min_message_length: number;
 	duplicate_window_seconds: number;
 	level_up_announcements: number;
+	level_up_channel_id: string | null;
 	xp_channel_mode: string;
 	default_poll_xp: number;
 	poll_xp_daily_cap: number;
@@ -89,6 +90,7 @@ export class GuildConfigService
 			minMessageLength: row.min_message_length,
 			duplicateWindowSeconds: row.duplicate_window_seconds,
 			levelUpAnnouncements: row.level_up_announcements === 1,
+			levelUpChannelId: row.level_up_channel_id,
 			// Cột có CHECK nên luôn hợp lệ; vẫn kiểm tra để giá trị lạ (DB sửa tay) rơi về mặc định thay vì lọt ra ngoài.
 			xpChannelMode: isXpChannelMode(row.xp_channel_mode) ? row.xp_channel_mode : DEFAULT_GUILD_SETTINGS.xpChannelMode,
 			defaultPollXp: row.default_poll_xp,
@@ -113,15 +115,16 @@ export class GuildConfigService
 		{
 			this.db.prepare(`
 				INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
-					level_up_announcements, xp_channel_mode, default_poll_xp, poll_xp_daily_cap, contribution_vote_points, admin_role_id,
-					poll_creator_role_id, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					level_up_announcements, level_up_channel_id, xp_channel_mode, default_poll_xp, poll_xp_daily_cap, contribution_vote_points,
+					admin_role_id, poll_creator_role_id, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (guild_id) DO UPDATE SET
 					xp_per_message = excluded.xp_per_message,
 					xp_cooldown_seconds = excluded.xp_cooldown_seconds,
 					min_message_length = excluded.min_message_length,
 					duplicate_window_seconds = excluded.duplicate_window_seconds,
 					level_up_announcements = excluded.level_up_announcements,
+					level_up_channel_id = excluded.level_up_channel_id,
 					xp_channel_mode = excluded.xp_channel_mode,
 					default_poll_xp = excluded.default_poll_xp,
 					poll_xp_daily_cap = excluded.poll_xp_daily_cap,
@@ -131,7 +134,7 @@ export class GuildConfigService
 					updated_at = excluded.updated_at`,
 			).run(
 				guildId, next.xpPerMessage, next.xpCooldownSeconds, next.minMessageLength, next.duplicateWindowSeconds,
-				next.levelUpAnnouncements ? 1 : 0, next.xpChannelMode, next.defaultPollXp, next.pollXpDailyCap, next.contributionVotePoints, next.adminRoleId, next.pollCreatorRoleId,
+				next.levelUpAnnouncements ? 1 : 0, next.levelUpChannelId, next.xpChannelMode, next.defaultPollXp, next.pollXpDailyCap, next.contributionVotePoints, next.adminRoleId, next.pollCreatorRoleId,
 				this.clock.now(),
 			);
 			this.audit.record(guildId, actorId, "config.update", null, { ...patch });

@@ -519,3 +519,59 @@ describe("web: trang nhật ký quản trị", () =>
 		assert.ok(body.includes(`@${escapeHtml(EVIL)}`), "tên role độc hại được escape");
 	});
 });
+
+describe("web: kênh nhận thông báo lên level (DEC-043)", () =>
+{
+	const PRIVATE_TEXT = "410000000000000061";
+	const BOT_MUTED = "410000000000000062";
+
+	function announceSelect(body: string): string
+	{
+		const match = /<select id="st-levelUpChannelId"[\s\S]*?<\/select>/u.exec(body);
+		assert.ok(match, "không có ô chọn kênh thông báo");
+		return match[0];
+	}
+
+	test("ô chọn có mặc định 'kênh vừa nhắn' và chỉ kênh văn bản/thông báo người đăng nhập xem được", async () =>
+	{
+		const { harness, auth } = await setup();
+		addChannel(harness.world, { id: PRIVATE_TEXT, name: "bi-mat", type: ChannelType.GuildText, permissionsByMember: { [ADMIN_USER]: [] } });
+		const select = announceSelect(await page(harness, auth, "/settings"));
+		assert.ok(select.includes("<option value=\"\" selected>Kênh thành viên vừa nhắn (mặc định)</option>"), select);
+		for (const id of [CHANNEL_CHAT, CHANNEL_WORK, CHANNEL_ANNOUNCE]) assert.ok(select.includes(`value="${id}"`), id);
+		for (const id of [CHANNEL_VOICE, CATEGORY_MAIN, PRIVATE_TEXT]) assert.ok(!select.includes(`value="${id}"`), id);
+		assert.ok(!select.includes("bi-mat"));
+	});
+
+	test("chọn kênh rồi lưu: chỉ ghi kênh thông báo, có audit; chọn lại mặc định thì về null", async () =>
+	{
+		const { harness, auth } = await setup();
+		const form = drawnForm(await page(harness, auth, "/settings"), "/settings");
+		const before = auditCount(harness);
+		const body = await submit(harness, auth, "/settings", { ...form, levelUpChannelId: CHANNEL_WORK });
+		expectFlash(body, "ok", "Kênh thông báo lên level", "#cong-viec");
+		const settings = harness.services.guildConfig.getSettings(GUILD);
+		assert.equal(settings.levelUpChannelId, CHANNEL_WORK);
+		assert.equal(settings.xpPerMessage, DEFAULT_GUILD_SETTINGS.xpPerMessage);
+		assert.equal(auditCount(harness), before + 1);
+		assert.ok(announceSelect(body).includes(`<option value="${CHANNEL_WORK}" selected>`));
+
+		const redrawn = drawnForm(body, "/settings");
+		assert.equal(redrawn["d:levelUpChannelId"], CHANNEL_WORK);
+		expectFlash(await submit(harness, auth, "/settings", { ...redrawn, levelUpChannelId: "" }), "ok", "kênh thành viên vừa nhắn");
+		assert.equal(harness.services.guildConfig.getSettings(GUILD).levelUpChannelId, null);
+	});
+
+	test("từ chối kênh thoại, kênh người đăng nhập không gửi được tin, kênh bot không gửi được tin, giá trị sai định dạng", async () =>
+	{
+		const { harness, auth } = await setup();
+		addChannel(harness.world, { id: PRIVATE_TEXT, name: "bi-mat", type: ChannelType.GuildText, permissionsByMember: { [ADMIN_USER]: [] } });
+		addChannel(harness.world, { id: BOT_MUTED, name: "chi-doc", type: ChannelType.GuildText, permissionsByMember: { [BOT_ID]: [PermissionFlagsBits.ViewChannel] } });
+		const form = drawnForm(await page(harness, auth, "/settings"), "/settings");
+		expectFlash(await submit(harness, auth, "/settings", { ...form, levelUpChannelId: CHANNEL_VOICE }), "error", "kênh văn bản hoặc kênh thông báo");
+		expectFlash(await submit(harness, auth, "/settings", { ...form, levelUpChannelId: PRIVATE_TEXT }), "error", "Bạn không có quyền");
+		expectFlash(await submit(harness, auth, "/settings", { ...form, levelUpChannelId: BOT_MUTED }), "error", "Bot thiếu quyền", "Send Messages");
+		expectFlash(await submit(harness, auth, "/settings", { ...form, levelUpChannelId: "abc" }), "error", SETTINGS_STALE_FORM);
+		assert.equal(harness.services.guildConfig.getSettings(GUILD).levelUpChannelId, null);
+	});
+});

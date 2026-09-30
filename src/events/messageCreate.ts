@@ -1,4 +1,4 @@
-import { Events, Message, MessageFlags, PermissionFlagsBits } from "discord.js";
+import { Events, GuildTextBasedChannel, Message, MessageFlags, PermissionFlagsBits } from "discord.js";
 import Event from "../classes/Event";
 import { roleIdsOf } from "../discord/members";
 import { syncTierRoles } from "../discord/roleSync";
@@ -43,13 +43,16 @@ export default class MessageCreate extends Event
 	}
 
 	/**
-	 * Thông báo lên level, hoặc lên bậc nếu vượt mốc bậc, theo bộ danh hiệu của guild (đã áp tên tuỳ chỉnh).
-	 * Không ném lỗi khi gửi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo.
+	 * Thông báo lên level, hoặc lên bậc nếu vượt mốc bậc, theo bộ danh hiệu của guild (đã áp tên tuỳ chỉnh). Gửi vào kênh
+	 * thông báo admin đã chọn (DEC-043), chưa chọn thì gửi ở kênh vừa nhắn. Kênh đã chọn không còn hoặc bot mất quyền thì bỏ qua,
+	 * không gửi về kênh vừa nhắn. Không ném lỗi khi gửi: XP đã được cộng, gửi thất bại chỉ ghi cảnh báo.
 	 */
 	private async announceLevelUp(message: Message<true>, levelBefore: number, levelAfter: number): Promise<void>
 	{
-		if (!this.client.services.guildConfig.getSettings(message.guildId).levelUpAnnouncements) return;
-		if (!this.canAnnounceIn(message)) return;
+		const settings = this.client.services.guildConfig.getSettings(message.guildId);
+		if (!settings.levelUpAnnouncements) return;
+		const channel = this.announceChannel(message, settings.levelUpChannelId);
+		if (!channel) return;
 
 		const set = this.client.services.tierSets.current(message.guildId);
 		const tier = tierUp(levelBefore, levelAfter, set);
@@ -58,22 +61,38 @@ export default class MessageCreate extends Event
 		{
 			// Client mặc định chặn mọi mention; ở đây chỉ cho phép ping đúng người vừa lên level. Tắt xem trước link: tên bậc do admin
 			// đặt đã bị chặn link, đây là lớp phòng thủ thêm cho tin công khai.
-			await message.channel.send({ content, allowedMentions: { users: [message.author.id] }, flags: MessageFlags.SuppressEmbeds });
+			await channel.send({ content, allowedMentions: { users: [message.author.id] }, flags: MessageFlags.SuppressEmbeds });
 		}
 		catch (error)
 		{
-			logger.warn(`Không gửi được thông báo lên level ở channel "${message.channelId}":`, error);
+			logger.warn(`Không gửi được thông báo lên level ở channel "${channel.id}":`, error);
 		}
 	}
 
+	/**
+	 * Kênh để gửi thông báo: kênh đã cấu hình (`configuredId`) hoặc kênh của tin nhắn nếu chưa cấu hình. null nếu kênh đã cấu
+	 * hình không còn trong server, hoặc bot không gửi được tin ở kênh đó.
+	 */
+	private announceChannel(message: Message<true>, configuredId: string | null): GuildTextBasedChannel | null
+	{
+		if (configuredId === null) return this.canSendIn(message.channel) ? message.channel : null;
+		const configured = message.guild.channels.cache.get(configuredId);
+		if (!configured?.isTextBased() || !this.canSendIn(configured))
+		{
+			logger.warn(`Không gửi được thông báo lên level: kênh thông báo "${configuredId}" không còn hoặc bot thiếu quyền gửi tin ở đó.`);
+			return null;
+		}
+		return configured;
+	}
+
 	/** Bot có quyền gửi tin ở channel này không (isSendable() chỉ kiểm tra loại channel, không kiểm tra quyền). */
-	private canAnnounceIn(message: Message<true>): boolean
+	private canSendIn(channel: GuildTextBasedChannel): boolean
 	{
 		const me = this.client.user;
-		if (!me || !message.channel.isSendable()) return false;
+		if (!me || !channel.isSendable()) return false;
 
-		const send = message.channel.isThread() ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages;
-		return message.channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, send]) ?? false;
+		const send = channel.isThread() ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages;
+		return channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, send]) ?? false;
 	}
 }
 

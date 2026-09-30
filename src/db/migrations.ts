@@ -325,6 +325,14 @@ export const MIGRATIONS: readonly Migration[] = [
 			ALTER TABLE guild_settings ADD COLUMN xp_channel_mode TEXT NOT NULL DEFAULT 'all' CHECK (xp_channel_mode IN ('all', 'selected'));
 		`,
 	},
+	{
+		version: 6,
+		name: "level_up_channel",
+		sql: `
+			-- Kênh nhận thông báo lên level/lên bậc (DEC-043). NULL = gửi ở kênh thành viên vừa nhắn (hành vi trước đây).
+			ALTER TABLE guild_settings ADD COLUMN level_up_channel_id TEXT;
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

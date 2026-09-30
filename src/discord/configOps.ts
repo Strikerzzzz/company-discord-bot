@@ -26,6 +26,12 @@ const BOARD_CALLER_PERMISSIONS: PermissionList = [
 	[PermissionFlagsBits.SendMessages, "Send Messages"],
 ];
 
+/** Quyền bot cần ở kênh thông báo lên level để gửi tin (DEC-043). */
+const LEVEL_UP_PERMISSIONS: PermissionList = [
+	[PermissionFlagsBits.ViewChannel, "View Channel"],
+	[PermissionFlagsBits.SendMessages, "Send Messages"],
+];
+
 /** Thao tác với message Bảng vàng (src/discord/liveBoard.ts); test thay bằng hàm giả. */
 export interface LiveBoardActions
 {
@@ -72,6 +78,36 @@ export function assertBoardChannelAccess(channel: PermissionChannel, caller: Gui
 	{
 		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
 	}
+}
+
+/**
+ * Kiểm tra trước khi đặt kênh thông báo lên level (DEC-043; lệnh gõ, web): người gọi phải tự xem và gửi được tin ở kênh đó
+ * (không mượn bot đăng vào kênh mình không được gửi, LL-013), bot phải gửi được tin.
+ */
+export function assertLevelUpChannelAccess(channel: PermissionChannel, caller: GuildMember, bot: GuildMember): void
+{
+	const callerMissing = missingPermissions(channel.permissionsFor(caller), BOARD_CALLER_PERMISSIONS);
+	if (callerMissing.length > 0)
+	{
+		throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể chọn kênh đó để thông báo lên level.`);
+	}
+	const missing = missingPermissions(channel.permissionsFor(bot), LEVEL_UP_PERMISSIONS);
+	if (missing.length > 0)
+	{
+		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
+	}
+}
+
+/**
+ * ID kênh thông báo lên level hợp lệ để lưu (DEC-043): kênh văn bản hoặc kênh thông báo có trong server, người gọi và bot đủ
+ * quyền (assertLevelUpChannelAccess). Dùng chung cho `/config xp` và web.
+ */
+export function resolveLevelUpChannel(guild: Guild, channelId: string, caller: GuildMember): string
+{
+	const channel = guild.channels.cache.get(channelId);
+	if (!channel || !isBoardChannel(channel)) throw new UserError("Kênh thông báo lên level phải là kênh văn bản hoặc kênh thông báo của server.");
+	assertLevelUpChannelAccess(channel, caller, botMemberOf(guild));
+	return channel.id;
 }
 
 export type BoardChannel = Extract<GuildBasedChannel, { type: (typeof BOARD_CHANNEL_TYPES)[number] }>;

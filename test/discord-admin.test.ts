@@ -31,7 +31,7 @@ import {
 } from "../src/discord/views/admin";
 import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
-import ConfigCmd, { CHANNEL_COOLDOWN_CONFLICT, CHANNEL_XP_CONFLICT } from "../src/interactions/commands/config";
+import ConfigCmd, { CHANNEL_COOLDOWN_CONFLICT, CHANNEL_XP_CONFLICT, LEVEL_UP_CHANNEL_CONFLICT } from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
 import { applyTierOverrides, DEFAULT_TIER_SET, TIER_SETS } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageXpResult, XpAdjustInput, XpEventView } from "../src/modules/activity/types";
@@ -1238,6 +1238,18 @@ describe("/config", () =>
 		const { config, context } = createHarness();
 		await rejects(config, { subcommand: "xp" }, NO_CHANGE);
 		assert.equal(context.deps.audit.list(GUILD, 5).length, 0);
+	});
+
+	test("xp: bo-kenh-thong-bao đưa thông báo lên level về kênh vừa nhắn; chọn cùng lúc với kenh-thong-bao thì từ chối (DEC-043)", async () =>
+	{
+		const { config, context } = createHarness();
+		context.deps.guildConfig.updateSettings(GUILD, { levelUpChannelId: CHANNEL_BOT }, ADMIN);
+		await rejects(config, { subcommand: "xp", options: { "kenh-thong-bao": { id: CHANNEL_GENERAL }, "bo-kenh-thong-bao": true } }, LEVEL_UP_CHANNEL_CONFLICT);
+		assert.equal(context.deps.guildConfig.getSettings(GUILD).levelUpChannelId, CHANNEL_BOT);
+
+		const fake = await run(config, { subcommand: "xp", options: { "bo-kenh-thong-bao": true } });
+		assert.equal(context.deps.guildConfig.getSettings(GUILD).levelUpChannelId, null);
+		assert.equal(replyText(fake), "Đã cập nhật cấu hình Activity XP:\n• Kênh thông báo lên level: **kênh thành viên vừa nhắn**");
 	});
 
 	test("xp: cập nhật một phần, giữ nguyên phần còn lại, ghi audit", async () =>

@@ -65,7 +65,7 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 	"/config view": { options: [], web: [""] },
 	"/config panel": { options: [], web: [""] },
 	"/config xp": {
-		options: ["chong-trung-giay", "cooldown-giay", "do-dai-toi-thieu", "thong-bao-len-level", "xp-moi-tin"],
+		options: ["bo-kenh-thong-bao", "chong-trung-giay", "cooldown-giay", "do-dai-toi-thieu", "kenh-thong-bao", "thong-bao-len-level", "xp-moi-tin"],
 		web: ["/settings"],
 	},
 	"/config channel set": {

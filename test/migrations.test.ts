@@ -148,11 +148,25 @@ describe("migrations", () =>
 				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
 			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 5)), 1);
 		assert.equal(currentSchemaVersion(db), 5);
 		assert.deepEqual(db.prepare("SELECT xp_channel_mode FROM guild_settings WHERE guild_id = 'g1'").get(), { xp_channel_mode: "all" });
 		db.prepare("UPDATE guild_settings SET xp_channel_mode = 'selected' WHERE guild_id = 'g1'").run();
 		assert.throws(() => db.prepare("UPDATE guild_settings SET xp_channel_mode = 'khac' WHERE guild_id = 'g1'").run(), /CHECK/);
+	});
+
+	test("DB đang ở version 5 có cấu hình guild: migration 6 thêm kênh thông báo lên level, mặc định NULL (giữ hành vi cũ, DEC-043)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 5));
+		db.prepare(`
+			INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
+				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+			VALUES ('g1', 10, 60, 5, 300, 1, 5, 1, NULL, NULL, 0)`).run();
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 6);
+		assert.deepEqual(db.prepare("SELECT level_up_channel_id FROM guild_settings WHERE guild_id = 'g1'").get(), { level_up_channel_id: null });
 	});
 
 	test("từ chối database mới hơn code", () =>

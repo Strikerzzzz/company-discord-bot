@@ -51,6 +51,8 @@ interface FakeServiceOptions
 {
 	xpResult?: MessageXpResult;
 	levelUpAnnouncements?: boolean;
+	/** Kênh nhận thông báo lên level (DEC-043); mặc định null (kênh vừa nhắn). */
+	levelUpChannelId?: string | null;
 	activity?: ActivityProfile;
 	contribution?: ContributionProfile;
 	configuredTeams?: string[];
@@ -120,7 +122,11 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 		resolveTeams: (_guildId, roleIds) => (options.configuredTeams ?? []).filter(roleId => roleIds.includes(roleId)),
 	};
 	const guildConfig: Pick<GuildConfigService, "getSettings"> = {
-		getSettings: () => ({ ...DEFAULT_GUILD_SETTINGS, levelUpAnnouncements: options.levelUpAnnouncements ?? true }),
+		getSettings: () => ({
+			...DEFAULT_GUILD_SETTINGS,
+			levelUpAnnouncements: options.levelUpAnnouncements ?? true,
+			levelUpChannelId: options.levelUpChannelId ?? null,
+		}),
 	};
 	const leaderboard: LeaderboardServiceApi = {
 		individual: () => { throw new Error("không dùng trong test này"); },
@@ -170,6 +176,8 @@ interface FakeMessageOptions
 	content?: string;
 	attachments?: number;
 	roleIds?: string[];
+	/** Kênh khác của server (trong cache), ví dụ kênh nhận thông báo lên level (DEC-043). */
+	guildChannels?: Map<string, object>;
 }
 
 const BOT_CAN_SEND = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads];
@@ -204,6 +212,7 @@ function fakeMessage(options: FakeMessageOptions = {}): { message: Message; sent
 				return Promise.resolve();
 			},
 		},
+		guild: { id: options.guildId ?? GUILD, channels: { cache: options.guildChannels ?? new Map<string, object>() } },
 		content: options.content ?? "Chào buổi sáng cả nhà",
 		attachments: { size: options.attachments ?? 0 },
 		member: inGuild ? { roles: options.roleIds ?? [], guild: { id: options.guildId ?? GUILD } } : null,
@@ -729,6 +738,54 @@ describe("event messageCreate", () =>
 		assert.deepEqual(fake.planCalls, [{ guildId: GUILD, level: 3, roleIds: [ROLE_BACKEND] }]);
 		assert.deepEqual(fake.messages[0].roleIds, [ROLE_BACKEND]);
 		assert.equal(sent.length, 1);
+	});
+
+	/** Kênh văn bản giả trong cache của server, dùng làm kênh nhận thông báo lên level. */
+	function announceChannel(botPermissions: bigint[] = BOT_CAN_SEND): { channel: object; sent: unknown[] }
+	{
+		const sent: unknown[] = [];
+		const channel = {
+			id: ANNOUNCE_CHANNEL,
+			isTextBased: () => true,
+			isSendable: () => true,
+			isThread: () => false,
+			permissionsFor: () => new PermissionsBitField(botPermissions),
+			send: (payload: unknown) =>
+			{
+				sent.push(payload);
+				return Promise.resolve();
+			},
+		};
+		return { channel, sent };
+	}
+
+	const ANNOUNCE_CHANNEL = "400000000000000077";
+
+	test("có kênh thông báo lên level: chỉ gửi vào kênh đó, không gửi ở thread vừa nhắn (DEC-043)", async () =>
+	{
+		const fake = messageServices({ xpResult: PLAIN_LEVEL_UP, levelUpChannelId: ANNOUNCE_CHANNEL });
+		const target = announceChannel();
+		const { message, sent } = fakeMessage({ inThread: true, guildChannels: new Map([[ANNOUNCE_CHANNEL, target.channel]]) });
+		await new MessageCreate(fakeClient(fake.services)).execute(message);
+		assert.equal(sent.length, 0);
+		assert.deepEqual(target.sent, [{ content: levelUpText(DEFAULT_TIER_SET, USER_A, 4), allowedMentions: { users: [USER_A] }, flags: MessageFlags.SuppressEmbeds }]);
+	});
+
+	test("kênh thông báo đã bị xoá hoặc bot thiếu quyền: không gửi, cũng không gửi về kênh vừa nhắn (DEC-043)", async (t) =>
+	{
+		const warned = t.mock.method(console, "error", () => undefined);
+		const gone = messageServices({ xpResult: PLAIN_LEVEL_UP, levelUpChannelId: ANNOUNCE_CHANNEL });
+		const first = fakeMessage();
+		await new MessageCreate(fakeClient(gone.services)).execute(first.message);
+		assert.equal(first.sent.length, 0);
+
+		const noPermission = messageServices({ xpResult: PLAIN_LEVEL_UP, levelUpChannelId: ANNOUNCE_CHANNEL });
+		const target = announceChannel([PermissionFlagsBits.ViewChannel]);
+		const second = fakeMessage({ guildChannels: new Map([[ANNOUNCE_CHANNEL, target.channel]]) });
+		await new MessageCreate(fakeClient(noPermission.services)).execute(second.message);
+		assert.equal(second.sent.length, 0);
+		assert.equal(target.sent.length, 0);
+		assert.equal(warned.mock.callCount(), 2, "mỗi lần bỏ qua ghi một cảnh báo");
 	});
 
 	test("lỗi khi đổi role chỉ ghi cảnh báo, không ảnh hưởng thông báo lên level", async (t) =>

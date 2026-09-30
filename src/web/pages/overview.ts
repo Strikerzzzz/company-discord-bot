@@ -28,7 +28,7 @@ const VN_TIME = new Intl.DateTimeFormat("vi-VN", {
 	hourCycle: "h23",
 });
 
-const XP_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"] as const;
+const XP_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"] as const;
 const POLL_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints"] as const;
 const ROLE_KEYS = ["adminRoleId", "pollCreatorRoleId"] as const;
 

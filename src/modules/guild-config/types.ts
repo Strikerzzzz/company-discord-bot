@@ -19,6 +19,11 @@ export interface GuildSettings
 	/** Tin trùng với tin trước đó của cùng người trong khoảng này không được XP (DEC-023). */
 	duplicateWindowSeconds: number;
 	levelUpAnnouncements: boolean;
+	/**
+	 * Kênh nhận thông báo lên level/lên bậc (DEC-043): có giá trị thì chỉ gửi vào kênh này; null = gửi ở kênh thành viên vừa nhắn.
+	 * Chỉ có tác dụng khi `levelUpAnnouncements` bật.
+	 */
+	levelUpChannelId: string | null;
 	/** Kênh chưa có cấu hình riêng có tính XP không: "all" = có, "selected" = không (DEC-037). */
 	xpChannelMode: XpChannelMode;
 	/** XP mặc định cho người tham gia vote (DEC-026). */
@@ -41,6 +46,7 @@ export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	minMessageLength: 5,
 	duplicateWindowSeconds: 300,
 	levelUpAnnouncements: true,
+	levelUpChannelId: null,
 	xpChannelMode: "all",
 	defaultPollXp: 5,
 	pollXpDailyCap: 25,

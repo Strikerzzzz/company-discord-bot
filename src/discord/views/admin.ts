@@ -84,6 +84,7 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 	minMessageLength: { label: "Độ dài tối thiểu", format: value => `${formatNumber(value)} ký tự` },
 	duplicateWindowSeconds: { label: "Chống trùng", format: seconds },
 	levelUpAnnouncements: { label: "Thông báo lên level", format: onOff },
+	levelUpChannelId: { label: "Kênh thông báo lên level", format: value => value === null ? "kênh thành viên vừa nhắn" : channelMention(value) },
 	xpChannelMode: { label: "Kênh tính XP", format: xpChannelModeLabel },
 	defaultPollXp: { label: "XP mặc định khi vote", format: value => `${formatNumber(value)} XP` },
 	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP` },
@@ -99,6 +100,7 @@ const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
 	"minMessageLength",
 	"duplicateWindowSeconds",
 	"levelUpAnnouncements",
+	"levelUpChannelId",
 	"defaultPollXp",
 	"pollXpDailyCap",
 	"pollCreatorRoleId",
@@ -219,7 +221,7 @@ export function buildConfigEmbed(
 		.addFields(
 			{
 				name: "⭐ Activity XP",
-				value: settingLines(settings, ["xpChannelMode", "xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements"]),
+				value: settingLines(settings, ["xpChannelMode", "xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"]),
 			},
 			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleId"]) },
 			{ name: "🤝 Contribution", value: settingLines(settings, ["contributionVotePoints"]) },

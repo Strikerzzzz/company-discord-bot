@@ -27,6 +27,7 @@ import {
 	LiveBoardActions,
 	moveLiveBoard,
 	renameInput,
+	resolveLevelUpChannel,
 	turnOffLiveBoard,
 } from "../../discord/configOps";
 import { requireGuildId } from "../../discord/guards";
@@ -156,6 +157,9 @@ const XP_CHANNEL_MODE_CHOICES = XP_CHANNEL_MODES.map(mode => ({
 	value: mode,
 }));
 
+const LEVEL_UP_CHANNEL_OPTION = "kenh-thong-bao";
+const LEVEL_UP_CHANNEL_CLEAR_OPTION = "bo-kenh-thong-bao";
+export const LEVEL_UP_CHANNEL_CONFLICT = "Chỉ chọn một: `kenh-thong-bao` để đặt kênh nhận thông báo lên level, hoặc `bo-kenh-thong-bao` = True để thông báo ở kênh thành viên vừa nhắn.";
 const CHANNEL_USE_GUILD_XP = "dung-chung-xp";
 const CHANNEL_USE_GUILD_COOLDOWN = "dung-chung-cooldown";
 export const CHANNEL_XP_CONFLICT = "Chỉ chọn một: `xp-moi-tin` để đặt XP riêng cho channel, hoặc `dung-chung-xp` = True để dùng XP chung của server.";
@@ -273,9 +277,17 @@ function xpSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcomman
 {
 	sub.setName("xp").setDescription("Chỉnh cấu hình Activity XP chung của server");
 	for (const option of XP_SETTING_OPTIONS) addSettingOption(sub, option);
-	return sub.addBooleanOption(option => option
-		.setName("thong-bao-len-level")
-		.setDescription("Bật hoặc tắt thông báo khi thành viên lên level"));
+	return sub
+		.addBooleanOption(option => option
+			.setName("thong-bao-len-level")
+			.setDescription("Bật hoặc tắt thông báo khi thành viên lên level"))
+		.addChannelOption(option => option
+			.setName(LEVEL_UP_CHANNEL_OPTION)
+			.setDescription("Kênh nhận thông báo lên level (chỉ gửi vào kênh này)")
+			.addChannelTypes(...BOARD_CHANNEL_TYPES))
+		.addBooleanOption(option => option
+			.setName(LEVEL_UP_CHANNEL_CLEAR_OPTION)
+			.setDescription("True: bỏ kênh riêng, thông báo ở kênh thành viên vừa nhắn"));
 }
 
 function channelSetSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
@@ -735,10 +747,24 @@ export default class ConfigCmd extends Command
 		}
 		const announcements = options.getBoolean("thong-bao-len-level");
 		if (announcements !== null) patch.levelUpAnnouncements = announcements;
+		const levelUpChannel = this.levelUpChannelPatch(context);
+		if (levelUpChannel !== undefined) patch.levelUpChannelId = levelUpChannel;
 		requireChange(patch);
 
 		this.updateSettings(context, patch);
 		await context.interaction.reply(ephemeral(`Đã cập nhật cấu hình Activity XP:\n${describeSettingsPatch(patch).join("\n")}`));
+	}
+
+	/** Kênh thông báo lên level từ option (DEC-043): ID đã kiểm tra quyền, null nếu bỏ kênh riêng, undefined nếu không đổi. */
+	private levelUpChannelPatch({ interaction: base }: ConfigContext): string | null | undefined
+	{
+		const channelOption = base.options.getChannel(LEVEL_UP_CHANNEL_OPTION);
+		const clear = base.options.getBoolean(LEVEL_UP_CHANNEL_CLEAR_OPTION) ?? false;
+		if (channelOption && clear) throw new UserError(LEVEL_UP_CHANNEL_CONFLICT);
+		if (clear) return null;
+		if (!channelOption) return undefined;
+		const interaction = requireCachedGuild(base);
+		return resolveLevelUpChannel(interaction.guild, channelOption.id, interaction.member);
 	}
 
 	private async setChannel({ interaction, guildId, actorId }: ConfigContext): Promise<void>
