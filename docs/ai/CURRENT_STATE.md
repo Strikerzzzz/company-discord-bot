@@ -1,16 +1,26 @@
 # CURRENT STATE
 
 > Đọc file này đầu tiên ở mỗi phiên. Cập nhật sau mỗi phase hoặc task đáng kể.
-> Cập nhật lần cuối: **2026-09-29**
+> Cập nhật lần cuối: **2026-09-30**
 
 ## 1. Phase hiện tại
 
-**Bot đã chạy thật** (Phase 11), từ 2026-09-29 (DEC-036). `main` có đủ Phase 0–14. Không còn branch nào đang dở.
+**Bot đã chạy thật** (Phase 11), từ 2026-09-29 (DEC-036). `main` có đủ Phase 0–16. Không còn branch nào đang dở.
 
-- Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, bản `38238e8`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
-- Việc đang làm: cấu hình ban đầu trong Discord (DEPLOY mục 7) và kiểm theo `docs/TEST-PLAN.md` trên server thật.
+- Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
+  - Bản đang chạy: **`8da7fe2`** (gồm Phase 15 và 16).
+  - Trang web quản trị **đã bật** ở `http://192.168.0.206:8787`, bằng `deploy/enable-web.sh`: `ufw` chỉ mở cổng 8787 cho 10/8, 172.16/12, 192.168/16. Ngày 2026-09-30 đã có lượt đăng nhập admin thành công.
+  - `main` mới hơn bản đang chạy chỉ ở script `deploy/enable-web.sh`, tài liệu và test.
+- **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động. Còn 17 mục thiếu trên web (`/admin xp|contribution|stats|backup`, xem/đóng vote, xem contribution, bảng xếp hạng): **Phase 17, chờ duyệt kế hoạch**.
+- Việc người phụ trách còn làm trên Discord hoặc web:
+  - chuyển kênh tính XP sang "chỉ kênh được bật" và tick các kênh được tính;
+  - reset điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`;
+  - kiểm theo `docs/TEST-PLAN.md`.
 - Bot **chưa có quyền Manage Roles**: người mời bot không có quyền này. Role danh hiệu chờ chủ server bật quyền cho role của bot.
-- **Phase 16 (DEC-039) đã merge vào `main`** (DEC-040): trang web quản trị trong process bot, chỉ mạng nội bộ, đăng nhập bằng Discord. **Chưa cài lên server**; bản cài sẽ gồm cả Phase 15 và 16.
+
+Lịch sử Phase 15–16 (giữ để tra cứu):
+
+- **Phase 16 (DEC-039) đã merge vào `main`** (DEC-040): trang web quản trị trong process bot, chỉ mạng nội bộ, đăng nhập bằng Discord. Đã cài lên server ngày 2026-09-29 (bản `8da7fe2`).
   - Nền móng (`bee039e`) đã xong:
     - `src/web/`: server, OAuth2, phiên, CSRF, Host/Origin, CSP, layout;
     - `src/discord/configOps.ts` dùng chung với `/config`;
@@ -22,18 +32,12 @@
     - Quy tắc mới trên web: giấu tên kênh người đăng nhập không xem được; trang kênh ghi đổi chế độ sau cùng; mất quyền admin thì huỷ phiên; cookie `ezbot_*`.
     - Chấp nhận có ghi lại: role admin bot đổi được role admin trên web như lớp quyền 2 (PROP-032 đã bị từ chối; PROP-034 mở rộng cho web).
   - 938 test pass.
-  - Chưa bật trên server: cần `WEB_PORT`, `WEB_BASE_URL`, `DISCORD_CLIENT_SECRET`, và redirect trên Developer Portal.
-  - Firewall `ufw` trên server đang chặn cổng 8787 (đã thử ngày 2026-09-29); cổng 8765 của dịch vụ khác thì mở. Khi bật web phải thêm luật `ufw` cho 8787, chỉ trong mạng nội bộ.
-- **Phase 15 (DEC-037) đã merge vào `main`** (DEC-038). Bản `2a84410` đã build sẵn ở `~/deploy/src` trên server, **chờ người phụ trách chạy `install.sh` và `start.sh`** (server vẫn chạy `38238e8`):
+  - Bật web trên server (đã làm): biến `WEB_*` và `DISCORD_CLIENT_SECRET` trong `.env`, redirect trên Developer Portal, luật `ufw` cho cổng 8787 chỉ trong mạng nội bộ (trước đó `ufw` chặn 8787). Script: `deploy/enable-web.sh`.
+- **Phase 15 (DEC-037) đã merge vào `main`** (DEC-038) và đã cài lên server:
   - `/config panel`: bảng cấu hình 6 trang (PROP-033);
   - chế độ kênh "chỉ kênh được bật" (migration 5, `/config channel mode`).
-  - Tiến độ:
-    - nền móng và 3 agent (giao diện, handler, tài liệu) đã gộp; có test tích hợp giữa giao diện và handler;
-    - 2 review độc lập (tính đúng đắn và API Discord; bảo mật) không có lỗi CAO. Mọi lỗi TRUNG BÌNH và THẤP đã sửa; góp ý ngoài phạm vi ghi thành PROP-034, 035, 036;
-    - kiểm chứng trên bản copy sạch ngay trên server Linux: `npm ci` OK, 844/844 test pass;
-    - **chờ người phụ trách duyệt merge**.
-  - Cập nhật server: `git archive` vào `~/deploy/src`, `npm ci && npm run check`, rồi `sudo bash ~/deploy/install.sh` và `sudo bash ~/deploy/start.sh`. Hai script giờ nằm trong `deploy/` của repo.
-  - Sau khi merge và cập nhật server: server ezOne chuyển sang "chỉ kênh được bật", rồi reset điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`.
+  - Nền móng và 3 agent (giao diện, handler, tài liệu); 2 review độc lập không có lỗi CAO; góp ý ngoài phạm vi ghi thành PROP-034, 035, 036.
+  - Cập nhật server: `git archive` vào `~/deploy/src`, `npm ci && npm run check`, rồi `sudo bash ~/deploy/install.sh` và `sudo bash ~/deploy/start.sh`. Hai script nằm trong `deploy/` của repo.
 
 ## 2. Tính năng đã có
 
@@ -48,7 +52,8 @@
 | `/rank` | Ảnh thẻ tu luyện (avatar, cảnh giới, level, tiến độ, hạng, XP tuần, contribution, chuỗi ngày, huy hiệu) kèm chữ tóm tắt huy hiệu |
 | `/leaderboard` | Ảnh bảng xếp hạng; Activity/Contribution × cá nhân/team × tổng/tuần/tháng; nút chuyển bảng, trang, "Hạng của tôi" |
 | Bảng vàng | `/config board`: một message 2–3 ảnh bảng xếp hạng, tự cập nhật 10 phút |
-| Quản trị | `/admin xp|contribution|stats|audit|backup`; `/config` (XP, channel, team, admin-role, poll, contribution, tier, board) |
+| Quản trị | `/admin xp|contribution|stats|audit|backup`; `/config` (XP, channel, team, admin-role, poll, contribution, tier, board) và `/config panel` |
+| Web quản trị | `http://<server>:<WEB_PORT>`, đăng nhập Discord, chỉ mạng nội bộ (DEC-039): tổng quan, kênh, team, cài đặt điểm, quyền, Bảng vàng, danh hiệu, nhật ký. Theo DEC-041 mọi tính năng phải có trên web; phần `/admin` còn thiếu làm ở Phase 17 |
 | Vận hành | Migration tự động (3 migration), backup hàng ngày, systemd hardening, runbook `docs/DEPLOY.md` |
 
 ## 3. Kiểm chứng
@@ -108,3 +113,5 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-27 | DEC-034: merge Phase 13, không làm PROP-032. Phase 14: 2 agent (PROP-030 + ảnh bảng; selfcheck), checklist chạy thật, 1 review độc lập, 1 agent sửa lỗi. |
 | 2026-09-27 | DEC-035: merge Phase 14 vào `main` (782 test). Code hoàn tất, chờ chạy thật. |
 | 2026-09-29 | DEC-036: cài lên server `192.168.0.206` (systemd, Node 22.23.2). 782/782 test pass trên server, selfcheck 0 ❌, bot online ở server ezOne. LL-021 (pipe PowerShell chèn BOM/CRLF). |
+| 2026-09-29 | DEC-037…040: Phase 15 (`/config panel`, chế độ kênh) và Phase 16 (web quản trị) merge vào `main`, cài lên server (`8da7fe2`), bật web ở cổng 8787 bằng `deploy/enable-web.sh`. |
+| 2026-09-30 | DEC-041: rule mọi tính năng quản lý được trên web; `test/web-parity.test.ts`; đề xuất Phase 17 làm bù 17 mục còn thiếu. |

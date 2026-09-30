@@ -25,7 +25,7 @@ Discord bot nội bộ công ty cho gamification và ghi nhận đóng góp, v�
 - **Activity XP**: tin nhắn hợp lệ → XP → Level → Activity Leaderboard (cá nhân và team).
 - **Contribution Score**: contribution → vote/recognition → score → Contribution Leaderboard (cá nhân và team).
 
-Team xác định bằng Discord Role. Admin thao tác bằng slash command (MVP không có dashboard).
+Team xác định bằng Discord Role. Admin thao tác bằng slash command và trang web quản trị nội bộ (DEC-039). **Mọi tính năng, mới hay cũ, đều phải quản lý được trên trang web** (DEC-041, xem mục "Quy tắc trang web quản trị").
 
 Topology cố định: **1 process Node.js + 1 file SQLite + Discord**. Chi tiết yêu cầu: `docs/ai/PROJECT_CONTEXT.md`.
 
@@ -61,7 +61,7 @@ Chi tiết và sơ đồ: `docs/ai/ARCHITECTURE.md`. Những điểm cần biế
 - **Dispatcher** `events/interactionCreate.ts` là error boundary duy nhất. Nó hiển thị `UserError` nguyên văn và kiểm tra `adminOnly` (lớp quyền 2).
 - **Button**: `customId` có dạng `<namespace>:<payload>`. Namespace khai báo trong `buttonIds`; command tự validate payload.
 - **Hiển thị**: dựng embed/nút bằng hàm thuần trong `src/discord/views/`, dùng helper trong `src/discord/format.ts`.
-- **Trang web quản trị** (`src/web/`, DEC-039): tầng ngang hàng tầng Discord, chạy trong cùng process (node:http, tắt khi không đặt `WEB_PORT`). Đăng nhập bằng Discord OAuth2; server kiểm tra quyền admin ở mỗi request, CSRF và Host/Origin trước khi gọi trang. Trang gọi đúng service và `src/discord/configOps.ts` như lệnh `/config`, không tự viết lại quy tắc. HTML chỉ dựng bằng template `html` (tự escape); không style hay script inline (CSP).
+- **Trang web quản trị** (`src/web/`, DEC-039): tầng ngang hàng tầng Discord, chạy trong cùng process (node:http, tắt khi không đặt `WEB_PORT`). Đăng nhập bằng Discord OAuth2; server kiểm tra quyền admin ở mỗi request, CSRF và Host/Origin trước khi gọi trang. Trang gọi đúng service và `src/discord/configOps.ts` như lệnh `/config`, không tự viết lại quy tắc. HTML chỉ dựng bằng template `html` (tự escape); không style hay script inline (CSP). `test/web-parity.test.ts` đối chiếu mọi subcommand với trang web (DEC-041).
 
 Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước khi sửa dispatcher, loader, ledger, migration hay cơ chế config.
 
@@ -88,7 +88,7 @@ Lỗi đã biết và bài học: `docs/ai/LESSONS_LEARNED.md`. Đọc trước 
 Chỉ được thay đổi thông qua proposal đã được duyệt (xem mục Quy trình):
 
 1. Không truy cập database sản phẩm của công ty. Database của bot hoàn toàn độc lập.
-2. Không tự thêm PostgreSQL, MySQL, MongoDB, Redis, Kafka, RabbitMQ, microservices, Kubernetes, API server riêng, database server riêng, external SaaS, cloud service, dashboard, Docker. (Ngoại lệ đã duyệt: trang web quản trị nhúng trong process bot, chỉ mạng nội bộ, DEC-039. Không mở rộng ngoại lệ này khi chưa có proposal mới.)
+2. Không tự thêm PostgreSQL, MySQL, MongoDB, Redis, Kafka, RabbitMQ, microservices, Kubernetes, API server riêng, database server riêng, external SaaS, cloud service, dashboard, Docker. (Ngoại lệ đã duyệt: trang web quản trị nhúng trong process bot, chỉ mạng nội bộ, DEC-039. Thêm trang cho tính năng theo DEC-041 nằm trong ngoại lệ này. Hạ tầng, phạm vi mạng và cách đăng nhập thì không mở rộng khi chưa có proposal mới.)
 3. Không tự thêm external service hay network call.
 4. Không tự cấp quyền Administrator.
 5. Không tự quyết định hoặc thay đổi công thức scoring hay business rule.
@@ -113,6 +113,18 @@ Chỉ được thay đổi thông qua proposal đã được duyệt (xem mục 
 - Team được suy ra từ Discord Role đã cấu hình. Không xây database nhân viên hay team.
 - Công thức XP, level, team score, contribution score do người có quyền quyết định. Phải ghi vào `DECISIONS.md` trước khi code.
 - Business logic phải test được mà không cần Discord client thật.
+
+## Quy tắc trang web quản trị (DEC-041)
+
+- **Mọi việc admin làm được trên Discord đều phải làm được trên trang web quản trị**, với cùng quy tắc: cấu hình, chỉnh và reset điểm, quản lý contribution và vote, thống kê, nhật ký, sao lưu. Áp dụng cho cả tính năng cũ lẫn tính năng mới.
+- Dữ liệu tính năng tạo ra mà admin cần xem (bảng xếp hạng, hồ sơ thành viên, danh sách contribution và vote, thống kê) cũng phải xem được trên web.
+- Tính năng mới **chỉ được coi là xong khi đã có trang web kèm test**. Không làm lệnh Discord trước rồi để web sau.
+- Không bắt buộc có trên web: thao tác của thành viên gắn với Discord (nhắn tin nhận XP, bấm vote, gửi hay ghi nhận contribution, xem thẻ `/rank`). Phần quản lý của các tính năng đó (xem, đóng, gỡ, cấu hình) thì vẫn bắt buộc.
+- Lệnh Discord và trang web dùng chung logic: service trong `src/modules/`, hàm dùng chung trong `src/discord/` (như `configOps.ts`). Không viết một quy tắc hai lần.
+- Thao tác phá huỷ hay hàng loạt (reset toàn server, xoá hàng loạt) phải có bước xác nhận tương đương lệnh Discord, và ghi audit với người thao tác.
+- Web vẫn trong giới hạn DEC-039: cùng process, chỉ mạng nội bộ hoặc VPN, đăng nhập Discord, kiểm quyền admin ở mỗi request, CSRF, không script. Rule này chỉ thêm trang, không mở rộng hạ tầng, phạm vi mạng hay cách đăng nhập.
+- `test/web-parity.test.ts` xếp loại mọi subcommand và context menu: có trên web, chỉ có trên Discord (phải ghi lý do), hoặc còn thiếu. Việc còn thiếu chỉ được là những mục có từ lúc chốt DEC-041, và danh sách này chỉ được rút ngắn. Thêm lệnh, subcommand hay option mới mà chưa có trang web thì test fail.
+- Tính năng thật sự không làm được trên web: ghi lý do vào `PROPOSALS.md` và chờ người phụ trách duyệt. Không tự xếp vào "chỉ có trên Discord".
 
 ## Quy trình
 
@@ -151,6 +163,7 @@ Self-review trước khi báo xong:
 - **Architecture:** business module có phụ thuộc discord.js không? Coupling có tăng không?
 - **Security:** có permission hay intent mới không? Có secret lọt vào đâu không? Có thêm external request không? Attack surface có rộng ra không?
 - **Database:** schema có đổi không? Có migration chưa? Có cần transaction không? Ảnh hưởng tới backup ra sao?
+- **Web (DEC-041):** tính năng đã quản lý được trên trang web chưa, có test chưa? `test/web-parity.test.ts` đã cập nhật chưa?
 - **Docs:** có decision, lesson, proposal hay thay đổi architecture nào cần ghi không?
 
 ### Cập nhật tài liệu AI

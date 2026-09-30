@@ -380,6 +380,27 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - bật web cần: biến `WEB_*` và `DISCORD_CLIENT_SECRET` trong `.env`, redirect trên Developer Portal, luật `ufw` mở cổng 8787 trong mạng nội bộ.
   - PROP-034, 035, 036 vẫn PROPOSED.
 
+### DEC-041 — Mọi tính năng đều phải quản lý được trên trang web quản trị
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT (rule); phần làm bù cho tính năng cũ là Phase 17, chờ duyệt kế hoạch · **Nguồn:** người phụ trách ("đảm bảo cho tôi 1 rule là mọi tính năng mới thêm và cả tính năng cũ đều phải có giao diện quản lý ở cái con web view chúng ta đang có nhé")
+- **Nội dung:**
+  - **Rule thường trực** (chi tiết ở `CLAUDE.md`, mục "Quy tắc trang web quản trị"):
+    - mọi việc admin làm được trên Discord đều phải làm được trên trang web quản trị, cùng quy tắc, dùng chung service và hàm trong `src/discord/`;
+    - tính năng mới chỉ xong khi có trang web kèm test;
+    - thao tác của thành viên gắn với Discord không bắt buộc có trên web, nhưng phần quản lý của nó thì bắt buộc.
+  - **Phạm vi ngoại lệ DEC-039:** thêm trang nằm trong ngoại lệ đã duyệt. Hạ tầng (cùng process), phạm vi mạng (chỉ nội bộ hoặc VPN) và cách đăng nhập (Discord, kiểm quyền mỗi request) giữ nguyên. Mở rộng những thứ đó vẫn cần proposal mới. Luật protected số 2 trong `CLAUDE.md` đã ghi thêm câu này.
+  - **Kiểm tra tự động:** `test/web-parity.test.ts` xếp loại từng subcommand và context menu (có trên web / chỉ có trên Discord kèm lý do / còn thiếu), kèm danh sách option lúc xếp loại. Lệnh, subcommand hay option mới chưa được xếp loại thì `npm run check` fail. Mục "còn thiếu" chỉ được là 17 mục có từ lúc chốt, và chỉ được bớt đi.
+  - **Kiểm kê lúc chốt (2026-09-30):**
+    - Đã có trên web: toàn bộ `/config` (Phase 16) và `/admin audit`.
+    - Chỉ có trên Discord, vì là thao tác của thành viên: `/contribution submit`, context menu "Ghi nhận đóng góp", `/poll create`, `/rank`, `/ping`.
+    - Còn thiếu (làm ở Phase 17):
+      - `/admin xp view|give|remove|reset|reset-all`;
+      - `/admin contribution adjust|remove|reset|reset-all`;
+      - `/admin stats`, `/admin backup`;
+      - `/contribution view|list`;
+      - `/poll close|results|list`;
+      - `/leaderboard`.
+
 ---
 
 ## Đang chờ quyết định

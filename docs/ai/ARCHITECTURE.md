@@ -314,6 +314,14 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
 
 **Trang:** 8 module trong `src/web/pages/` (`NavKey` → đường dẫn dưới `/g/<guildId>`): `overview` (rỗng) · `channels` `/channels` · `teams` `/teams` · `settings` `/settings` · `roles` `/roles` · `board` `/board` · `tiers` `/tiers` · `audit` `/audit`. Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), thêm vào `PAGE_MODULES`; cần mục menu thì thêm `NavKey` và `NAV_ITEMS`.
 
+**Phủ tính năng (DEC-041):**
+- Mọi việc admin làm được trên Discord phải có trên web. `test/web-parity.test.ts` đọc định nghĩa lệnh thật (`loadModules`, như `commands.test.ts`) và đối chiếu từng subcommand và context menu với bảng `COVERAGE`. Mỗi mục có tên option lúc xếp loại và thuộc một trong ba loại:
+  - `web`: đường dẫn GET có thật trong `PAGE_MODULES`;
+  - `discordOnly`: kèm lý do;
+  - `pending`: chỉ các mục trong `PENDING_AT_DEC_041`.
+- Lệnh, subcommand hay option mới chưa xếp loại thì test fail.
+- Logic dùng chung giữa lệnh và trang đặt trong `src/discord/` theo mẫu `configOps.ts`: hàm nhận `client`/`services` và dữ liệu thuần, trả thông báo kiểu Discord, và các tác dụng phụ lên Discord inject được để test.
+
 ## 4. Dữ liệu
 
 | Nhóm | Bảng |

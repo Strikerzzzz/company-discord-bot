@@ -26,6 +26,7 @@
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
 | 15 | Bảng cấu hình chung, chế độ kênh tính XP | **Đã merge vào `main`** (DEC-038) | DEC-037 |
 | 16 | Trang web quản trị (mạng nội bộ, đăng nhập Discord) | **Đã merge vào `main`** (DEC-040) | DEC-039 |
+| 17 | Web quản trị đủ tính năng (làm bù theo DEC-041) | **Đề xuất, chờ duyệt kế hoạch** | DEC-041 |
 
 ## Chi tiết
 
@@ -119,6 +120,19 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
   - Ảnh thẻ và thông báo theo giọng văn từng bộ.
 - **Cách làm:** nền móng (dữ liệu bộ, TierSetService, migration 4) → 3 agent song song (vẽ ảnh; bảng điều khiển và role; giọng văn và tài liệu) → review độc lập.
 
+### Phase 17 — Web quản trị đủ tính năng · ĐỀ XUẤT (DEC-041)
+
+- **Mục tiêu:** làm bù 17 mục còn thiếu trên web (danh sách ở DEC-041), để `PENDING_AT_DEC_041` trong `test/web-parity.test.ts` về rỗng.
+- **Trang dự kiến:**
+  - Thành viên: tìm, xem hồ sơ, cộng/trừ/reset XP và contribution của một người. Sau khi chỉnh XP thì đồng bộ role danh hiệu như lệnh.
+  - Reset toàn server: gõ chữ xác nhận như lệnh.
+  - Contribution: danh sách, chi tiết, gỡ.
+  - Vote: danh sách, kết quả, đóng vote (cập nhật message trong Discord).
+  - Bảng xếp hạng: dạng bảng.
+  - Thống kê.
+  - Sao lưu: tạo bản sao lưu, xem danh sách; không tải file database qua web.
+- **Cách làm:** nền móng (tách logic dùng chung khỏi `admin.ts` và `poll.ts` sang `src/discord/`), agent song song theo trang, review bảo mật và tính đúng đắn độc lập.
+
 ### Phase 11 — Security review và Deployment
 
 - Rà soát permission và OAuth scope thực tế trên Developer Portal (hiện CHƯA XÁC ĐỊNH).
@@ -145,3 +159,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-29 | DEC-038: merge Phase 15 vào `main` |
 | 2026-09-29 | DEC-039: thêm Phase 16 (trang web quản trị) |
 | 2026-09-29 | DEC-040: merge Phase 16 vào `main` |
+| 2026-09-30 | DEC-041: rule "mọi tính năng quản lý được trên web"; thêm Phase 17 (làm bù cho tính năng cũ), chờ duyệt |
