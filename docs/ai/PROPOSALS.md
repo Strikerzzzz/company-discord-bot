@@ -1401,6 +1401,13 @@ Chạm vào quy tắc phân quyền (DEC-021, DEC-034; PROP-032 đã bị từ c
 
 PROPOSED (2026-09-29).
 
+### Bổ sung (review bảo mật Phase 18, 2026-09-30)
+
+- Nay có nhiều role admin bot (DEC-044), nên nguy cơ đưa nhầm role thành viên tự lấy được vào danh sách admin tăng lên.
+- Các role đó gồm: role tự chọn qua Onboarding hoặc Channels & Roles, Linked Roles (`role.tags.guildConnections`), role mua qua subscription (`availableForPurchase`).
+- Nên chặn các role này khi dùng làm role admin bot.
+- Nên có cảnh báo tự khoá quyền ở `/config admin-role bo|bo-het` và ở `/config panel`; hiện chỉ trang web có cảnh báo này.
+
 ## PROP-035 — Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server
 
 ### Vấn đề

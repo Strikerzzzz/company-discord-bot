@@ -444,6 +444,9 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
 - **Nội dung:**
   - **Chọn tất cả / bỏ chọn tất cả** cho bảng ô tick trên web (trang Team, Kênh tính XP, bảng role của trang Quyền):
     - làm bằng link `?chon=tat-ca|bo-het`: trang vẽ lại với mọi ô đã tick hoặc bỏ tick; bot chưa lưu gì cho tới khi admin bấm Lưu;
+    - **ngoại lệ, theo review bảo mật Phase 18:**
+      - bảng role admin bot không có "Chọn tất cả": một cú bấm rồi Lưu sẽ biến mọi role, kể cả role team, thành admin bot;
+      - mỗi lần lưu có thêm role admin phải tick ô xác nhận "toàn quyền quản trị bot";
     - không thêm JavaScript: CSP của web vẫn cấm script (DEC-039).
   - **Nhiều role admin bot và nhiều role được tạo vote** (quy tắc quyền do người phụ trách quyết):
     - mỗi loại tối đa 25 role;
@@ -456,7 +459,11 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
       - `/config panel`: menu chọn nhiều role;
       - web, trang Quyền: bảng ô tick.
   - **Bộ danh hiệu thứ 6 "Mobile Legends"** (khoá `mobile-legends`):
-    - 8 bậc cùng mốc level như các bộ khác, tên như trong game: Warrior, Elite, Master, Grandmaster, Epic, Legend, Mythic, Mythical Glory;
+    - 8 bậc cùng mốc level như các bộ khác. Tên và màu theo bảng người phụ trách gửi sau đó (thay cho tên tiếng Anh ban đầu):
+      - Đấu Sĩ (Warrior) #B06A3B, Tinh Anh (Elite) #8A9BB0, Cao Thủ (Master) #E3A62B, Đại Cao Thủ (Grandmaster) #4FB3D9;
+      - Sử Thi (Epic) #22A79A, Huyền Thoại (Legend) #E5842A, Thần Thoại (Mythic) #B84BD6, Vinh Quang (Mythical Glory) #7B3FE4 viền #E0364B;
+      - mỗi bậc có màu chữ riêng trên nền màu bậc (`Tier.textColor`); bậc 8 có viền (`Tier.borderColor`);
+      - tên tiếng Anh nằm trong câu lên bậc và mô tả bộ;
     - huy hiệu trên ảnh thẻ do bot tự vẽ bằng canvas, theo màu và hình gợi ý của rank. Không dùng ảnh huy hiệu gốc của game (bản quyền);
     - chọn được ở mọi nơi như các bộ khác (web, `/config tier style`, bảng danh hiệu).
   - Làm trên branch `phase-18/quick-wins` (tách từ Phase 17), có review trước khi merge.
@@ -500,7 +507,13 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - nút ở góc trên bên phải phần trả lời `/rank` (giao diện Components V2 của Discord);
     - bấm vào thì bot gửi **tin nhắn giải thích chỉ người bấm thấy**: cách được XP (theo cấu hình hiện tại của server: XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng, kênh tính XP), level, các bậc của bộ đang hiển thị, chuỗi ngày, huy hiệu, contribution, vote, bảng tuần/tháng;
     - không dùng trang web: thành viên thường không vào được web quản trị (DEC-039).
-  - Làm ở Phase 18, sau khi gộp phần nhiều role quyền (migration 7) và bộ Mobile Legends; schema mới là migration 8.
+  - Làm ở Phase 18, sau khi gộp phần nhiều role quyền (migration 7) và bộ Mobile Legends.
+  - Schema: migration 8.
+    - Bảng `member_tier_prefs (guild_id, user_id, set_key, updated_at)`.
+    - Công tắc đặt ở cột `tier_set_config.allow_personal` (mặc định 1, thuộc TierSetService), không đặt ở `guild_settings`: các cột của `guild_settings` không có giá trị mặc định, và `updateSettings` ghi lại cả dòng.
+  - Công tắc tắt: thành viên vẫn chọn lại được "theo server"; chọn một bộ khác thì bị từ chối.
+  - Lệnh `/rank-style bo:<…>`, audit `tier_pref.allow`, `tier_pref.clear`.
+  - Nút ❓ có customId `rankhelp:show`.
 
 ---
 

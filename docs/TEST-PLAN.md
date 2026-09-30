@@ -30,7 +30,7 @@
 ## 2. Cấu hình ban đầu
 
 - [ ] A: `/config team add role:@Backend`, `/config team add role:@Frontend` → `/config team list` có 2 team.
-- [ ] A: `/config admin-role role:<role admin bot>`, rồi vào **Server Settings → Integrations → bot** cho phép role đó dùng `/admin`, `/config` → B thấy và dùng được `/admin`, `/config`.
+- [ ] A: `/config admin-role them:<role admin bot>`, rồi vào **Server Settings → Integrations → bot** cho phép role đó dùng `/admin`, `/config` → B thấy và dùng được `/admin`, `/config`.
 - [ ] `/config view` hiện đủ: chế độ kênh tính XP (mặc định "tất cả kênh (trừ kênh đã tắt)"), XP, vote (giới hạn XP ngày), contribution, admin, team, channel riêng, Bảng vàng, bộ danh hiệu và role.
 
 > Từ bản Phase 15, các bước trên làm được bằng `/config panel` (DEPLOY mục 7); mục 11 kiểm chi tiết bảng này.
@@ -356,3 +356,35 @@
 
 - [ ] C gõ thẳng `http://192.168.0.206:8787/g/<Server ID>/members` → không vào được.
 - [ ] Tên hoặc tiêu đề có `<b>` (contribution thử, câu hỏi vote thử) hiện nguyên văn ở danh sách, chi tiết và dòng báo kết quả.
+
+## 14. Phase 18: chọn tất cả, nhiều role quyền, bộ Mobile Legends, bộ cá nhân, nút ❓ (DEC-044…047)
+
+> Làm sau khi cập nhật lên bản Phase 18 (có migration 7 và 8: sao lưu bằng `/admin backup` trước khi cài).
+
+**Chọn tất cả**
+
+- [ ] Trang **Team** và **Kênh tính XP**: bấm "✅ Chọn tất cả" → mọi ô tick sẵn, có dòng "chưa lưu"; tải lại trang không bấm Lưu → không có gì thay đổi. Bấm Lưu → lưu đúng.
+- [ ] Trang **Quyền**: bảng role tạo vote có "Chọn tất cả"; bảng role admin **không** có.
+
+**Nhiều role quyền**
+
+- [ ] Sau khi cài: role admin bot và role tạo vote đang đặt từ trước vẫn còn (migration 7 chép sang).
+- [ ] Trang **Quyền**: tick thêm một role admin mà không tick ô xác nhận → bị từ chối, không đổi gì; tick ô xác nhận → lưu; người có role đó vào được web.
+- [ ] `/config admin-role them:@X`, `bo:@X`, `bo-het:True` hoạt động; `bo-het` đi cùng option khác → bị từ chối.
+- [ ] `/config poll role-tao-vote:@Backend` rồi `role-tao-vote:@Frontend` → cả hai role tạo được vote; `bo-role-tao-vote:@Backend` → chỉ còn Frontend.
+- [ ] `/config panel`: menu role admin và role tạo vote chọn được nhiều role; A và B cùng mở bảng, B đổi trước → bảng của A báo đã có người đổi, không ghi đè.
+
+**Bộ Mobile Legends**
+
+- [ ] Trang **Danh hiệu** chọn bộ "Mobile Legends" → `/rank` hiện nhãn bậc đúng màu (Đấu Sĩ nâu đồng … Vinh Quang tím viền đỏ), `/leaderboard` và Bảng vàng vẽ theo bộ mới; role danh hiệu đổi tên theo bộ (nút tạo/đồng bộ role).
+
+**Bộ danh hiệu cá nhân**
+
+- [ ] C chạy `/rank-style bo:Cây xanh` → `/rank` của C (ai xem cũng vậy) theo bộ Cây xanh; lời chúc lên level của C theo giọng Cây xanh; role danh hiệu của C và `/leaderboard` vẫn theo bộ của server.
+- [ ] Trang **Danh hiệu**: thống kê có 1 người chọn Cây xanh. Tắt công tắc "cho phép tự chọn" → `/rank` của C về bộ server; C `/rank-style bo:Kiếm hiệp` → bị từ chối; bật lại → C lại hiện Cây xanh.
+- [ ] Hồ sơ C trên trang **Thành viên**: dòng "Bộ hiển thị: Cây xanh (tự chọn)"; bấm xoá lựa chọn → về theo server; `/admin audit` có dòng do A.
+
+**Nút ❓**
+
+- [ ] `/rank` → nút ❓ ở góc trên bên phải; ảnh thẻ hiện đầy đủ; người khác bấm ❓ → nhận lời giải thích riêng (không ai khác thấy), không ping ai.
+- [ ] Lời giải thích đúng với cấu hình hiện tại (XP mỗi tin, cooldown, chế độ kênh, XP vote, điểm mỗi lượt ghi nhận) và bộ hiển thị của người bấm; đổi XP mỗi tin trên web rồi bấm ❓ lại → số mới.

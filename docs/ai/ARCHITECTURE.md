@@ -215,7 +215,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
   - Role/kênh đã lưu mà không còn trong cache của guild (`ConfigPanelData.missingIds`): không điền sẵn vào menu (Discord có thể từ chối ID không tồn tại) và hiện cảnh báo, như `missingRoleIds` của `tierui`.
   - Mọi thao tác đi qua đúng service và kiểm tra như lệnh gõ tay: chặn role danh hiệu làm team, role admin bot hay role tạo vote; kiểm tra quyền của bot và của người thao tác ở kênh Bảng vàng; audit như lệnh gõ tay.
   - `XP_CHANNEL_TYPES` và `BOARD_CHANNEL_TYPES` chuyển từ `config.ts` sang `configPanel.ts`, dùng chung cho option của lệnh gõ tay và menu của bảng. Menu kênh vì vậy không có thread và category.
-- Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`). Có 5 namespace: `lb` (`/leaderboard`), `contrib` (`/contribution`), `poll` (`/poll`), `tierui` và `cfgui` (`/config`). Component của command `adminOnly` cũng qua `assertAdmin` (DEC-033), nên người mất quyền admin bấm vào bảng cũ vẫn bị chặn.
+- Dispatcher định tuyến nút, menu chọn và form theo namespace customId (`buttonIds`). Có 6 namespace: `lb` (`/leaderboard`), `contrib` (`/contribution`), `poll` (`/poll`), `tierui` và `cfgui` (`/config`), `rankhelp` (`/rank`, nút ❓, customId cố định `rankhelp:show`, DEC-047).
+- `/rank` trả lời bằng Components V2 (Phase 18): Container (viền màu bậc) gồm Section có tiêu đề và accessory Button ❓ (góc trên bên phải), MediaGallery `attachment://rank.png`, TextDisplay tóm tắt. Bấm ❓: tin trả lời riêng, không ping, nội dung dựng từ cấu hình thật của server và bộ hiển thị của người bấm (`src/discord/views/rank.ts`), tổng chữ ≤ 4000.
+- `/rank-style bo:<theo server | bộ>` (DEC-047): thành viên chọn bộ hiển thị cho mình; công tắc tắt thì chỉ chọn được "theo server". Admin bật/tắt và xoá lựa chọn trên web (trang Danh hiệu, hồ sơ thành viên). Component của command `adminOnly` cũng qua `assertAdmin` (DEC-033), nên người mất quyền admin bấm vào bảng cũ vẫn bị chặn.
 - `/config tier set-role|clear-role|list`: gán role cho bậc; người gán cần Manage Roles; chặn role nguy hiểm (`tierRoleSafetyIssue`: quyền cấp server và overwrite theo kênh) và role trùng vai trò admin bot, tạo vote, team (chặn hai chiều). Lỗi API role được backoff 10 phút theo (guild, user, role). `/admin xp give|remove|reset` đồng bộ role của người được chỉnh sau khi trả lời.
 
 ### 3.6 Quyền xem và đăng
@@ -378,7 +380,7 @@ Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), th
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration (7 migration trên `main` sau Phase 18; version lưu ở `PRAGMA user_version`):
+Migration (8 migration sau Phase 18; version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
@@ -399,6 +401,9 @@ Migration (7 migration trên `main` sau Phase 18; version lưu ở `PRAGMA user_
   - Code cũ (≤ 5) gặp DB version 6 thì từ chối khởi động; selfcheck của code cũ báo ❌.
 - **7** (Phase 18, DEC-044): bảng `guild_role_grants (guild_id, kind 'admin'|'poll_creator', role_id, created_at)`, khoá chính `(guild_id, kind, role_id)`. Role đang đặt ở `guild_settings.admin_role_id` / `poll_creator_role_id` được chép sang, rồi hai cột cũ về NULL (không xoá cột, code không dùng nữa). `GuildSettings.adminRoleIds` / `pollCreatorRoleIds` là danh sách (tối đa `MAX_GRANT_ROLES` = 25); `isAdmin`/`canCreatePoll` xét có ít nhất một role. `GuildConfigService.changeRoleGrants` đổi theo phần chênh lệch trong một transaction, audit `config.update`.
   - Backup/restore: vẫn một file SQLite; backup cũ tự migrate lên 7 (giữ role đã đặt). Code cũ (≤ 6) gặp DB version 7 thì từ chối khởi động.
+- **8** (Phase 18, DEC-047): bảng `member_tier_prefs (guild_id, user_id, set_key, updated_at)` (bộ danh hiệu hiển thị của từng người) và cột `tier_set_config.allow_personal INTEGER NOT NULL DEFAULT 1 CHECK (0,1)` (công tắc cho phép tự chọn; guild chưa có dòng thì coi là bật). Khoá bộ lạ đọc như "theo server".
+  - `TierSetService.displayFor(guildId, userId)`: bộ hiển thị (đã áp tên tuỳ chỉnh của server cho bộ đó) dùng cho thẻ `/rank` (GamificationService.profile) và lời chúc lên level/lên bậc (messageCreate). Role danh hiệu, `/leaderboard`, Bảng vàng vẫn dùng `tierSets.current` (bộ của server).
+  - Backup/restore: một file SQLite; backup cũ tự migrate lên 8 (không có lựa chọn cá nhân, công tắc bật). Code cũ (≤ 7) gặp DB version 8 thì từ chối khởi động.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;

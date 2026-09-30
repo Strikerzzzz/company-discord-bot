@@ -296,10 +296,10 @@ Mỗi bước ghi trang tương ứng trên `/config panel` và lệnh gõ tay t
      - bot cần View Channel và Send Messages ở kênh đó; kênh bị xoá hoặc bot mất quyền thì bot không gửi thông báo nữa (log có cảnh báo).
 4. **Chỉnh vote và contribution**: XP mặc định khi vote; giới hạn XP một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028); điểm mỗi lượt ghi nhận contribution; role được tạo vote (không đặt thì chỉ admin tạo được vote).
    - Trên bảng: trang **Vote**.
-   - Lệnh gõ tay: `/config poll` (có option `gioi-han-xp-ngay`, `role-tao-vote`), `/config contribution`.
+   - Lệnh gõ tay: `/config poll` (có option `gioi-han-xp-ngay`; `role-tao-vote` thêm một role, `bo-role-tao-vote` bỏ một role, `xoa-role-tao-vote` xoá hết; tối đa 25 role, DEC-044), `/config contribution`.
 5. **Role admin bot**, nếu muốn một role khác (không có Manage Server) cũng có quyền admin bot.
    - Trên bảng: trang **Bảng vàng và admin**, menu chọn role admin bot.
-   - Lệnh gõ tay: `/config admin-role`.
+   - Lệnh gõ tay: `/config admin-role them:<role>` (thêm), `bo:<role>` (bỏ), `bo-het:True` (xoá hết). Có thể có nhiều role admin bot, tối đa 25 (DEC-044); trên web, thêm role admin phải tick ô xác nhận.
    - **Cần làm thêm một bước**, dù đặt bằng bảng hay bằng lệnh:
      - vào Server Settings → Integrations → chọn bot;
      - cho phép role đó dùng lệnh `/admin` và `/config`.
@@ -322,7 +322,7 @@ Nên tắt quyền **Use Application Commands** của thành viên ở các kên
 
 ### 7.1. Danh hiệu và role danh hiệu
 
-Mỗi thành viên có một **bậc danh hiệu** theo level: 8 bậc, mốc level 0, 3, 6, 10, 15, 20, 30, 40. Danh hiệu chỉ để hiển thị (thông báo lên level, `/rank`, bảng xếp hạng, Bảng vàng), không đổi công thức XP hay level. Mỗi server chọn một trong 5 bộ có sẵn (DEC-033):
+Mỗi thành viên có một **bậc danh hiệu** theo level: 8 bậc, mốc level 0, 3, 6, 10, 15, 20, 30, 40. Danh hiệu chỉ để hiển thị (thông báo lên level, `/rank`, bảng xếp hạng, Bảng vàng), không đổi công thức XP hay level. Mỗi server chọn một trong 6 bộ có sẵn (DEC-033, DEC-044); từng thành viên có thể tự chọn bộ hiển thị cho thẻ `/rank` và lời chúc của mình bằng `/rank-style` nếu admin bật (DEC-047):
 
 | Bộ | Bậc 1 → bậc 8 | Tên gọi bậc |
 | --- | --- | --- |
@@ -331,6 +331,7 @@ Mỗi thành viên có một **bậc danh hiệu** theo level: 8 bậc, mốc le
 | Kiếm hiệp | Tân Thủ, Kiếm Khách, Hiệp Sĩ, Tráng Sĩ, Đại Hiệp, Tông Sư, Chưởng Môn, Võ Lâm Minh Chủ | Danh hiệu |
 | Cây xanh | Hạt Giống, Nảy Mầm, Cây Non, Ra Hoa, Kết Trái, Cây Lớn, Cổ Thụ, Đại Thụ Ngàn Năm | Giai đoạn |
 | Vũ trụ | Thiên Thạch, Tiểu Hành Tinh, Hành Tinh, Ngôi Sao, Sao Khổng Lồ, Tinh Vân, Thiên Hà, Vũ Trụ | Thiên thể |
+| Mobile Legends | Đấu Sĩ, Tinh Anh, Cao Thủ, Đại Cao Thủ, Sử Thi, Huyền Thoại, Thần Thoại, Vinh Quang | Rank |
 
 Mỗi bộ có giọng văn riêng cho thông báo lên level, thông báo lên bậc và chữ trên ảnh thẻ. Đổi bộ có hiệu lực ngay với thông báo, `/rank` và `/leaderboard`; Bảng vàng đổi chậm nhất ở lượt cập nhật định kỳ kế tiếp (khoảng 10 phút).
 
