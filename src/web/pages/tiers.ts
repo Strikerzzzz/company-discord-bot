@@ -1,6 +1,7 @@
 // Trang "Danh hiệu" của web quản trị (DEC-039; DEC-031, DEC-033): chọn bộ danh hiệu, đổi tên bậc, gán role theo bậc, tạo/đồng
 // bộ role. Nghiệp vụ giống hệt bảng `/config tier panel` trong Discord: cùng service, cùng hàm của tierRoleSetup, cùng cách chống
-// ghi đè khi hai admin cùng mở trang (bộ lúc vẽ, dấu vân tay tên từng nhóm bậc, role lúc vẽ của từng bậc).
+// ghi đè khi hai admin cùng mở trang (bộ lúc vẽ, dấu vân tay tên từng nhóm bậc, role lúc vẽ của từng bậc). Thêm công tắc cho phép
+// thành viên tự chọn bộ hiển thị (lệnh /rank-style) và số người đang chọn từng bộ (DEC-047).
 import { Guild, PermissionFlagsBits, Role } from "discord.js";
 import { renameInput } from "../../discord/configOps";
 import { formatNumber, roleMention } from "../../discord/format";
@@ -54,6 +55,9 @@ const NAMES_PATH = "/tiers/names";
 const RESET_PATH = "/tiers/reset-names";
 const ROLES_PATH = "/tiers/roles";
 const SETUP_PATH = "/tiers/setup";
+const PERSONAL_PATH = "/tiers/personal";
+const ALLOW_FIELD = "allowPersonal";
+const ALLOW_DRAWN_FIELD = "drawnAllow";
 
 /** Độ dài tối đa (UTF-16) của ô tên bậc, bằng ô nhập của form đổi tên trong Discord (NAME_INPUT_MAX của tierPanel.ts). */
 const NAME_INPUT_MAX = 72;
@@ -79,6 +83,11 @@ const MANAGE_ROLES_WARNING = "⚠️ Bot chưa có quyền **Manage Roles** nên
 export const SETUP_ROLES_HINT = "Tên và màu các role đã gán chưa đổi: bấm **✨ Tạo/đồng bộ role** ở cuối trang để bot đổi theo "
 	+ "(bot chỉ đổi tên role do bot tạo; role do admin tự gán giữ nguyên tên).";
 const UNEXPECTED_ERROR = "Đã có lỗi xảy ra. Vui lòng thử lại sau.";
+export const PERSONAL_ON = "Đã bật cho thành viên tự chọn bộ danh hiệu: ai đã chọn bằng /rank-style thì thẻ /rank và lời chúc lên level "
+	+ "của người đó dùng lại bộ đã chọn. Role, bảng xếp hạng và Bảng vàng vẫn theo bộ của server.";
+export const PERSONAL_OFF = "Đã tắt tự chọn: mọi người hiển thị theo bộ của server. Lựa chọn đã lưu vẫn giữ, bật lại thì dùng lại.";
+export const PERSONAL_UNCHANGED = `${NO_CHANGE}: công tắc tự chọn bộ danh hiệu vẫn như lúc tải trang.`;
+export const PERSONAL_ALREADY = `${NO_CHANGE}: admin khác vừa đặt công tắc tự chọn bộ danh hiệu giống như bạn chọn.`;
 
 const TIERS_CSS = `
 .tr-sets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
@@ -169,6 +178,34 @@ function setSection(ctx: GuildPageContext, set: TierSet): RawHtml
 <form method="post" action="${guildUrl(ctx, SET_PATH)}">${csrfField(ctx)}<input type="hidden" name="drawnSet" value="${set.key}">
 <div class="tr-sets">${cards}</div>
 <div class="actions"><button class="btn btn-primary" type="submit">Lưu bộ danh hiệu</button></div></form></section>`;
+}
+
+/**
+ * Bộ danh hiệu cá nhân (DEC-047): công tắc cho phép thành viên tự chọn (form mang giá trị lúc vẽ, chỉ ghi khi admin đổi) và số
+ * người đang lưu lựa chọn từng bộ. Xem và xoá lựa chọn của từng người ở hồ sơ trang Thành viên.
+ */
+function personalSection(ctx: GuildPageContext, set: TierSet): RawHtml
+{
+	const { tierSets } = ctx.deps.services;
+	const allowed = tierSets.allowPersonal(ctx.guild.id);
+	const counts = tierSets.choiceCounts(ctx.guild.id);
+	const total = counts.reduce((sum, entry) => sum + entry.count, 0);
+	const rows = counts.map(({ setKey, count }) => html`<tr><td>${TIER_SETS[setKey].name}${setKey === set.key ? html` <span class="badge ok">Bộ của server</span>` : ""}</td>
+<td class="num">${formatNumber(count)}</td></tr>`);
+	const off = allowed
+		? ""
+		: html`<div class="warn-box">Đang tắt: mọi người hiển thị theo bộ của server. ${formatNumber(total)} lựa chọn đã lưu vẫn giữ và được dùng lại khi bật lại.</div>`;
+	return html`<section class="card"><h2>🎨 Bộ danh hiệu cá nhân</h2>
+<p class="muted">Thành viên dùng lệnh /rank-style để chọn bộ danh hiệu hiển thị cho riêng mình: chỉ đổi thẻ /rank (ai xem thẻ của người đó cũng thấy theo bộ người đó chọn) và lời chúc lên level, lên bậc của người đó. Role Discord, bảng xếp hạng và Bảng vàng vẫn theo bộ của server; tên bậc tuỳ chỉnh của một bộ áp dụng cho cả người tự chọn bộ đó.</p>
+<form method="post" action="${guildUrl(ctx, PERSONAL_PATH)}">${csrfField(ctx)}
+<div class="field"><label class="check" for="tr-allow"><input type="checkbox" id="tr-allow" name="${ALLOW_FIELD}" value="1"${allowed ? html` checked` : ""}> Cho phép thành viên tự chọn bộ danh hiệu</label>
+<input type="hidden" name="${ALLOW_DRAWN_FIELD}" value="${allowed ? "1" : "0"}">
+<span class="hint">Tắt thì mọi người hiển thị theo bộ của server; lựa chọn đã lưu vẫn giữ, bật lại thì dùng lại.</span></div>
+<div class="actions"><button class="btn btn-primary" type="submit">Lưu</button></div></form>
+<h3>Số người đang tự chọn từng bộ</h3>${off}
+<table class="table"><thead><tr><th>Bộ</th><th class="num">Số người</th></tr></thead><tbody>${rows}</tbody>
+<tfoot><tr><th>Tổng</th><th class="num">${formatNumber(total)}</th></tr></tfoot></table>
+<p class="muted">Xem hoặc xoá lựa chọn của từng người ở hồ sơ thành viên (trang Thành viên).</p></section>`;
 }
 
 function namesSection(ctx: GuildPageContext, set: TierSet): RawHtml
@@ -272,7 +309,7 @@ function showPage(ctx: GuildPageContext): WebResponse
 		nav: "tiers",
 		title: "Danh hiệu",
 		lead: `Bộ đang dùng: ${set.name} · role đã gán: ${mappings.length}/${set.tiers.length}. Thao tác giống bảng /config tier panel trong Discord.`,
-		body: [setSection(ctx, set), namesSection(ctx, set), rolesSection(ctx, set, mappings), setupSection(ctx)],
+		body: [setSection(ctx, set), personalSection(ctx, set), namesSection(ctx, set), rolesSection(ctx, set, mappings), setupSection(ctx)],
 	});
 }
 
@@ -356,6 +393,23 @@ function resetNames(ctx: GuildPageContext): WebResponse
 	const lines = [`Đã khôi phục tên mặc định cho mọi bậc của bộ **${set.name}**.`];
 	if (tierRoles.list(guild.id).length > 0) lines.push(SETUP_ROLES_HINT);
 	return redirectWithFlash(ctx, PAGE_PATH, "ok", lines.join("\n"));
+}
+
+/**
+ * Bật/tắt cho thành viên tự chọn bộ (DEC-047). Chỉ ghi khi lựa chọn khác giá trị lúc vẽ trang; admin khác đã đặt giống vậy thì
+ * không ghi gì. Service ghi audit "tier_pref.allow" với người đăng nhập.
+ */
+function savePersonal(ctx: GuildPageContext): WebResponse
+{
+	const form = formOf(ctx);
+	const drawn = field(form, ALLOW_DRAWN_FIELD);
+	const wanted = form.get(ALLOW_FIELD);
+	if ((drawn !== "1" && drawn !== "0") || (wanted !== null && wanted !== "1")) throw new UserError(FORM_INVALID);
+	const allowed = wanted === "1";
+	if (allowed === (drawn === "1")) return redirectWithFlash(ctx, PAGE_PATH, "ok", PERSONAL_UNCHANGED);
+	const changed = ctx.deps.services.tierSets.setAllowPersonal(ctx.guild.id, allowed, ctx.actorId);
+	if (!changed) return redirectWithFlash(ctx, PAGE_PATH, "ok", PERSONAL_ALREADY);
+	return redirectWithFlash(ctx, PAGE_PATH, "ok", allowed ? PERSONAL_ON : PERSONAL_OFF);
 }
 
 // ---------- Role theo bậc (POST) ----------
@@ -603,6 +657,7 @@ const POST_ROUTES: readonly GuildRoute[] = [
 	{ method: "POST", path: RESET_PATH, handler: resetNames },
 	{ method: "POST", path: ROLES_PATH, handler: saveRoles },
 	{ method: "POST", path: SETUP_PATH, handler: setupRoles },
+	{ method: "POST", path: PERSONAL_PATH, handler: savePersonal },
 ];
 
 export const tiersPage: PageModule = {

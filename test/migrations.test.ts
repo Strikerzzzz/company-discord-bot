@@ -7,6 +7,7 @@ import { openDatabase } from "../src/db/connection";
 import { currentSchemaVersion, MIGRATIONS, runMigrations } from "../src/db/migrations";
 import { AuditService } from "../src/modules/audit/AuditService";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
+import { TierSetService } from "../src/modules/gamification/TierSetService";
 import { Ledger } from "../src/modules/ledger/Ledger";
 import { TeamService } from "../src/modules/team/TeamService";
 import { FakeClock } from "./helpers";
@@ -20,7 +21,7 @@ describe("migrations", () =>
 		assert.equal(currentSchemaVersion(db), MIGRATIONS[MIGRATIONS.length - 1].version);
 
 		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name);
-		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals", "guild_role_grants"])
+		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals", "guild_role_grants", "member_tier_prefs"])
 		{
 			assert.ok(tables.includes(name), `thiếu bảng ${name}`);
 		}
@@ -182,7 +183,7 @@ describe("migrations", () =>
 		insert.run("g2", "500000000000000003", null, 2000);
 		insert.run("g3", null, null, 3000);
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 7)), 1);
 		assert.equal(currentSchemaVersion(db), 7);
 		const grants = db.prepare<[], { guild_id: string; kind: string; role_id: string; created_at: number }>(
 			"SELECT guild_id, kind, role_id, created_at FROM guild_role_grants ORDER BY guild_id, kind").all();
@@ -205,6 +206,44 @@ describe("migrations", () =>
 
 		assert.throws(() => db.prepare("INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at) VALUES ('g1', 'khac', 'r', 0)").run(), /CHECK/);
 		assert.throws(() => db.prepare("INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at) VALUES ('g1', 'admin', '500000000000000001', 0)").run(), /UNIQUE|PRIMARY/);
+	});
+
+	test("DB đang ở version 7 có bộ danh hiệu: migration 8 thêm bảng lựa chọn cá nhân và công tắc tự chọn, mặc định bật (DEC-047)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 7));
+		db.prepare("INSERT INTO tier_set_config (guild_id, set_key, updated_at) VALUES ('g1', 'rank-game', 1000)").run();
+		db.prepare("INSERT INTO tier_name_overrides (guild_id, set_key, tier_key, name, emoji, updated_at) VALUES ('g1', 'cay-xanh', 'bac-1', 'Mầm', NULL, 1000)").run();
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 8);
+		const config = db.prepare<[], { guild_id: string; set_key: string; updated_at: number; allow_personal: number }>(
+			"SELECT guild_id, set_key, updated_at, allow_personal FROM tier_set_config").all();
+		assert.deepEqual(config.map(row => [row.guild_id, row.set_key, row.updated_at, row.allow_personal]), [["g1", "rank-game", 1000, 1]], "dòng cũ giữ nguyên, công tắc bật");
+		assert.equal(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM tier_name_overrides").get()?.n, 1);
+
+		const columns = db.prepare<[], { name: string; pk: number; notnull: number }>("PRAGMA table_info(member_tier_prefs)").all();
+		assert.deepEqual(columns.map(column => [column.name, column.pk, column.notnull]), [
+			["guild_id", 1, 1],
+			["user_id", 2, 1],
+			["set_key", 0, 1],
+			["updated_at", 0, 1],
+		]);
+		db.prepare("INSERT INTO member_tier_prefs (guild_id, user_id, set_key, updated_at) VALUES ('g1', 'u1', 'cay-xanh', 0)").run();
+		assert.throws(() => db.prepare("INSERT INTO member_tier_prefs (guild_id, user_id, set_key, updated_at) VALUES ('g1', 'u1', 'vu-tru', 0)").run(), /UNIQUE|PRIMARY/);
+		assert.throws(() => db.prepare("UPDATE tier_set_config SET allow_personal = 2 WHERE guild_id = 'g1'").run(), /CHECK/);
+		db.prepare("INSERT INTO tier_set_config (guild_id, set_key, updated_at) VALUES ('g2', 'tu-tien', 0)").run();
+		assert.equal(db.prepare<[], { allow_personal: number }>("SELECT allow_personal FROM tier_set_config WHERE guild_id = 'g2'").get()?.allow_personal, 1, "dòng mới mặc định bật");
+
+		const clock = new FakeClock();
+		const tierSets = new TierSetService(db, clock, new AuditService(db, clock));
+		assert.equal(tierSets.currentKey("g1"), "rank-game");
+		assert.equal(tierSets.allowPersonal("g1"), true);
+		assert.equal(tierSets.allowPersonal("g3"), true, "guild chưa có dòng cấu hình: bật");
+		const display = tierSets.displayFor("g1", "u1");
+		assert.equal(display.source, "personal");
+		assert.equal(display.set.tiers[0].name, "Mầm", "tên tuỳ chỉnh của server cho bộ đã chọn vẫn áp dụng");
+		assert.equal(display.serverSet.key, "rank-game");
 	});
 
 	test("từ chối database mới hơn code", () =>

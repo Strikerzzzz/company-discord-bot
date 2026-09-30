@@ -439,6 +439,8 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"tier_set.set": "Chọn bộ danh hiệu",
 	"tier_name.set": "Đổi tên bậc danh hiệu",
 	"tier_name.reset": "Khôi phục tên bậc mặc định",
+	"tier_pref.allow": "Bật/tắt cho thành viên tự chọn bộ danh hiệu",
+	"tier_pref.clear": "Xoá bộ danh hiệu thành viên tự chọn",
 	"board.set": "Đặt kênh Bảng vàng",
 	"board.clear": "Tắt Bảng vàng",
 	"backup.manual": "Sao lưu thủ công",
@@ -446,7 +448,7 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 
 // Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
 // poll.* không có target (mã vote nằm trong details), tier_role.set/clear có target là role (khoá bậc trong details.tierKey),
-// board.* có target là channel của Bảng vàng.
+// board.* có target là channel của Bảng vàng, tier_pref.clear có target là thành viên (bộ đã chọn trong details.setKey).
 /** Loại đối tượng (target_id) của một mục audit: ID người dùng, role, channel, hoặc chuỗi khác ("none"). */
 export type AuditTargetKind = "user" | "role" | "channel" | "none";
 
@@ -471,6 +473,8 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"tier_set.set": "none",
 	"tier_name.set": "none",
 	"tier_name.reset": "none",
+	"tier_pref.allow": "none",
+	"tier_pref.clear": "user",
 	"board.set": "channel",
 	"board.clear": "channel",
 	"backup.manual": "none",
@@ -502,6 +506,7 @@ const DETAIL_LABELS = new Map<string, string>([
 	["name", "Tên"],
 	["emoji", "Emoji"],
 	["count", "Số bậc"],
+	["allowPersonal", "Cho thành viên tự chọn bộ"],
 	["created", "Số role tạo mới"],
 	["renamed", "Số role đổi tên"],
 	["skipped", "Số bậc bỏ qua"],

@@ -86,6 +86,10 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 	"/poll results": { options: ["id"], web: ["/polls/view"] },
 	"/poll list": { options: [], web: ["/polls"] },
 	"/rank": { options: ["thanh-vien"], discordOnly: "thẻ hồ sơ trong Discord; admin xem hồ sơ thành viên như /admin xp view" },
+	"/rank-style": {
+		options: ["bo"],
+		discordOnly: "thành viên tự chọn bộ danh hiệu hiển thị cho chính mình; admin bật/tắt cho phép tự chọn và xem số người chọn từng bộ ở trang Danh hiệu, xem và xoá lựa chọn của từng người ở hồ sơ trang Thành viên",
+	},
 	"menu:Ghi nhận đóng góp": { options: [], discordOnly: "thành viên ghi nhận tin nhắn của người khác ngay trong Discord" },
 };
 

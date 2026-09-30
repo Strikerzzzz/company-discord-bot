@@ -358,6 +358,27 @@ export const MIGRATIONS: readonly Migration[] = [
 			UPDATE guild_settings SET admin_role_id = NULL, poll_creator_role_id = NULL;
 		`,
 	},
+	{
+		version: 8,
+		name: "member_tier_prefs",
+		sql: `
+			-- Bộ danh hiệu mỗi thành viên tự chọn để hiển thị cho chính mình (DEC-047): chỉ đổi thẻ /rank và lời chúc lên level/lên
+			-- bậc của người đó; role, bảng xếp hạng, Bảng vàng vẫn theo bộ chung của server. Không có dòng = theo server. set_key là
+			-- khoá trong src/modules/activity/tiers.ts; khoá lạ (DB sửa tay, bộ đã bị bỏ) được đọc như "theo server". Đây là lựa chọn
+			-- hiển thị, không phải điểm, nên bỏ lựa chọn thì xoá dòng.
+			CREATE TABLE member_tier_prefs (
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				set_key TEXT NOT NULL,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, user_id)
+			);
+
+			-- Công tắc "cho phép thành viên tự chọn bộ danh hiệu" (DEC-047), mặc định bật; guild chưa có dòng tier_set_config cũng là bật.
+			-- Tắt thì mọi người hiển thị theo bộ chung, lựa chọn đã lưu vẫn giữ để bật lại thì dùng lại.
+			ALTER TABLE tier_set_config ADD COLUMN allow_personal INTEGER NOT NULL DEFAULT 1 CHECK (allow_personal IN (0, 1));
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

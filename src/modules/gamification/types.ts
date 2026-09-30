@@ -65,9 +65,12 @@ export interface GamificationProfile
 {
 	userId: string;
 	level: LevelInfo;
-	/** Bộ danh hiệu guild đang dùng (đã áp tên tuỳ chỉnh), để hiển thị giọng văn và bậc đúng bộ (DEC-033). */
+	/**
+	 * Bộ danh hiệu hiển thị của người này (đã áp tên tuỳ chỉnh của server): bộ người đó tự chọn nếu server cho phép, không thì bộ
+	 * guild đang dùng (DEC-033, DEC-047). Chỉ dùng cho thẻ /rank; role, bảng xếp hạng và Bảng vàng theo bộ của guild.
+	 */
 	tierSet: TierSet;
-	/** Bậc theo level trong bộ đang dùng. */
+	/** Bậc theo level trong bộ hiển thị. */
 	tier: Tier;
 	/** null nếu đã ở bậc cao nhất. */
 	nextTier: Tier | null;
@@ -81,7 +84,7 @@ export interface GamificationProfile
 
 export interface GamificationServiceApi
 {
-	/** Hồ sơ gamification của một người (người chưa có dữ liệu vẫn trả hồ sơ với số 0). */
+	/** Hồ sơ gamification của một người, theo bộ danh hiệu hiển thị của người đó (người chưa có dữ liệu vẫn trả hồ sơ với số 0). */
 	profile(guildId: string, userId: string): GamificationProfile;
 }
 

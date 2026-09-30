@@ -1,6 +1,7 @@
 // Trang "Thành viên" của web quản trị (DEC-041): tìm thành viên, danh sách theo XP hoặc contribution, hồ sơ một người (như
 // `/admin xp view`) và cộng, trừ, reset điểm (như `/admin xp give|remove|reset` và `/admin contribution adjust|reset`). Mọi thao
-// tác ghi đi qua src/discord/adminOps.ts nên cùng quy tắc với lệnh Discord, audit với người đăng nhập.
+// tác ghi đi qua src/discord/adminOps.ts nên cùng quy tắc với lệnh Discord, audit với người đăng nhập. Hồ sơ còn hiện bộ danh
+// hiệu hiển thị của người đó (tự chọn bằng /rank-style hay theo server) và cho admin xoá lựa chọn đó (DEC-047).
 import { GuildMember } from "discord.js";
 import {
 	AdjustTarget,
@@ -19,16 +20,18 @@ import {
 	syncMemberTierRoles,
 	USER_NOT_FOUND,
 } from "../../discord/adminOps";
-import { formatNumber } from "../../discord/format";
+import { formatNumber, userMention } from "../../discord/format";
 import { MemberDisplay, UNKNOWN_MEMBER_NAME } from "../../discord/memberDirectory";
 import { rankText, signed, XP_SOURCE_LABELS } from "../../discord/views/admin";
+import { tierDisplayLabel } from "../../discord/views/rank";
 import { levelInfo } from "../../modules/activity/levels";
-import { tierForLevel } from "../../modules/activity/tiers";
+import { isTierSetKey, TIER_SETS, tierForLevel } from "../../modules/activity/tiers";
 import { ActivityProfile, XpEventView } from "../../modules/activity/types";
 import { Contribution, ContributionProfile } from "../../modules/contribution/types";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
 import { hiddenChannelIds, lookupMember } from "../discord";
+import { discordText } from "../format";
 import { html, RawHtml } from "../html";
 import { redirect, WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
@@ -41,6 +44,7 @@ const XP_PATH = "/members/xp";
 const XP_RESET_PATH = "/members/xp-reset";
 const CONTRIBUTION_PATH = "/members/contribution";
 const CONTRIBUTION_RESET_PATH = "/members/contribution-reset";
+const TIER_STYLE_CLEAR_PATH = "/members/tier-style-clear";
 const SORT_PARAM = "xep";
 const CONFIRM_FIELD = "xac-nhan";
 const PAGE_SIZE = 25;
@@ -53,6 +57,7 @@ export const SEARCH_TOO_LONG = `Từ khoá tìm theo tên tối đa ${SEARCH_MAX
 export const SEARCH_UNAVAILABLE = "Không tìm được trên Discord lúc này (Discord đang lỗi hoặc mạng chậm). Hãy thử lại sau ít phút, hoặc dán ID thành viên.";
 export const CONFIRM_REQUIRED = "Hãy tick ô xác nhận trước khi reset.";
 export const INVALID_DIRECTION = "Hãy bấm nút Cộng XP hoặc Trừ XP.";
+export const NO_TIER_CHOICE = "Không có gì thay đổi: người này chưa tự chọn bộ danh hiệu, vẫn đang hiển thị theo bộ của server.";
 export const MEMBER_LEFT_NOTE = "Người này không còn trong server (hoặc bot không tìm thấy trên Discord). Vẫn xem và chỉnh điểm được như lệnh "
 	+ "Discord: điểm mới không tính cho team nào và bot không đồng bộ role danh hiệu.";
 
@@ -245,6 +250,24 @@ ${list}
 </section>`;
 }
 
+/**
+ * Bộ danh hiệu hiển thị của người này (DEC-047): tự chọn bằng /rank-style hay theo server, và nút xoá lựa chọn (người đó về theo
+ * server). Không có lựa chọn đã lưu thì không có nút.
+ */
+function tierStyleCard(ctx: GuildPageContext, userId: string): RawHtml
+{
+	const display = ctx.deps.services.tierSets.displayFor(ctx.guild.id, userId);
+	const clear = display.choiceKey === null
+		? html`<p class="muted mb-note">Người này chưa tự chọn bộ nào (lệnh /rank-style).</p>`
+		: html`<form method="post" action="${guildUrl(ctx, TIER_STYLE_CLEAR_PATH)}" class="actions">${csrfField(ctx)}${userField(userId)}
+<button class="btn" type="submit">Xoá lựa chọn, về theo server</button>
+<span class="muted">Chỉ đổi thẻ /rank và lời chúc lên level của người này; người này vẫn tự chọn lại được bằng /rank-style.</span></form>`;
+	return html`<section class="card"><h2>🎨 Bộ danh hiệu hiển thị</h2>
+<p>Bộ hiển thị: ${discordText(ctx.guild, tierDisplayLabel(display))}</p>
+<p class="muted mb-note">Dùng cho thẻ /rank và lời chúc lên level, lên bậc của người này. Role Discord, bảng xếp hạng và Bảng vàng luôn theo bộ của server (${display.serverSet.name}).</p>
+${clear}</section>`;
+}
+
 function userField(userId: string): RawHtml
 {
 	return html`<input type="hidden" name="u" value="${userId}">`;
@@ -359,6 +382,7 @@ async function renderMemberView(ctx: GuildPageContext): Promise<WebResponse>
 		lead,
 		body: html`${headerCard(ctx, userId, display, member === null ? html`<div class="warn-box">${MEMBER_LEFT_NOTE}</div>` : null)}
 ${xpCard(ctx, profile, events, displays)}
+${tierStyleCard(ctx, userId)}
 ${contributionCard(ctx, contribution, recent, hidden)}
 ${adjustCard(ctx, userId, member)}
 ${resetCard(ctx, userId)}`,
@@ -473,6 +497,21 @@ async function resetContribution(ctx: GuildPageContext): Promise<WebResponse>
 	return redirectWithFlash(ctx, viewPath(userId), "ok", resetMemberContribution(ctx.deps.services, target));
 }
 
+/**
+ * Admin xoá bộ danh hiệu người này tự chọn (DEC-047): người đó về theo server. Không cần người đó còn trong server (chỉ xoá một
+ * dòng cấu hình hiển thị). Service ghi audit "tier_pref.clear" với người đăng nhập.
+ */
+function clearTierStyle(ctx: GuildPageContext): WebResponse
+{
+	const userId = requireUserId(formOf(ctx).get("u"));
+	const { tierSets } = ctx.deps.services;
+	const cleared = tierSets.clearMemberChoice(ctx.guild.id, userId, ctx.actorId);
+	if (cleared === null) return redirectWithFlash(ctx, viewPath(userId), "ok", NO_TIER_CHOICE);
+	const name = isTierSetKey(cleared) ? TIER_SETS[cleared].name : cleared;
+	return redirectWithFlash(ctx, viewPath(userId), "ok",
+		`Đã xoá bộ danh hiệu tự chọn (**${name}**) của ${userMention(userId)}: từ giờ người này hiển thị theo bộ của server (**${tierSets.current(ctx.guild.id).name}**).`);
+}
+
 /** Lỗi của form ở trang hồ sơ quay về đúng hồ sơ đó; `u` sai thì hàm ném và server về `/members`. */
 function backToProfile(ctx: GuildPageContext): string
 {
@@ -487,6 +526,7 @@ export const membersPage: PageModule = {
 		{ method: "POST", path: XP_RESET_PATH, handler: resetXp, errorRedirect: backToProfile },
 		{ method: "POST", path: CONTRIBUTION_PATH, handler: adjustContribution, errorRedirect: backToProfile },
 		{ method: "POST", path: CONTRIBUTION_RESET_PATH, handler: resetContribution, errorRedirect: backToProfile },
+		{ method: "POST", path: TIER_STYLE_CLEAR_PATH, handler: clearTierStyle, errorRedirect: backToProfile },
 	],
 	css: `
 .mb-search { flex: 1; max-width: 420px; }
