@@ -24,9 +24,7 @@ const DRAWN_STATE = /^([01])\|(\d{0,9})\|(\d{0,9})$/u;
 /** Số kênh tối đa liệt kê tên trong thông báo kết quả; phần còn lại gộp thành "và N kênh khác". */
 const SUMMARY_MENTIONS_MAX = 10;
 const STALE_FORM = "Form đã cũ hoặc không hợp lệ. Hãy tải lại trang rồi thử lại.";
-/** Không nêu tên hay mention kênh: đó có thể là kênh riêng tư người gọi không xem được. */
-const CHANNEL_GONE = "Không tìm thấy kênh bạn vừa sửa: kênh có thể vừa bị xoá, hoặc bạn không có quyền xem kênh đó. "
-	+ "Bot chưa lưu gì; hãy tải lại trang rồi thử lại.";
+const CHANNEL_GONE = "Không tìm thấy kênh bạn vừa sửa: kênh có thể vừa bị xoá. Bot chưa lưu gì; hãy tải lại trang rồi thử lại.";
 
 const MODE_DETAILS: Readonly<Record<XpChannelMode, string>> = {
 	all: "Mọi kênh bot xem được đều tính XP, kể cả kênh tạo mới sau này; chỉ kênh bị tắt riêng là không tính.",
@@ -47,7 +45,10 @@ export function xpChannelsOf(guild: Guild): XpChannel[]
 	return [...guild.channels.cache.values()].filter(isXpChannel);
 }
 
-/** Người đăng nhập có quyền View Channel ở kênh (discord.js đã tính quyền Administrator), tức là thấy kênh đó trên Discord. */
+/**
+ * Người đăng nhập có quyền View Channel ở kênh (discord.js đã tính quyền Administrator), tức là thấy kênh đó trên Discord. Trang
+ * vẫn hiện và cho sửa mọi kênh (DEC-045: admin bot quản trị được cả kênh mình không xem được); kết quả này chỉ để gắn nhãn 🔒.
+ */
 function canView(member: GuildMember, channel: PermissionChannel): boolean
 {
 	return channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel);
@@ -66,6 +67,8 @@ interface ChannelEntry
 	channel: XpChannel;
 	state: ChannelState;
 	custom: boolean;
+	/** Người đăng nhập không xem được kênh này trên Discord. */
+	locked: boolean;
 }
 
 interface ChannelGroup
@@ -145,12 +148,13 @@ function statusCell(id: string, label: string, custom: boolean): RawHtml
 <label class="ch-reset"><input type="checkbox" name="reset" value="${id}" aria-label="Bỏ cấu hình riêng của ${label}"> Bỏ cấu hình riêng</label>`;
 }
 
-function channelRow(guild: Guild, { channel, state, custom }: ChannelEntry, settings: GuildSettings, selection: BulkSelection): RawHtml
+function channelRow(guild: Guild, { channel, state, custom, locked }: ChannelEntry, settings: GuildSettings, selection: BulkSelection): RawHtml
 {
 	const id = channel.id;
 	const label = channelLabel(guild, id);
+	const lock = locked ? html` <span class="badge warn" title="Bạn không xem được kênh này trên Discord">🔒 riêng tư</span>` : "";
 	return html`<tr>
-<td><label for="on-${id}">${label}</label><input type="hidden" name="d:${id}" value="${encodeState(state)}"></td>
+<td><label for="on-${id}">${label}</label>${lock}<input type="hidden" name="d:${id}" value="${encodeState(state)}"></td>
 <td><input type="checkbox" id="on-${id}" name="on" value="${id}"${bulkChecked(selection, state.enabled) ? html` checked` : ""}></td>
 <td>${statusCell(id, label, custom)}</td>
 <td>${numberInput(`xp:${id}`, state.xpPerMessage, settings.xpPerMessage, "xpPerMessage", `XP mỗi tin riêng của ${label}`)}</td>
@@ -166,14 +170,7 @@ function renderChannels(ctx: GuildPageContext): WebResponse
 	const mode = settings.xpChannelMode;
 	const rows = new Map(guildConfig.listChannels(guild.id).map(row => [row.channelId, row]));
 	const isEnabled = (channel: XpChannel): boolean => guildConfig.effectiveChannelXp(guild.id, channel.id).enabled;
-	const visible: XpChannel[] = [];
-	const hidden: XpChannel[] = [];
-	for (const channel of xpChannelsOf(guild))
-	{
-		if (canView(member, channel)) visible.push(channel);
-		else hidden.push(channel);
-	}
-	const entries = visible.map((channel): ChannelEntry =>
+	const entries = xpChannelsOf(guild).map((channel): ChannelEntry =>
 	{
 		const row = rows.get(channel.id);
 		return {
@@ -184,25 +181,25 @@ function renderChannels(ctx: GuildPageContext): WebResponse
 				xpCooldownSeconds: row?.xpCooldownSeconds ?? null,
 			},
 			custom: row !== undefined,
+			locked: !canView(member, channel),
 		};
 	});
 	const enabledCount = entries.filter(entry => entry.state.enabled).length;
 	const selection = bulkSelection(ctx.req.query);
-	const noneEnabled = enabledCount === 0 && !hidden.some(isEnabled);
+	const noneEnabled = enabledCount === 0;
 
 	const body = entries.length === 0
-		? html`<p class="muted">${hidden.length > 0
-			? "Không có kênh tính XP nào bạn xem được."
-			: "Bot chưa thấy kênh nào tính XP được (kênh chữ, thông báo, forum, media, voice, stage). Kiểm tra quyền xem kênh của bot."}</p>`
+		? html`<p class="muted">Bot chưa thấy kênh nào tính XP được (kênh chữ, thông báo, forum, media, voice, stage). Kiểm tra quyền xem kênh của bot.</p>`
 		: html`<table class="table ch-table">
 <thead><tr><th>Kênh</th><th>Tính XP</th><th>Trạng thái</th><th>XP mỗi tin</th><th>Cooldown (giây)</th></tr></thead>
 <tbody>${groupEntries(guild, entries).map(group => html`
 <tr class="ch-cat"><th colspan="5">${group.category ? html`📁 ${group.category.name}` : "Không có danh mục"}</th></tr>
 ${group.entries.map(entry => channelRow(guild, entry, settings, selection))}`)}
 </tbody></table>`;
-	const hiddenNote = hidden.length === 0
+	const lockedCount = entries.filter(entry => entry.locked).length;
+	const lockedNote = lockedCount === 0
 		? ""
-		: html`<p class="muted ch-note">🔒 ${hidden.length} kênh riêng tư bạn không xem được bị ẩn: trang này không hiện và không sửa các kênh đó, bot giữ nguyên cấu hình của chúng. Số kênh đang tính XP ở trên không gồm các kênh này.</p>`;
+		: html`<p class="muted ch-note">🔒 ${lockedCount} kênh riêng tư mà tài khoản của bạn không xem được trên Discord vẫn hiện ở đây để bạn quản trị (DEC-045). Bot chỉ đọc tin ở kênh bot xem được.</p>`;
 
 	return renderPage(ctx, {
 		nav: "channels",
@@ -216,7 +213,7 @@ ${XP_CHANNEL_MODES.map(option => modeOption(option, mode))}
 </section>
 <section class="card"><h2>Kênh (${entries.length})</h2>
 <p>Đang tính XP: <strong>${enabledCount}/${entries.length}</strong> kênh. Giá trị chung: <strong>${settings.xpPerMessage} XP</strong> mỗi tin, cooldown <strong>${settings.xpCooldownSeconds} giây</strong> (sửa ở <a href="${guildUrl(ctx, "/settings")}">Cài đặt điểm</a>); ô trống là dùng giá trị chung.</p>
-${hiddenNote}
+${lockedNote}
 ${mode === "selected" && noneEnabled ? html`<div class="warn-box">${NO_XP_CHANNEL_WARNING} Tick kênh bên dưới rồi bấm Lưu để bật.</div>` : ""}
 ${entries.length === 0 ? "" : selectAllLinks(ctx, PATH, selection)}
 <div class="ch-scroll">${body}</div>
@@ -296,7 +293,7 @@ function readChannelForm(ctx: GuildPageContext, form: URLSearchParams): ChannelF
 		if (!SNOWFLAKE.test(id)) throw new UserError(`Form có mã kênh không hợp lệ. ${STALE_FORM}`);
 		const drawn = decodeState(form.get(`d:${id}`));
 		const channel = ctx.guild.channels.cache.get(id);
-		if (channel === undefined || !canView(ctx.member, channel))
+		if (channel === undefined)
 		{
 			if (resetIds.has(id) || touched(form, id, drawn, ticked.has(id))) throw new UserError(CHANNEL_GONE);
 			continue;

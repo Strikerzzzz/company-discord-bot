@@ -2,7 +2,7 @@
 import type { MemberDisplay } from "../discord/memberDirectory";
 import { UNKNOWN_MEMBER_NAME } from "../discord/memberDirectory";
 import { UserError } from "../shared/errors";
-import { html, RawHtml } from "./html";
+import { html, HtmlValue, RawHtml } from "./html";
 import { guildUrl } from "./layout";
 import { GuildPageContext } from "./types";
 
@@ -90,12 +90,21 @@ export function parsePositiveId(raw: string | null | undefined): number | null
 	return id >= 1 ? id : null;
 }
 
+/** Snowflake lớn nhất Discord nhận (số nguyên không dấu 64 bit); ID 20 chữ số lớn hơn thì Discord trả lỗi 400. */
+const MAX_SNOWFLAKE = 2n ** 64n - 1n;
+
+/** Chuỗi là snowflake Discord hợp lệ: 17–20 chữ số và không vượt số nguyên không dấu 64 bit. */
+export function isSnowflake(text: string): boolean
+{
+	return SNOWFLAKE.test(text) && BigInt(text) <= MAX_SNOWFLAKE;
+}
+
 /** Discord user ID từ ô nhập: ID (17–20 chữ số) hoặc mention `<@id>`; null nếu không phải. */
 export function parseUserId(raw: string | null | undefined): string | null
 {
 	const text = raw?.trim() ?? "";
-	if (SNOWFLAKE.test(text)) return text;
-	return USER_MENTION.exec(text)?.[1] ?? null;
+	const id = SNOWFLAKE.test(text) ? text : USER_MENTION.exec(text)?.[1] ?? null;
+	return id !== null && isSnowflake(id) ? id : null;
 }
 
 /** Như parseUserId nhưng ném UserError khi không hợp lệ (dùng cho input ẩn của form). */
@@ -131,6 +140,12 @@ export function userCell(userId: string, display: MemberDisplay | undefined): Ra
 	const avatar = display?.avatarUrl?.startsWith(DISCORD_CDN) ? html`<img src="${display.avatarUrl}" alt="" loading="lazy">` : "";
 	const left = display && !display.inGuild ? html` <span class="badge warn">đã rời server</span>` : "";
 	return html`<span class="user-cell">${avatar}<span>${name}</span></span>${left} <span class="muted">${userId}</span>`;
+}
+
+/** Danh sách "nhãn: giá trị" (thẻ dl) của trang chi tiết; dòng null bị bỏ. `className` là class CSS riêng của trang. */
+export function metaList(className: string, rows: readonly (readonly [string, HtmlValue] | null)[]): RawHtml
+{
+	return html`<dl class="${className}">${rows.map(row => row === null ? "" : html`<dt>${row[0]}</dt><dd>${row[1]}</dd>`)}</dl>`;
 }
 
 /** URL trang hồ sơ thành viên (`/members/view?u=<userId>`) của guild hiện tại. */

@@ -111,7 +111,7 @@ async function searchSection(ctx: GuildPageContext, text: string): Promise<RawHt
 	const rows = found.map(member =>
 	{
 		const display: MemberDisplay = { displayName: member.displayName, avatarUrl: null, inGuild: true };
-		return html`<tr><td><a href="${memberUrl(ctx, member.id)}">${userCell(member.id, display)}</a></td>
+		return html`<tr><td><a href="${memberUrl(ctx, member.id)}">${userCell(member.id, display)}</a> <span class="muted">@${member.user.username}</span></td>
 <td>${member.user.bot ? html`<span class="badge">bot</span>` : ""}</td>
 <td><a class="btn" href="${memberUrl(ctx, member.id)}">Xem hồ sơ</a></td></tr>`;
 	});
@@ -269,9 +269,11 @@ function adjustCard(ctx: GuildPageContext, userId: string, member: GuildMember |
 <div class="field"><label for="mb-xp">Số XP</label>
 <input type="number" id="mb-xp" name="so-xp" min="1" max="${MAX_ADJUST}" step="1" required>
 <span class="hint">Số nguyên từ 1 đến ${formatNumber(MAX_ADJUST)}. Không trừ quá số XP hiện có.</span></div>
+<fieldset class="mb-direction"><legend>Cộng hay trừ</legend>
+<label class="check"><input type="radio" name="huong" value="cong" required> ➕ Cộng XP</label>
+<label class="check"><input type="radio" name="huong" value="tru" required> ➖ Trừ XP</label></fieldset>
 ${reasonField("mb-xp-reason")}
-<div class="actions"><button class="btn btn-primary" type="submit" name="huong" value="cong">➕ Cộng XP</button>
-<button class="btn" type="submit" name="huong" value="tru">➖ Trừ XP</button></div>
+<div class="actions"><button class="btn btn-primary" type="submit">💾 Lưu XP</button></div>
 </form>
 <form method="post" action="${guildUrl(ctx, CONTRIBUTION_PATH)}" class="mb-form">${csrfField(ctx)}${userField(userId)}
 <h3>Điểm contribution</h3>
@@ -503,5 +505,7 @@ export const membersPage: PageModule = {
 .mb-form h3 { margin-top: 0; }
 .mb-form .field input { max-width: 260px; }
 .mb-note { font-size: 13px; margin: 12px 0 0; }
+.mb-direction { border: 0; padding: 0; margin: 0 0 14px; }
+.mb-direction legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
 `,
 };

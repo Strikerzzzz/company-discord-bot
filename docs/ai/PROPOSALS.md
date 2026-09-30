@@ -47,7 +47,7 @@
 | PROP-035 | Gỡ cấu hình của role hoặc kênh đã bị xoá khỏi server | LOW | PROPOSED |
 | PROP-036 | Giới hạn tần suất đăng lại Bảng vàng khi đổi kênh | LOW | PROPOSED |
 | PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | IMPLEMENTED |
-| PROP-038 | Nhật ký quản trị giấu tiêu đề contribution ở kênh người xem không xem được | LOW | PROPOSED |
+| PROP-038 | Nhật ký quản trị giấu tiêu đề contribution và câu hỏi vote ở kênh người xem không xem được | LOW | PROPOSED |
 
 ---
 
@@ -1492,7 +1492,7 @@ HIGH (người phụ trách yêu cầu)
 
 IMPLEMENTED (2026-09-29, DEC-039, merge theo DEC-040): chỉ mạng công ty/VPN, đăng nhập bằng tài khoản Discord.
 
-## PROP-038 — Nhật ký quản trị giấu tiêu đề contribution ở kênh người xem không xem được
+## PROP-038 — Nhật ký quản trị giấu tiêu đề contribution và câu hỏi vote ở kênh người xem không xem được
 
 ### Vấn đề
 
@@ -1500,7 +1500,7 @@ Có từ Phase 10 (review Phase 17 phát hiện). Dòng audit `contribution.remo
 
 ### Đề xuất
 
-Khi hiện nhật ký, audit `contribution.remove` chỉ hiện tiêu đề nếu người xem xem được kênh của contribution. Cần thêm `channelId` vào details của audit mới; dòng audit cũ không có `channelId` thì giữ như hiện nay. Làm cho cả `/admin audit` và trang Nhật ký.
+Khi hiện nhật ký, audit `contribution.remove` chỉ hiện tiêu đề, và `poll.create` chỉ hiện câu hỏi (review bảo mật Phase 17), nếu người xem xem được kênh gốc. Cách làm: tra `contributionId`/`pollId` trong details (dòng không bao giờ bị xoá, DEC-027) để lấy `channelId`, rồi kiểm tra bằng `channelAccess`; không cần thêm trường vào details. Làm cho cả `/admin audit` và trang Nhật ký.
 
 ### Độ ưu tiên
 

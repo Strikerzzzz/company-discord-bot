@@ -148,7 +148,8 @@ function createFakeServices(options: FakeServiceOptions = {}): FakeServices
 		},
 	};
 
-	const services = { activity, contributions, teams, guildConfig, leaderboard, tierSets } as unknown as AppServices;
+	const clock = { now: (): number => Date.now() };
+	const services = { activity, contributions, teams, guildConfig, leaderboard, tierSets, clock } as unknown as AppServices;
 	return { services, messages, profileCalls, boardCalls, tierSetCalls };
 }
 

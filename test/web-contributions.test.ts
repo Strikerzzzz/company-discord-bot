@@ -9,6 +9,7 @@ import { PRIVATE_CHANNEL_LABEL } from "../src/web/format";
 import type { WebResponse } from "../src/web/http";
 import { CONTRIBUTION_PAGE_SIZE, INVALID_CONTRIBUTION_ID, REMOVE_CONFIRM_REQUIRED } from "../src/web/pages/contributions";
 import { HIDDEN_ITEM_TEXT, MESSAGE_EDIT_FAILED } from "../src/web/widgets";
+import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { GUILD } from "./helpers";
 import {
 	addChannel,
@@ -281,6 +282,7 @@ describe("web: trang Contribution — gỡ", () =>
 		const after = await getPage(harness, auth, `/contributions/view?id=${contribution.id}`);
 		assert.ok(after.includes("badge off\">Đã gỡ") && !after.includes("name=\"xac-nhan\""), "đã gỡ thì không còn form gỡ");
 
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		const again = await removeContribution(harness, auth, { id: String(contribution.id), "xac-nhan": "1" });
 		assert.equal(again.headers.Location, detailUrl);
 		assert.deepEqual(await flashAfter(harness, auth, again), { kind: "error", text: "Contribution này đã bị gỡ." });

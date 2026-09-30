@@ -6,6 +6,7 @@ import { ChannelType } from "discord.js";
 import { NO_XP_CHANNEL_WARNING } from "../src/discord/views/configPanel";
 import { MAX_TEAMS } from "../src/modules/team/TeamService";
 import type { WebResponse } from "../src/web/http";
+import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { GUILD } from "./helpers";
 import {
 	addChannel,
@@ -397,55 +398,38 @@ describe("web trang A: kênh tính XP", () =>
 		assert.ok(flash.text.startsWith("Không có gì thay đổi.") && flash.text.includes("1 kênh vốn đã đúng trạng thái"), flash.text);
 	});
 
-	test("kênh riêng tư người đăng nhập không xem được: ẩn tên kênh và danh mục, không đếm; admin khác xem được thì vẫn thấy", async () =>
+	test("kênh riêng tư người đăng nhập không xem được: vẫn hiện đủ tên, danh mục và được đếm, có nhãn 🔒 (DEC-045)", async () =>
 	{
 		const harness = createWebHarness();
 		addSecretChannel(harness);
 		const [admin, other] = await adminPair(harness);
 		const body = await getPage(harness, admin, "/channels");
-		assert.ok(!body.includes(SECRET_NAME) && !body.includes(SECRET_CATEGORY_NAME), "không lộ tên kênh và danh mục riêng tư");
-		assert.ok(!body.includes(CHANNEL_SECRET) && !body.includes(CATEGORY_SECRET), "không có input nào của kênh riêng tư");
-		assert.ok(body.includes("1 kênh riêng tư bạn không xem được bị ẩn"));
-		assert.ok(body.includes("<h2>Kênh (4)</h2>") && body.includes("<strong>4/4</strong>"), "chỉ đếm kênh hiển thị");
+		assert.ok(body.includes(`#${SECRET_NAME}`) && body.includes(`📁 ${SECRET_CATEGORY_NAME}`), "admin thấy tên kênh và danh mục riêng tư");
+		assert.ok(body.includes(`name="d:${CHANNEL_SECRET}"`), "có ô sửa kênh riêng tư");
+		assert.ok(body.includes("🔒 riêng tư") && body.includes("1 kênh riêng tư mà tài khoản của bạn không xem được"));
+		assert.ok(body.includes("<h2>Kênh (5)</h2>") && body.includes("<strong>5/5</strong>"), "đếm cả kênh riêng tư");
 
 		const otherBody = await getPage(harness, other, "/channels");
-		assert.ok(otherBody.includes(`#${SECRET_NAME}`) && otherBody.includes(`📁 ${SECRET_CATEGORY_NAME}`));
-		assert.ok(otherBody.includes("<h2>Kênh (5)</h2>") && !otherBody.includes("kênh riêng tư bạn không xem được"));
-
-		harness.services.guildConfig.updateSettings(GUILD, { xpChannelMode: "selected" }, ADMIN_USER);
-		harness.services.guildConfig.setChannelsXpEnabled(GUILD, [CHANNEL_SECRET], true, ADMIN_USER);
-		const selected = await getPage(harness, admin, "/channels");
-		assert.ok(selected.includes("<strong>0/4</strong>"));
-		assert.ok(!selected.includes(NO_XP_CHANNEL_WARNING), "kênh ẩn vẫn đang tính XP: không cảnh báo sai là không kênh nào tính XP");
+		assert.ok(otherBody.includes(`#${SECRET_NAME}`) && otherBody.includes("<h2>Kênh (5)</h2>"));
+		assert.ok(!otherBody.includes("🔒 riêng tư"), "người xem được kênh thì không có nhãn 🔒");
 	});
 
-	test("POST sửa kênh riêng tư (hoặc danh mục riêng tư) mình không xem được bị từ chối như kênh lạ, thông báo không nêu tên", async () =>
+	test("POST sửa kênh riêng tư mình không xem được: lưu như kênh thường, audit với người đăng nhập (DEC-045); danh mục vẫn bị từ chối", async () =>
 	{
 		const harness = createWebHarness();
 		addSecretChannel(harness);
 		const auth = await login(harness, ADMIN_USER);
 		const fields = readForm(await getPage(harness, auth, "/channels"), "/channels");
-		const drawn: [string, string] = [`d:${CHANNEL_SECRET}`, "1|50|"];
+		await submit(harness, auth, "/channels", fill(check(fields, "on", CHANNEL_SECRET, false), `xp:${CHANNEL_SECRET}`, "5"));
+		const flash = await flashAfter(harness, auth, "/channels");
+		assert.equal(flash.kind, "ok", flash.text);
+		assert.deepEqual(harness.services.guildConfig.getChannel(GUILD, CHANNEL_SECRET), { channelId: CHANNEL_SECRET, xpEnabled: false, xpPerMessage: 5, xpCooldownSeconds: null });
+		assert.equal(harness.services.audit.list(GUILD, 1)[0]?.actorId, ADMIN_USER);
+
 		const before = auditCount(harness);
-		const cases: Fields[] = [
-			[...fields, ["on", CHANNEL_SECRET]],
-			[...fields, drawn, [`xp:${CHANNEL_SECRET}`, "5"]],
-			[...fields, drawn, [`cd:${CHANNEL_SECRET}`, "0"]],
-			[...fields, drawn, ["reset", CHANNEL_SECRET]],
-			[...fields, drawn],
-			[...fields, ["on", CATEGORY_SECRET], [`d:${CATEGORY_SECRET}`, "0||"]],
-		];
-		for (const form of cases)
-		{
-			await submit(harness, auth, "/channels", check(form, "on", CHANNEL_CHAT, false));
-			const flash = await flashAfter(harness, auth, "/channels");
-			assert.equal(flash.kind, "error", JSON.stringify(form.slice(-2)));
-			assert.match(flash.text, /Không tìm thấy kênh bạn vừa sửa/u);
-			assert.ok(!flash.text.includes(SECRET_NAME) && !flash.text.includes(SECRET_CATEGORY_NAME) && !flash.text.includes(CHANNEL_SECRET), flash.text);
-		}
-		assert.equal(auditCount(harness), before, "không ghi gì, kể cả phần hợp lệ trong cùng form");
-		assert.deepEqual(enabledChannels(harness), ALL_XP_CHANNELS);
-		assert.deepEqual(harness.services.guildConfig.getChannel(GUILD, CHANNEL_SECRET), { channelId: CHANNEL_SECRET, xpEnabled: true, xpPerMessage: 50, xpCooldownSeconds: null });
+		await submit(harness, auth, "/channels", [...readForm(await getPage(harness, auth, "/channels"), "/channels"), ["on", CATEGORY_SECRET], [`d:${CATEGORY_SECRET}`, "0||"]]);
+		assert.equal((await flashAfter(harness, auth, "/channels")).kind, "error");
+		assert.equal(auditCount(harness), before, "danh mục không bật/tắt XP được, không ghi gì");
 	});
 
 	test("đổi chế độ cùng lúc đặt XP/cooldown riêng: trạng thái lưu cứng đúng như ô tick trên form (chế độ đổi sau cùng)", async () =>
@@ -472,7 +456,7 @@ describe("web trang A: kênh tính XP", () =>
 		assert.deepEqual(enabledChannels(harness), [CHANNEL_CHAT, CHANNEL_VOICE, CHANNEL_ANNOUNCE], "#cong-viec không tick nên vẫn không tính XP");
 	});
 
-	test("kênh bị xoá hoặc bị thu quyền xem khi trang đang mở: không đổi gì ở kênh đó thì vẫn lưu phần còn lại; đổi đúng kênh đó thì bị từ chối", async () =>
+	test("kênh bị xoá khi trang đang mở: không đổi gì ở kênh đó thì vẫn lưu phần còn lại; đổi đúng kênh đó thì bị từ chối", async () =>
 	{
 		const harness = createWebHarness();
 		const auth = await login(harness, ADMIN_USER);
@@ -480,23 +464,14 @@ describe("web trang A: kênh tính XP", () =>
 		guildConfig.setChannel(GUILD, CHANNEL_WORK, { xpCooldownSeconds: 30 }, ADMIN_USER);
 		const fields = readForm(await getPage(harness, auth, "/channels"), "/channels");
 		harness.world.channels.delete(CHANNEL_VOICE);
-		addChannel(harness.world, { id: CHANNEL_WORK, name: "cong-viec", type: ChannelType.GuildText, parentId: CATEGORY_MAIN, position: 2, permissionsByMember: { [ADMIN_USER]: [] } });
 
 		const before = auditCount(harness);
-		const cases: Fields[] = [
-			check(fields, "on", CHANNEL_VOICE, false),
-			fill(fields, `cd:${CHANNEL_VOICE}`, "5"),
-			fill(fields, `xp:${CHANNEL_WORK}`, "9"),
-			fill(fields, `cd:${CHANNEL_WORK}`, ""),
-			check(fields, "reset", CHANNEL_WORK, true),
-		];
-		for (const form of cases)
+		for (const form of [check(fields, "on", CHANNEL_VOICE, false), fill(fields, `cd:${CHANNEL_VOICE}`, "5")])
 		{
 			await submit(harness, auth, "/channels", check(form, "on", CHANNEL_CHAT, false));
 			const flash = await flashAfter(harness, auth, "/channels");
 			assert.equal(flash.kind, "error");
 			assert.match(flash.text, /Không tìm thấy kênh bạn vừa sửa/u);
-			assert.ok(!flash.text.includes("cong-viec"), flash.text);
 		}
 		assert.equal(auditCount(harness), before);
 		assert.equal(guildConfig.effectiveChannelXp(GUILD, CHANNEL_CHAT).enabled, true);
@@ -507,7 +482,7 @@ describe("web trang A: kênh tính XP", () =>
 		assert.ok(flash.text.includes("tắt XP 1 kênh") && flash.text.includes("đổi XP/cooldown riêng 1 kênh"), flash.text);
 		assert.equal(guildConfig.effectiveChannelXp(GUILD, CHANNEL_CHAT).enabled, false);
 		assert.equal(guildConfig.getChannel(GUILD, CHANNEL_ANNOUNCE).xpPerMessage, 15);
-		assert.deepEqual(guildConfig.getChannel(GUILD, CHANNEL_WORK), { channelId: CHANNEL_WORK, xpEnabled: true, xpPerMessage: null, xpCooldownSeconds: 30 }, "kênh bị thu quyền xem giữ nguyên");
+		assert.deepEqual(guildConfig.getChannel(GUILD, CHANNEL_WORK), { channelId: CHANNEL_WORK, xpEnabled: true, xpPerMessage: null, xpCooldownSeconds: 30 });
 	});
 
 	test("bỏ cấu hình riêng: audit channel.reset, kênh theo chế độ; tick cùng thay đổi khác thì bỏ cấu hình riêng thắng và flash ghi rõ", async () =>
@@ -528,6 +503,7 @@ describe("web trang A: kênh tính XP", () =>
 		const body = await getPage(harness, auth, "/channels");
 		assert.ok(!body.includes(`name="reset" value="${CHANNEL_WORK}"`) && body.includes(`name="reset" value="${CHANNEL_CHAT}"`));
 
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		await submit(harness, auth, "/channels", check(first, "reset", CHANNEL_WORK, true));
 		flash = await flashAfter(harness, auth, "/channels");
 		assert.ok(flash.text.startsWith("Không có gì thay đổi.") && flash.text.includes("1 kênh vốn không có cấu hình riêng"), flash.text);
@@ -695,6 +671,7 @@ describe("web trang A: team", () =>
 		assert.ok(!(await getPage(harness, auth, "/teams")).includes("Team không còn trong server"));
 
 		const before = auditCount(harness);
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		await submit(harness, auth, "/teams", check(fields, "gone", ROLE_GONE, true));
 		const flash = await flashAfter(harness, auth, "/teams");
 		assert.equal(flash.kind, "ok");

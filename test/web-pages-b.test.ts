@@ -7,6 +7,7 @@ import { BOARD_CHANGED_ELSEWHERE, BOARD_SELECT_CHANNEL } from "../src/web/pages/
 import { MISSING_ROLE_OPTION, ROLE_NOT_FOUND, ROLES_STALE_FORM, ROLES_UNCHANGED } from "../src/web/pages/roles";
 import { SETTINGS_STALE_FORM, SETTINGS_UNCHANGED } from "../src/web/pages/settings";
 import { escapeHtml } from "../src/web/html";
+import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { GUILD } from "./helpers";
 import {
 	addChannel,
@@ -445,6 +446,7 @@ describe("web: trang Bảng vàng", () =>
 		assert.equal(entry.targetId, CHANNEL_CHAT);
 		assert.ok(body.includes("Đang tắt") && !body.includes(`action="${url("/board/off")}"`));
 
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		expectFlash(await submit(harness, auth, "/board/off", off, "/board"), "ok", "Bảng vàng vốn đang tắt.");
 	});
 

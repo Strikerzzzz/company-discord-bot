@@ -14,7 +14,7 @@ import { html, HtmlValue, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
-import { formatDateTime, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, parseUserId, queryPage, withMessageEditNote } from "../widgets";
+import { formatDateTime, metaList, HIDDEN_ITEM_TEXT, memberLink, pager, parsePositiveId, parseUserId, queryPage, withMessageEditNote } from "../widgets";
 
 const PATH = "/contributions";
 const VIEW_PATH = `${PATH}/view`;
@@ -156,11 +156,6 @@ async function renderList(ctx: GuildPageContext): Promise<WebResponse>
 
 // ---------- Chi tiết ----------
 
-function metaList(rows: readonly (readonly [string, HtmlValue] | null)[]): RawHtml
-{
-	return html`<dl class="ct-meta">${rows.map(row => row === null ? "" : html`<dt>${row[0]}</dt><dd>${row[1]}</dd>`)}</dl>`;
-}
-
 function removeForm(ctx: GuildPageContext, contribution: Contribution): RawHtml
 {
 	return html`<section class="card danger-zone"><h2>Gỡ contribution</h2>
@@ -177,7 +172,7 @@ function visibleDetail(ctx: GuildPageContext, contribution: Contribution, displa
 	const link = safeLink(contribution.link);
 	const messageUrl = contributionMessageUrl(contribution);
 	const { authorId, submittedBy } = contribution;
-	const meta = metaList([
+	const meta = metaList("ct-meta", [
 		["Trạng thái", statusBadge(contribution)],
 		["Loại", categoryLabel(contribution.category)],
 		["Tác giả", memberLink(ctx, authorId, displays.get(authorId))],
@@ -196,7 +191,7 @@ ${meta}
 function hiddenDetail(ctx: GuildPageContext, contribution: Contribution, displays: ReadonlyMap<string, MemberDisplay>): RawHtml
 {
 	const { authorId } = contribution;
-	const meta = metaList([
+	const meta = metaList("ct-meta", [
 		["Trạng thái", statusBadge(contribution)],
 		["Tác giả", memberLink(ctx, authorId, displays.get(authorId))],
 		["Lượt ghi nhận", formatNumber(contribution.votes)],

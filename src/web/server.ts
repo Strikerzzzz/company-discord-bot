@@ -1,5 +1,6 @@
 // Máy chủ web quản trị (DEC-039): bộ xử lý thuần `createWebHandler` (định tuyến, đăng nhập Discord, kiểm tra quyền admin ở mỗi
 // request, CSRF, flash) và phần nối với node:http `startWebServer`. Chạy trong chính process của bot.
+import { createHash } from "node:crypto";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { Guild, GuildMember, PermissionFlagsBits } from "discord.js";
 import { isAdmin } from "../modules/guild-config/permissions";
@@ -51,6 +52,13 @@ const LOGIN_MESSAGES: Readonly<Record<string, string>> = {
 	gone: "Tài khoản của bạn không còn quyền admin bot ở server nào; phiên đăng nhập đã bị huỷ.",
 	out: "Bạn đã đăng xuất.",
 };
+
+/**
+ * POST trùng (cùng người, đường dẫn và nội dung form, không tính token CSRF) trong khoảng này dùng lại kết quả của lần đầu thay
+ * vì chạy lại: trang không có JavaScript để khoá nút, nên bấm đúp "Cộng XP" không được cộng hai lần (review Phase 17).
+ */
+export const DUPLICATE_POST_WINDOW_MS = 5000;
+const MAX_RECENT_POSTS = 1000;
 
 /** Trang quay về do route chỉ định (`GuildRoute.errorRedirect`): đường dẫn con chữ thường, kèm query đơn giản (không ký tự lạ). */
 const ERROR_REDIRECT = /^(?:\/[a-z0-9-]+)*(?:\?[A-Za-z0-9=&%._~-]*)?$/u;
@@ -120,6 +128,7 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 	const postLimiter = new RateLimiter(120, 60_000);
 	const getLimiter = new RateLimiter(600, 60_000);
 	const routes: readonly GuildRoute[] = modules.flatMap(module => module.routes);
+	const recentPosts = new Map<string, { at: number; response: Promise<WebResponse> }>();
 	const css = [BASE_CSS, ...modules.map(module => module.css ?? "")].join("\n");
 	const secure = deps.config.baseUrl.startsWith("https:");
 	const expectedHost = new URL(deps.config.baseUrl).host.toLowerCase();
@@ -274,6 +283,31 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		return token.length > 0 && safeEqual(token, session.csrf);
 	}
 
+	/** Khoá nhận diện một lần gửi form: người gửi, đường dẫn và các trường form (trừ `_csrf`), không phụ thuộc thứ tự trường. */
+	function postKey(req: WebRequest, session: WebSession): string
+	{
+		const fields = [...(req.form ?? new URLSearchParams())]
+			.filter(([name]) => name !== "_csrf")
+			.sort(([a, x], [b, y]) => a.localeCompare(b) || x.localeCompare(y));
+		return createHash("sha256").update(JSON.stringify([session.userId, req.path, fields])).digest("hex");
+	}
+
+	/** Kết quả của lần gửi y hệt còn trong DUPLICATE_POST_WINDOW_MS (kể cả lần đang chạy dở); không có thì chạy `run` và ghi nhớ. */
+	function deduplicatePost(key: string, run: () => Promise<WebResponse>): Promise<WebResponse>
+	{
+		const now = deps.clock.now();
+		for (const [oldKey, entry] of recentPosts)
+		{
+			if (now - entry.at < DUPLICATE_POST_WINDOW_MS && recentPosts.size <= MAX_RECENT_POSTS) break;
+			recentPosts.delete(oldKey);
+		}
+		const previous = recentPosts.get(key);
+		if (previous && now - previous.at < DUPLICATE_POST_WINDOW_MS) return previous.response;
+		const response = run();
+		recentPosts.set(key, { at: now, response });
+		return response;
+	}
+
 	function logout(req: WebRequest, session: WebSession | null): WebResponse
 	{
 		const invalid = session ? !postAllowed(req, session) : !originAllowed(req);
@@ -321,21 +355,27 @@ export function createWebHandler(deps: WebDeps, modules: readonly PageModule[] =
 		if (!matched) return messagePage("Không tìm thấy", "Trang này không tồn tại.", 404);
 
 		const ctx: GuildPageContext = { req, deps, session, guild, member, actorId: session.userId };
-		try
+		const run = async (): Promise<WebResponse> =>
 		{
-			return await matched.handler(ctx);
-		}
-		catch (error)
-		{
-			if (!(error instanceof UserError)) logger.error(`Lỗi trang web ${req.method} ${req.path}:`, error);
-			const message = error instanceof UserError ? error.message : "Đã có lỗi xảy ra. Vui lòng thử lại sau.";
-			if (req.method === "POST")
+			try
 			{
-				session.flash = { kind: "error", text: message };
-				return redirect(`/g/${guildId}${routeErrorRedirect(matched, ctx) ?? pageAfterPost(subpath)}`);
+				return await matched.handler(ctx);
 			}
-			return error instanceof UserError ? messagePage("Không thực hiện được", message, 400) : messagePage("Lỗi", message, 500);
-		}
+			catch (error)
+			{
+				if (!(error instanceof UserError)) logger.error(`Lỗi trang web ${req.method} ${req.path}:`, error);
+				const message = error instanceof UserError ? error.message : "Đã có lỗi xảy ra. Vui lòng thử lại sau.";
+				if (req.method === "POST")
+				{
+					session.flash = { kind: "error", text: message };
+					return redirect(`/g/${guildId}${routeErrorRedirect(matched, ctx) ?? pageAfterPost(subpath)}`);
+				}
+				// Trang lỗi không hiện flash: bỏ flash đang chờ (từ POST trước) để nó không hiện muộn ở trang sau.
+				session.flash = null;
+				return error instanceof UserError ? messagePage("Không thực hiện được", message, 400) : messagePage("Lỗi", message, 500);
+			}
+		};
+		return req.method === "POST" ? deduplicatePost(postKey(req, session), run) : run();
 	}
 
 	async function route(req: WebRequest): Promise<WebResponse>

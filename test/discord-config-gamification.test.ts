@@ -183,6 +183,8 @@ interface Invocation
 	onFetchMe?: () => void;
 	/** Role của server trong cache (mặc định chỉ có ROLE_KIM_DAN). */
 	guildRoles?: Role[];
+	/** Kênh của server trong cache (mặc định không có kênh nào). */
+	guildChannels?: { id: string }[];
 	caller?: CallerSpec;
 }
 
@@ -223,6 +225,7 @@ function invoke(harness: Harness, call: Invocation): FakeInteraction
 			id: GUILD,
 			ownerId: OWNER,
 			roles: { cache: new Map((call.guildRoles ?? [fakeRole(ROLE_KIM_DAN)]).map(role => [role.id, role])) },
+			channels: { cache: new Map((call.guildChannels ?? []).map(channel => [channel.id, channel])) },
 			members: {
 				me: cachedBot,
 				fetchMe: (options: unknown): Promise<GuildMember> =>
@@ -1008,5 +1011,35 @@ describe("/config poll gioi-han-xp-ngay", () =>
 		const [entry] = harness.context.deps.audit.list(GUILD, 1);
 		assert.equal(entry.action, "config.update");
 		assert.deepEqual(entry.details, { defaultPollXp: 8, pollXpDailyCap: 0 });
+	});
+});
+
+describe("/config xp kenh-thong-bao (DEC-043)", () =>
+{
+	test("đặt kênh: người gọi và bot đủ quyền thì lưu, phản hồi ghi kênh mới", async () =>
+	{
+		const harness = createHarness();
+		const channel = fakeChannel(CHANNEL_GENERAL);
+		const fake = await run(harness, { subcommand: "xp", options: { "kenh-thong-bao": channel }, guildChannels: [{ id: CHANNEL_GENERAL, ...channel }] });
+		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).levelUpChannelId, CHANNEL_GENERAL);
+		assert.ok(replyText(fake).includes(`Kênh thông báo lên level: **<#${CHANNEL_GENERAL}>**`), replyText(fake));
+	});
+
+	test("người gọi không gửi được tin ở kênh, hoặc bot thiếu Send Messages: từ chối, không lưu", async () =>
+	{
+		const harness = createHarness();
+		const callerMuted = fakeChannel(CHANNEL_GENERAL, ALL_BOARD_PERMISSIONS, [PermissionFlagsBits.ViewChannel]);
+		await rejects(
+			harness,
+			{ subcommand: "xp", options: { "kenh-thong-bao": callerMuted }, guildChannels: [{ id: CHANNEL_GENERAL, ...callerMuted }] },
+			`Bạn không có quyền **Send Messages** ở <#${CHANNEL_GENERAL}>, nên không thể chọn kênh đó để thông báo lên level.`,
+		);
+		const botMuted = fakeChannel(CHANNEL_GENERAL, [PermissionFlagsBits.ViewChannel]);
+		await rejects(
+			harness,
+			{ subcommand: "xp", options: { "kenh-thong-bao": botMuted }, guildChannels: [{ id: CHANNEL_GENERAL, ...botMuted }] },
+			`Bot thiếu quyền **Send Messages** ở <#${CHANNEL_GENERAL}>. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`,
+		);
+		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).levelUpChannelId, null);
 	});
 });
