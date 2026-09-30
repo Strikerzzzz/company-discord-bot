@@ -31,7 +31,14 @@ import {
 } from "../src/discord/views/admin";
 import { BackupKind } from "../src/db/backup";
 import AdminCmd from "../src/interactions/commands/admin";
-import ConfigCmd, { CHANNEL_COOLDOWN_CONFLICT, CHANNEL_XP_CONFLICT, LEVEL_UP_CHANNEL_CONFLICT } from "../src/interactions/commands/config";
+import ConfigCmd, {
+	ADMIN_ROLE_CONFLICT,
+	ADMIN_ROLE_NO_OPTION,
+	CHANNEL_COOLDOWN_CONFLICT,
+	CHANNEL_XP_CONFLICT,
+	LEVEL_UP_CHANNEL_CONFLICT,
+	POLL_ROLE_CONFLICT,
+} from "../src/interactions/commands/config";
 import { levelInfo } from "../src/modules/activity/levels";
 import { applyTierOverrides, DEFAULT_TIER_SET, TIER_SETS } from "../src/modules/activity/tiers";
 import { ActivityProfile, ActivityServiceApi, MessageXpResult, XpAdjustInput, XpEventView } from "../src/modules/activity/types";
@@ -44,7 +51,7 @@ import {
 	ContributionVoteResult,
 } from "../src/modules/contribution/types";
 import { TierRoleService } from "../src/modules/gamification/TierRoleService";
-import { ChannelSettings, DEFAULT_GUILD_SETTINGS, NumericSettingKey, SETTING_LIMITS } from "../src/modules/guild-config/types";
+import { ChannelSettings, DEFAULT_GUILD_SETTINGS, MAX_GRANT_ROLES, NumericSettingKey, SETTING_LIMITS } from "../src/modules/guild-config/types";
 import { LiveBoardService } from "../src/modules/live-board/LiveBoardService";
 import { GuildStatistics } from "../src/modules/statistics/types";
 import { AppServices } from "../src/services";
@@ -570,7 +577,16 @@ describe("định nghĩa /admin và /config", () =>
 			names(children(optionAt(configJson.options, "tier"))),
 			["panel", "set-role", "clear-role", "list", "style", "rename", "reset-names", "setup-roles"],
 		);
-		assert.deepEqual(names(children(optionAt(configJson.options, "poll"))), ["xp-mac-dinh", "gioi-han-xp-ngay", "role-tao-vote", "xoa-role-tao-vote"]);
+		assert.deepEqual(
+			names(children(optionAt(configJson.options, "poll"))),
+			["xp-mac-dinh", "gioi-han-xp-ngay", "role-tao-vote", "bo-role-tao-vote", "xoa-role-tao-vote"],
+		);
+		assert.deepEqual(names(children(optionAt(configJson.options, "admin-role"))), ["them", "bo", "bo-het"]);
+		assert.deepEqual(
+			["them", "bo", "bo-het"].map(name => optionAt(configJson.options, "admin-role", name).type),
+			[ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Boolean],
+		);
+		assert.equal(optionAt(configJson.options, "poll", "bo-role-tao-vote").type, ApplicationCommandOptionType.Role);
 		assert.deepEqual(
 			names(children(optionAt(configJson.options, "channel", "set"))),
 			["kenh", "bat-xp", "xp-moi-tin", "dung-chung-xp", "cooldown-giay", "dung-chung-cooldown"],
@@ -745,7 +761,12 @@ describe("views quản trị", () =>
 		assert.ok(description.includes(`XP mỗi tin nhắn: 15 · Thông báo lên level: Tắt · Role admin bot: <@&${ROLE_FRONTEND}>`));
 		assert.ok(!description.includes("xp.adjust"));
 
-		assert.equal(formatAuditDetails({ adminRoleId: null }), "Role admin bot: không có");
+		assert.equal(formatAuditDetails({ adminRoleId: null }), "Role admin bot: không có", "audit cũ (một role, trước DEC-044) vẫn có nhãn");
+		assert.equal(
+			formatAuditDetails({ adminRoleIds: [ROLE_FRONTEND, ROLE_BACKEND], addedRoles: [ROLE_BACKEND], removedRoles: [ROLE_OTHER] }, "config.update"),
+			`Role admin bot: <@&${ROLE_FRONTEND}>, <@&${ROLE_BACKEND}> · Role thêm: <@&${ROLE_BACKEND}> · Role bỏ: <@&${ROLE_OTHER}>`,
+		);
+		assert.equal(formatAuditDetails({ pollCreatorRoleIds: [] }), "Role tạo vote: không có");
 		assert.equal(formatAuditDetails({}), null);
 		assert.ok(buildAuditEmbed([]).toJSON().description?.includes("Chưa có thao tác quản trị nào"));
 	});
@@ -834,7 +855,7 @@ describe("views quản trị", () =>
 			tierRoles: [{ tierKey: "bac-1", roleId: ROLE_LUYEN_KHI, createdByBot: false }, { tierKey: "bac-2", roleId: ROLE_TRUC_CO, createdByBot: false }] as const,
 			tierSet: DEFAULT_TIER_SET,
 		};
-		const embed = buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollCreatorRoleId: ROLE_OTHER }, [ROLE_BACKEND, ROLE_FRONTEND], channels, gamification).toJSON();
+		const embed = buildConfigEmbed({ ...DEFAULT_GUILD_SETTINGS, pollCreatorRoleIds: [ROLE_OTHER] }, [ROLE_BACKEND, ROLE_FRONTEND], channels, gamification).toJSON();
 		const text = embedText(embed);
 		for (const expected of [
 			"Kênh tính XP: **tất cả kênh (trừ kênh đã tắt)**",
@@ -1427,48 +1448,110 @@ describe("/config", () =>
 		assert.deepEqual(context.deps.teams.list(GUILD), [ROLE_FRONTEND]);
 	});
 
-	test("admin-role: đặt, chặn @everyone / managed, bỏ trống thì xoá", async () =>
+	test("admin-role: thêm nhiều role, chặn @everyone / managed / role danh hiệu, thêm lại thì báo, bỏ một role, bỏ hết (DEC-044)", async () =>
 	{
-		const { config, context } = createHarness();
-		await rejects(config, { subcommand: "admin-role", options: { role: role(GUILD) } }, "Không thể dùng @everyone làm role admin bot.");
+		const { config, context, tierRoles } = createHarness();
+		const { guildConfig } = context.deps;
+		tierRoles.set(GUILD, "bac-1", ROLE_LUYEN_KHI, ADMIN);
+		await rejects(config, { subcommand: "admin-role", options: { them: role(GUILD) } }, "Không thể dùng @everyone làm role admin bot.");
 		await rejects(
 			config,
-			{ subcommand: "admin-role", options: { role: role(ROLE_OTHER, true) } },
+			{ subcommand: "admin-role", options: { them: role(ROLE_OTHER, true) } },
 			"Không thể dùng role do bot hoặc integration quản lý làm role admin bot.",
 		);
+		const tierRefusal = invoke({ subcommand: "admin-role", options: { them: role(ROLE_LUYEN_KHI) } });
+		await assert.rejects(config.execute(tierRefusal.interaction), /đang là role của bậc danh hiệu/);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, []);
 
-		const set = replyText(await run(config, { subcommand: "admin-role", options: { role: role(ROLE_BACKEND) } }));
-		assert.equal(context.deps.guildConfig.getSettings(GUILD).adminRoleId, ROLE_BACKEND);
-		assert.ok(set.startsWith(`Đã đặt <@&${ROLE_BACKEND}> làm role admin bot.`));
-		assert.ok(set.includes("Server Settings → Integrations"), "phải nhắc cấp quyền dùng lệnh trong Integrations");
-		assert.ok(set.includes("`/admin`") && set.includes("`/config`"));
-		const cleared = await run(config, { subcommand: "admin-role" });
-		assert.equal(context.deps.guildConfig.getSettings(GUILD).adminRoleId, null);
-		assert.ok(replyText(cleared).startsWith("Đã xoá role admin bot."));
+		const first = replyText(await run(config, { subcommand: "admin-role", options: { them: role(ROLE_BACKEND) } }));
+		assert.ok(first.startsWith("Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin."), first);
+		assert.ok(first.includes(`Đã thêm <@&${ROLE_BACKEND}> vào danh sách role admin bot.`), first);
+		assert.ok(first.includes("Server Settings → Integrations"), "phải nhắc cấp quyền dùng lệnh trong Integrations");
+		assert.ok(first.includes("`/admin`") && first.includes("`/config`"));
+		const second = replyText(await run(config, { subcommand: "admin-role", options: { them: role(ROLE_FRONTEND) } }));
+		assert.ok(second.includes(`• Role admin bot: **<@&${ROLE_BACKEND}>, <@&${ROLE_FRONTEND}>**`), second);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_BACKEND, ROLE_FRONTEND]);
+
+		const again = replyText(await run(config, { subcommand: "admin-role", options: { them: role(ROLE_BACKEND) } }));
+		assert.ok(again.startsWith("Không có gì thay đổi:") && again.includes(`Vốn đã là role admin bot: <@&${ROLE_BACKEND}>.`), again);
+		assert.ok(!again.includes("Integrations"), "không thêm role mới thì không nhắc Integrations");
+
+		const swapped = replyText(await run(config, { subcommand: "admin-role", options: { them: role(ROLE_OTHER), bo: role(ROLE_BACKEND) } }));
+		assert.ok(swapped.includes(`Đã thêm <@&${ROLE_OTHER}>`) && swapped.includes(`Đã bỏ <@&${ROLE_BACKEND}> khỏi danh sách role admin bot.`), swapped);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_FRONTEND, ROLE_OTHER]);
+		const missing = replyText(await run(config, { subcommand: "admin-role", options: { bo: role(ROLE_BACKEND) } }));
+		assert.ok(missing.startsWith("Không có gì thay đổi:") && missing.includes(`Vốn không phải role admin bot: <@&${ROLE_BACKEND}>.`), missing);
+
+		const cleared = replyText(await run(config, { subcommand: "admin-role", options: { "bo-het": true } }));
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, []);
+		assert.ok(cleared.includes(`Đã bỏ <@&${ROLE_FRONTEND}>, <@&${ROLE_OTHER}> khỏi danh sách role admin bot.`), cleared);
+		assert.ok(cleared.includes("• Role admin bot: **chưa đặt**") && cleared.includes("Giờ chỉ người có quyền Manage Server là admin bot."), cleared);
+		const audit = context.deps.audit.list(GUILD, 1)[0];
+		assert.deepEqual(audit?.details, { adminRoleIds: [], removedRoles: [ROLE_FRONTEND, ROLE_OTHER] });
 	});
 
-	test("poll: phải chọn ít nhất một giá trị, không vừa đặt vừa xoá role", async () =>
+	test("admin-role: phải chọn ít nhất một option; bo-het đi cùng option khác, hay thêm và bỏ cùng một role, bị từ chối, không ghi gì", async () =>
+	{
+		const { config, context } = createHarness();
+		context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_BACKEND] }, ADMIN);
+		const before = context.deps.audit.list(GUILD, 100).length;
+		await rejects(config, { subcommand: "admin-role" }, ADMIN_ROLE_NO_OPTION);
+		await rejects(config, { subcommand: "admin-role", options: { "bo-het": false } }, ADMIN_ROLE_NO_OPTION);
+		await rejects(config, { subcommand: "admin-role", options: { "bo-het": true, them: role(ROLE_FRONTEND) } }, ADMIN_ROLE_CONFLICT);
+		await rejects(config, { subcommand: "admin-role", options: { "bo-het": true, bo: role(ROLE_BACKEND) } }, ADMIN_ROLE_CONFLICT);
+		await rejects(config, { subcommand: "admin-role", options: { them: role(ROLE_FRONTEND), bo: role(ROLE_FRONTEND) } }, "Không thể vừa thêm vừa bỏ cùng một role.");
+		assert.deepEqual(context.deps.guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_BACKEND]);
+		assert.equal(context.deps.audit.list(GUILD, 100).length, before);
+	});
+
+	test("admin-role: đủ MAX_GRANT_ROLES role thì không thêm được nữa; bỏ bớt trong cùng lệnh thì thêm được", async () =>
+	{
+		const { config, context } = createHarness();
+		const full = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => `5200000000000000${String(index).padStart(2, "0")}`);
+		context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: full }, ADMIN);
+		const refusal = invoke({ subcommand: "admin-role", options: { them: role(ROLE_BACKEND) } });
+		await assert.rejects(config.execute(refusal.interaction), /Chỉ được đặt tối đa 25 role admin bot/);
+		assert.deepEqual(context.deps.guildConfig.getSettings(GUILD).adminRoleIds, full);
+
+		await run(config, { subcommand: "admin-role", options: { them: role(ROLE_BACKEND), bo: role(full[0] ?? "") } });
+		const after = context.deps.guildConfig.getSettings(GUILD).adminRoleIds;
+		assert.equal(after.length, MAX_GRANT_ROLES);
+		assert.ok(after.includes(ROLE_BACKEND) && !after.includes(full[0] ?? ""));
+	});
+
+	test("poll: phải chọn ít nhất một giá trị; xoa-role-tao-vote không đi cùng option role khác; thêm, bỏ một, xoá hết role tạo vote", async () =>
 	{
 		const { config, context } = createHarness();
 		await rejects(config, { subcommand: "poll" }, NO_CHANGE);
 		await rejects(config, { subcommand: "poll", options: { "xoa-role-tao-vote": false } }, NO_CHANGE);
-		await rejects(
-			config,
-			{ subcommand: "poll", options: { "role-tao-vote": role(ROLE_FRONTEND), "xoa-role-tao-vote": true } },
-			"Không thể vừa đặt vừa xoá role tạo vote.",
-		);
-		await rejects(config, { subcommand: "poll", options: { "role-tao-vote": role(GUILD) } }, "Không thể dùng @everyone làm role tạo vote.");
+		await rejects(config, { subcommand: "poll", options: { "role-tao-vote": role(ROLE_FRONTEND), "xoa-role-tao-vote": true } }, POLL_ROLE_CONFLICT);
+		await rejects(config, { subcommand: "poll", options: { "bo-role-tao-vote": role(ROLE_FRONTEND), "xoa-role-tao-vote": true } }, POLL_ROLE_CONFLICT);
+		await rejects(config, { subcommand: "poll", options: { "role-tao-vote": role(GUILD), "xp-mac-dinh": 9 } }, "Không thể dùng @everyone làm role tạo vote.");
+		assert.equal(context.deps.guildConfig.getSettings(GUILD).defaultPollXp, 5, "role sai thì không lưu cả số đi kèm");
 
 		const fake = await run(config, { subcommand: "poll", options: { "xp-mac-dinh": 8, "role-tao-vote": role(ROLE_FRONTEND) } });
-		assert.equal(replyText(fake), `Đã cập nhật cấu hình vote:\n• XP mặc định khi vote: **8 XP**\n• Role tạo vote: **<@&${ROLE_FRONTEND}>**`);
+		assert.equal(replyText(fake), [
+			"Đã cập nhật cấu hình vote:",
+			"• XP mặc định khi vote: **8 XP**",
+			`Đã thêm <@&${ROLE_FRONTEND}> vào danh sách role tạo vote.`,
+			`• Role tạo vote: **<@&${ROLE_FRONTEND}>**`,
+		].join("\n"));
+		context.clock.advance(1000);
+		await run(config, { subcommand: "poll", options: { "role-tao-vote": role(ROLE_BACKEND) } });
 		let settings = context.deps.guildConfig.getSettings(GUILD);
 		assert.equal(settings.defaultPollXp, 8);
-		assert.equal(settings.pollCreatorRoleId, ROLE_FRONTEND);
+		assert.deepEqual(settings.pollCreatorRoleIds, [ROLE_FRONTEND, ROLE_BACKEND], "theo thứ tự được thêm");
 
-		await run(config, { subcommand: "poll", options: { "xoa-role-tao-vote": true } });
+		const removed = replyText(await run(config, { subcommand: "poll", options: { "bo-role-tao-vote": role(ROLE_FRONTEND) } }));
+		assert.equal(removed, `Đã cập nhật cấu hình vote:\nĐã bỏ <@&${ROLE_FRONTEND}> khỏi danh sách role tạo vote.\n• Role tạo vote: **<@&${ROLE_BACKEND}>**`);
+		const unchanged = replyText(await run(config, { subcommand: "poll", options: { "bo-role-tao-vote": role(ROLE_FRONTEND) } }));
+		assert.ok(unchanged.startsWith("Không có gì thay đổi:"), unchanged);
+
+		const cleared = replyText(await run(config, { subcommand: "poll", options: { "xoa-role-tao-vote": true } }));
 		settings = context.deps.guildConfig.getSettings(GUILD);
-		assert.equal(settings.pollCreatorRoleId, null);
+		assert.deepEqual(settings.pollCreatorRoleIds, []);
 		assert.equal(settings.defaultPollXp, 8);
+		assert.ok(cleared.endsWith("• Role tạo vote: **chưa đặt (chỉ admin)**"), cleared);
 	});
 
 	test("contribution: cập nhật điểm mỗi lượt ghi nhận", async () =>

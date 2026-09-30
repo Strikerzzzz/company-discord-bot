@@ -109,7 +109,7 @@ describe("web reset điểm toàn server", () =>
 	test("admin nhờ role admin bot cũng reset được, audit đúng người đó", async () =>
 	{
 		const { harness } = await setup();
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const auth = await login(harness, ROLE_ADMIN_USER);
 		assert.equal((await reset(harness, auth, "xp", RESET_CONFIRMATION)).kind, "ok");
 		assert.equal(harness.services.audit.list(GUILD, 1)[0]?.actorId, ROLE_ADMIN_USER);
@@ -124,7 +124,7 @@ describe("web reset điểm toàn server", () =>
 		assert.equal((await call(harness, `${RESET_URL}/xp`, { form: { ...form, _csrf: auth.csrf } })).status, 403);
 
 		await assert.rejects(login(harness, PLAIN_USER));
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const spec = harness.world.members.get(PLAIN_USER);
 		assert.ok(spec);
 		spec.roleIds = [ROLE_ADMIN_BOT];

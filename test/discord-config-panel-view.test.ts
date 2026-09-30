@@ -17,16 +17,26 @@ import {
 	NO_XP_CHANNEL_WARNING,
 	parseConfigPanelId,
 	POLL_FORM_KEYS,
+	roleListFingerprint,
 	XP_CHANNEL_TYPES,
 	XP_FORM_KEYS,
 } from "../src/discord/views/configPanel";
 import { TIER_SETS } from "../src/modules/activity/tiers";
-import { ChannelSettings, DEFAULT_GUILD_SETTINGS, GuildSettings, SETTING_LIMITS, XP_CHANNEL_MODES, XpChannelMode } from "../src/modules/guild-config/types";
+import {
+	ChannelSettings,
+	DEFAULT_GUILD_SETTINGS,
+	GuildSettings,
+	MAX_GRANT_ROLES,
+	SETTING_LIMITS,
+	XP_CHANNEL_MODES,
+	XpChannelMode,
+} from "../src/modules/guild-config/types";
 import { MAX_TEAMS } from "../src/modules/team/TeamService";
 import { CHANNEL_BOT, CHANNEL_GENERAL, ROLE_BACKEND, ROLE_FRONTEND } from "./helpers";
 
 const ROLE_ADMIN = "600000000000000001";
 const ROLE_POLL = "600000000000000002";
+const ROLE_ADMIN_2 = "600000000000000003";
 const CHANNEL_BOARD = "700000000000000001";
 const CHANNEL_MUTED = "400000000000000003";
 const NOTICE = "Đã bật XP cho 3 kênh: <#400000000000000001>, <#400000000000000002>, <#400000000000000003>.";
@@ -63,8 +73,8 @@ function fullData(mode: XpChannelMode): ConfigPanelData
 			defaultPollXp: 8,
 			pollXpDailyCap: 0,
 			contributionVotePoints: 2,
-			adminRoleId: ROLE_ADMIN,
-			pollCreatorRoleId: ROLE_POLL,
+			adminRoleIds: [ROLE_ADMIN, ROLE_ADMIN_2],
+			pollCreatorRoleIds: [ROLE_POLL],
 		}),
 		channels: [
 			OWN_XP_CHANNEL,
@@ -80,8 +90,14 @@ function fullData(mode: XpChannelMode): ConfigPanelData
 }
 
 const EXTREME_CHANNELS = 200;
+/** Đủ MAX_GRANT_ROLES role admin và role tạo vote, ID dài nhất, đều không còn trong server (thêm dòng cảnh báo liệt kê từng role). */
+const EXTREME_ADMIN_ROLES = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => longId(6, index));
+const EXTREME_POLL_ROLES = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => longId(8, index));
 
-/** 200 kênh đều có XP và cooldown riêng (một nửa bật, một nửa tắt), 25 team, ID dài nhất, số lớn nhất, notice dài nhất. */
+/**
+ * 200 kênh đều có XP và cooldown riêng (một nửa bật, một nửa tắt), 25 team, 25 role admin và 25 role tạo vote (không còn trong
+ * server), ID dài nhất, số lớn nhất, notice dài nhất.
+ */
 function extremeData(mode: XpChannelMode): ConfigPanelData
 {
 	const channels: ChannelSettings[] = Array.from({ length: EXTREME_CHANNELS }, (_, index) => ({
@@ -99,14 +115,15 @@ function extremeData(mode: XpChannelMode): ConfigPanelData
 			defaultPollXp: SETTING_LIMITS.defaultPollXp.max,
 			pollXpDailyCap: SETTING_LIMITS.pollXpDailyCap.max,
 			contributionVotePoints: SETTING_LIMITS.contributionVotePoints.max,
-			adminRoleId: longId(6, 1),
-			pollCreatorRoleId: longId(6, 2),
+			adminRoleIds: EXTREME_ADMIN_ROLES,
+			pollCreatorRoleIds: EXTREME_POLL_ROLES,
 		}),
 		channels,
 		teams: Array.from({ length: MAX_TEAMS }, (_, index) => longId(5, index)),
 		boardChannelId: longId(7, 1),
 		tierSet: TIER_SETS["kiem-hiep"],
 		tierRoleCount: 8,
+		missingIds: new Set([...EXTREME_ADMIN_ROLES, ...EXTREME_POLL_ROLES]),
 		notice: "Đã cập nhật <#12345678901234567890>. ".repeat(100).slice(0, CONFIG_PANEL_NOTICE_MAX),
 	};
 }
@@ -326,7 +343,7 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 			"• Điểm mỗi lượt ghi nhận: **2 điểm**",
 			`• Team: **2/${MAX_TEAMS}**`,
 			`• Bảng vàng: <#${CHANNEL_BOARD}>`,
-			`• Role admin bot: **<@&${ROLE_ADMIN}>**`,
+			`• Role admin bot: **<@&${ROLE_ADMIN}>, <@&${ROLE_ADMIN_2}>**`,
 			"• Danh hiệu: bộ **Tu tiên** · role đã gán **5/8**",
 			"-# Chọn mục ở menu trên để sửa. Các lệnh gõ tay `/config …` vẫn dùng được.",
 		])
@@ -470,7 +487,7 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 		assert.ok(!flatten(on).some(node => node.custom_id === configPanelId({ type: "announce", enabled: true })));
 	});
 
-	test("vote và contribution: dòng cấu hình, nút sửa số, RoleSelect một role điền sẵn role tạo vote; drawnRoleId khớp settings", () =>
+	test("vote và contribution: dòng cấu hình, nút sửa số, RoleSelect nhiều role điền sẵn các role tạo vote; vân tay khớp settings", () =>
 	{
 		const panel = panelOf("poll", fullData("all"));
 		const text = panelText(panel);
@@ -479,17 +496,18 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 			assert.ok(text.includes(expected), expected);
 		}
 		assert.equal(nodeById(panel, configPanelId({ type: "pollForm" })).label, "✏️ Sửa số");
-		const select = nodeById(panel, configPanelId({ type: "pollRole", drawnRoleId: ROLE_POLL }));
+		const select = nodeById(panel, configPanelId({ type: "pollRoles", fingerprint: roleListFingerprint([ROLE_POLL]) }));
 		assert.equal(select.type, ComponentType.RoleSelect);
 		assert.equal(select.min_values, 0);
-		assert.equal(select.max_values, 1);
+		assert.equal(select.max_values, MAX_GRANT_ROLES);
 		assert.deepEqual(select.default_values, [{ id: ROLE_POLL, type: "role" }]);
-		assert.equal(select.placeholder, "Role được tạo vote (bỏ chọn = chỉ admin)");
-		assert.deepEqual(parseConfigPanelId(select.custom_id ?? ""), { type: "pollRole", drawnRoleId: ROLE_POLL });
+		assert.equal(select.placeholder, "Role được tạo vote (chọn nhiều; bỏ chọn hết = chỉ admin)");
+		assert.deepEqual(parseConfigPanelId(select.custom_id ?? ""), { type: "pollRoles", fingerprint: roleListFingerprint([ROLE_POLL]) });
 
-		const empty = nodeById(panelOf("poll", emptyData("all")), configPanelId({ type: "pollRole", drawnRoleId: null }));
+		const emptyPanel = panelOf("poll", emptyData("all"));
+		const empty = nodeById(emptyPanel, configPanelId({ type: "pollRoles", fingerprint: roleListFingerprint([]) }));
 		assert.equal(empty.default_values, undefined);
-		assert.deepEqual(parseConfigPanelId(empty.custom_id ?? ""), { type: "pollRole", drawnRoleId: null });
+		assert.ok(panelText(emptyPanel).includes("• Role tạo vote: **chưa đặt (chỉ admin)**"));
 	});
 
 	test("Bảng vàng và quyền: kênh điền sẵn, nút tắt, role admin điền sẵn, nút mở bảng danh hiệu", () =>
@@ -497,7 +515,7 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 		const panel = panelOf("board", fullData("all"));
 		const text = panelText(panel);
 		assert.ok(text.includes(`<#${CHANNEL_BOARD}>`), text);
-		assert.ok(text.includes(`• Role admin bot: **<@&${ROLE_ADMIN}>**`), text);
+		assert.ok(text.includes(`• Role admin bot: **<@&${ROLE_ADMIN}>, <@&${ROLE_ADMIN_2}>**`), text);
 		assert.ok(text.includes("Manage Server") && text.includes("Server Settings → Integrations"), text);
 		assert.ok(text.includes("bộ **Tu tiên** · role đã gán **5/8**"), text);
 
@@ -513,23 +531,25 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 		assert.equal(off.style, ButtonStyle.Danger);
 		assert.equal(off.disabled ?? false, false);
 
-		const admin = nodeById(panel, configPanelId({ type: "adminRole", drawnRoleId: ROLE_ADMIN }));
+		const fingerprint = roleListFingerprint([ROLE_ADMIN, ROLE_ADMIN_2]);
+		const admin = nodeById(panel, configPanelId({ type: "adminRoles", fingerprint }));
 		assert.equal(admin.type, ComponentType.RoleSelect);
 		assert.equal(admin.min_values, 0);
-		assert.equal(admin.max_values, 1);
-		assert.deepEqual(admin.default_values, [{ id: ROLE_ADMIN, type: "role" }]);
-		assert.deepEqual(parseConfigPanelId(admin.custom_id ?? ""), { type: "adminRole", drawnRoleId: ROLE_ADMIN });
+		assert.equal(admin.max_values, MAX_GRANT_ROLES);
+		assert.deepEqual(admin.default_values, [{ id: ROLE_ADMIN, type: "role" }, { id: ROLE_ADMIN_2, type: "role" }]);
+		assert.equal(admin.placeholder, "Role admin bot (chọn nhiều; bỏ chọn hết = chỉ người có Manage Server)");
+		assert.deepEqual(parseConfigPanelId(admin.custom_id ?? ""), { type: "adminRoles", fingerprint });
 
 		assert.equal(nodeById(panel, configPanelId({ type: "tierPanel" })).label, "🏅 Mở bảng danh hiệu");
 	});
 
-	test("Bảng vàng và quyền khi chưa cấu hình: không điền sẵn, nút tắt bị khoá, role admin mang none", () =>
+	test("Bảng vàng và quyền khi chưa cấu hình: không điền sẵn, nút tắt bị khoá, ô role admin mang vân tay danh sách rỗng", () =>
 	{
 		const panel = panelOf("board", emptyData("all"));
 		assert.ok(panelText(panel).includes("Đang tắt"));
 		assert.equal(nodeById(panel, configPanelId({ type: "board" })).default_values, undefined);
 		assert.equal(nodeById(panel, configPanelId({ type: "boardOff" })).disabled, true);
-		const admin = nodeById(panel, configPanelId({ type: "adminRole", drawnRoleId: null }));
+		const admin = nodeById(panel, configPanelId({ type: "adminRoles", fingerprint: roleListFingerprint([]) }));
 		assert.equal(admin.default_values, undefined);
 		assert.ok(panelText(panel).includes("• Role admin bot: **chưa đặt**"));
 	});

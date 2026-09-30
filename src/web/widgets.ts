@@ -18,9 +18,10 @@ export const SELECT_ALL_PARAM = "chon";
  */
 export type BulkSelection = "all" | "none" | null;
 
-export function bulkSelection(query: URLSearchParams): BulkSelection
+/** Chọn hàng loạt từ query; trang có nhiều bảng ô tick dùng mỗi bảng một tên tham số `param` (ví dụ trang Quyền). */
+export function bulkSelection(query: URLSearchParams, param = SELECT_ALL_PARAM): BulkSelection
 {
-	const value = query.get(SELECT_ALL_PARAM);
+	const value = query.get(param);
 	if (value === "tat-ca") return "all";
 	if (value === "bo-het") return "none";
 	return null;
@@ -36,11 +37,11 @@ export function bulkChecked(selection: BulkSelection, saved: boolean, selectable
 
 /**
  * Link "✅ Chọn tất cả · ⬜ Bỏ chọn tất cả" cho bảng ô tick của trang `path`; đang chọn hàng loạt thì thêm lời nhắc chưa lưu và
- * link về như đang lưu.
+ * link về như đang lưu. `param` là tên tham số của bảng (như bulkSelection).
  */
-export function selectAllLinks(ctx: Pick<GuildPageContext, "guild">, path: string, selection: BulkSelection): RawHtml
+export function selectAllLinks(ctx: Pick<GuildPageContext, "guild">, path: string, selection: BulkSelection, param = SELECT_ALL_PARAM): RawHtml
 {
-	const link = (value: string): string => guildUrl(ctx, `${path}?${SELECT_ALL_PARAM}=${value}`);
+	const link = (value: string): string => guildUrl(ctx, `${path}?${param}=${value}`);
 	const pending = selection === null
 		? ""
 		: html`<div class="warn-box">${selection === "all" ? "Đã tick sẵn mọi ô." : "Đã bỏ tick mọi ô."} Bot <strong>chưa lưu</strong> gì: xem lại rồi bấm Lưu, hoặc <a href="${guildUrl(ctx, path)}">về như đang lưu</a>.</div>`;

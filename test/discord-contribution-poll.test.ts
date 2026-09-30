@@ -812,7 +812,7 @@ describe("/poll", () =>
 
 	test("create: người không có quyền bị từ chối, không tạo vote", async () =>
 	{
-		const { client, polls } = setup({ pollCreatorRoleId: ROLE_BACKEND });
+		const { client, polls } = setup({ pollCreatorRoleIds: [ROLE_BACKEND] });
 		const { interaction, replies } = chatInput("create", createValues, { roleIds: [ROLE_OTHER] });
 
 		await assert.rejects(new PollCmd(client).execute(interaction), userError("Bạn không có quyền tạo vote."));
@@ -822,7 +822,7 @@ describe("/poll", () =>
 
 	test("create: role tạo vote nhưng không phải admin thì không được đặt XP riêng", async () =>
 	{
-		const { client, polls } = setup({ pollCreatorRoleId: ROLE_BACKEND });
+		const { client, polls } = setup({ pollCreatorRoleIds: [ROLE_BACKEND] });
 		const { interaction } = chatInput("create", { ...createValues, xp: 50 }, { roleIds: [ROLE_BACKEND] });
 
 		await assert.rejects(new PollCmd(client).execute(interaction), userError("Chỉ admin mới đặt được XP riêng cho vote."));
@@ -847,7 +847,7 @@ describe("/poll", () =>
 
 	test("create: role tạo vote dùng XP mặc định của guild; trả lời công khai rồi lưu vị trí message", async () =>
 	{
-		const { client, polls } = setup({ pollCreatorRoleId: ROLE_BACKEND, defaultPollXp: 7 });
+		const { client, polls } = setup({ pollCreatorRoleIds: [ROLE_BACKEND], defaultPollXp: 7 });
 		const { interaction, replies } = chatInput("create", createValues, { userId: USER_B, roleIds: [ROLE_BACKEND] });
 
 		await new PollCmd(client).execute(interaction);
@@ -878,7 +878,7 @@ describe("/poll", () =>
 		assert.equal(byPermission.polls.created[0].multiSelect, true);
 		assert.equal(byPermission.polls.created[0].durationMinutes, 60);
 
-		const byRole = setup({ adminRoleId: ROLE_FRONTEND });
+		const byRole = setup({ adminRoleIds: [ROLE_FRONTEND] });
 		const second = chatInput("create", { ...createValues, xp: 0 }, { roleIds: [ROLE_FRONTEND] });
 		await new PollCmd(byRole.client).execute(second.interaction);
 		assert.equal(byRole.polls.created[0].xpReward, 0);
@@ -903,7 +903,7 @@ describe("/poll", () =>
 		await new PollCmd(unlimited.client).execute(noCap.interaction);
 		assert.deepEqual(noCap.followUps, [], "0 = không giới hạn");
 
-		const defaultOverCap = setup({ defaultPollXp: 30, pollXpDailyCap: 25, pollCreatorRoleId: ROLE_BACKEND });
+		const defaultOverCap = setup({ defaultPollXp: 30, pollXpDailyCap: 25, pollCreatorRoleIds: [ROLE_BACKEND] });
 		const byCreator = chatInput("create", createValues, { roleIds: [ROLE_BACKEND] });
 		await new PollCmd(defaultOverCap.client).execute(byCreator.interaction);
 		assert.equal(byCreator.followUps.length, 1, "XP mặc định của server cũng có thể vượt giới hạn");
@@ -1027,7 +1027,7 @@ describe("/poll", () =>
 
 	test("results: kênh của vote không còn thì chỉ admin xem được", async () =>
 	{
-		const { client, polls } = setup({ adminRoleId: ROLE_BACKEND });
+		const { client, polls } = setup({ adminRoleIds: [ROLE_BACKEND] });
 		polls.stored.set(5, makePoll([3, 1], { channelId: "400000000000000404", messageId: MESSAGE_ID }));
 		const command = new PollCmd(client);
 
@@ -1171,7 +1171,7 @@ describe("/contribution", () =>
 
 	test("view: đóng góp ở kênh riêng tư chỉ người xem được kênh mới thấy; người khác nhận thông báo như không tồn tại", async () =>
 	{
-		const { client, contributions } = setup({ adminRoleId: ROLE_BACKEND });
+		const { client, contributions } = setup({ adminRoleIds: [ROLE_BACKEND] });
 		contributions.stored.set(7, makeContribution({ title: "Kế hoạch tái cấu trúc", channelId: CHANNEL_PRIVATE, messageId: MESSAGE_ID }));
 		const command = new ContributionCmd(client);
 

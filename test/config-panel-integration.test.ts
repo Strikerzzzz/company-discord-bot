@@ -8,6 +8,7 @@ import {
 	ConfigPanelAction,
 	ConfigPanelData,
 	parseConfigPanelId,
+	roleListFingerprint,
 	XP_CHANNEL_TYPES,
 } from "../src/discord/views/configPanel";
 import { TIER_SETS } from "../src/modules/activity/tiers";
@@ -16,6 +17,7 @@ import { DEFAULT_GUILD_SETTINGS, XpChannelMode } from "../src/modules/guild-conf
 const ROLE_ADMIN = "600000000000000001";
 const ROLE_POLL = "600000000000000002";
 const ROLE_TEAM = "600000000000000003";
+const ROLE_ADMIN_2 = "600000000000000004";
 const CHANNEL_A = "700000000000000001";
 const CHANNEL_B = "700000000000000002";
 
@@ -69,10 +71,10 @@ const EXPECTED_TYPE: Readonly<Record<ConfigPanelAction["type"], number | null>> 
 	announce: ComponentType.Button,
 	xpForm: ComponentType.Button,
 	pollForm: ComponentType.Button,
-	pollRole: ComponentType.RoleSelect,
+	pollRoles: ComponentType.RoleSelect,
 	board: ComponentType.ChannelSelect,
 	boardOff: ComponentType.Button,
-	adminRole: ComponentType.RoleSelect,
+	adminRoles: ComponentType.RoleSelect,
 	tierPanel: ComponentType.Button,
 	xpSave: null,
 	pollSave: null,
@@ -81,7 +83,7 @@ const EXPECTED_TYPE: Readonly<Record<ConfigPanelAction["type"], number | null>> 
 function data(mode: XpChannelMode): ConfigPanelData
 {
 	return {
-		settings: { ...DEFAULT_GUILD_SETTINGS, xpChannelMode: mode, adminRoleId: ROLE_ADMIN, pollCreatorRoleId: ROLE_POLL },
+		settings: { ...DEFAULT_GUILD_SETTINGS, xpChannelMode: mode, adminRoleIds: [ROLE_ADMIN, ROLE_ADMIN_2], pollCreatorRoleIds: [ROLE_POLL] },
 		channels: [
 			{ channelId: CHANNEL_A, xpEnabled: true, xpPerMessage: 20, xpCooldownSeconds: null },
 			{ channelId: CHANNEL_B, xpEnabled: false, xpPerMessage: null, xpCooldownSeconds: null },
@@ -95,9 +97,9 @@ function data(mode: XpChannelMode): ConfigPanelData
 
 describe("bảng cấu hình: role/kênh đã lưu nhưng không còn trong server", () =>
 {
-	test("không điền sẵn vào menu, hiện cảnh báo; customId vẫn mang role lúc vẽ để bỏ chọn đúng", () =>
+	test("không điền sẵn vào menu, hiện cảnh báo; customId vẫn mang vân tay của cả danh sách lúc vẽ", () =>
 	{
-		const missing: ConfigPanelData = { ...data("all"), missingIds: new Set([ROLE_ADMIN, ROLE_POLL, ROLE_TEAM, CHANNEL_A]) };
+		const missing: ConfigPanelData = { ...data("all"), missingIds: new Set([ROLE_ADMIN, ROLE_ADMIN_2, ROLE_POLL, ROLE_TEAM, CHANNEL_A]) };
 		const poll = buildConfigPanel("poll", missing).toJSON();
 		const board = buildConfigPanel("board", missing).toJSON();
 		const teams = JSON.stringify(buildConfigPanel("teams", missing).toJSON());
@@ -109,12 +111,19 @@ describe("bảng cấu hình: role/kênh đã lưu nhưng không còn trong serv
 		}
 		assert.ok(JSON.stringify(board).includes("Bot không còn thấy kênh này"));
 		assert.ok(teams.includes(`<@&${ROLE_TEAM}> ⚠️ không còn trong server`));
-		const adminSelect = interactives(board).find(component => component.customId.startsWith("cfgui:admin:"));
-		assert.equal(adminSelect?.customId, `cfgui:admin:${ROLE_ADMIN}`);
+		assert.ok(JSON.stringify(board).includes(`Role đã lưu không còn trong server: <@&${ROLE_ADMIN}>, <@&${ROLE_ADMIN_2}>.`));
+		assert.ok(JSON.stringify(poll).includes(`Role đã lưu không còn trong server: <@&${ROLE_POLL}>.`));
+		const adminSelect = interactives(board).find(component => component.customId.startsWith("cfgui:admins:"));
+		assert.equal(adminSelect?.customId, `cfgui:admins:${roleListFingerprint([ROLE_ADMIN, ROLE_ADMIN_2])}`);
 
 		const present = JSON.stringify(buildConfigPanel("board", data("all")).toJSON());
 		assert.ok(present.includes("default_values"), "còn trong server thì vẫn điền sẵn");
 		assert.ok(!present.includes("không còn"));
+
+		const partly = buildConfigPanel("board", { ...data("all"), missingIds: new Set([ROLE_ADMIN_2]) }).toJSON();
+		const text = JSON.stringify(partly);
+		assert.ok(text.includes(`{"id":"${ROLE_ADMIN}","type":"role"}`) && !text.includes(`{"id":"${ROLE_ADMIN_2}","type":"role"}`), "chỉ điền sẵn role còn trong server");
+		assert.ok(text.includes(`Role đã lưu không còn trong server: <@&${ROLE_ADMIN_2}>.`));
 	});
 });
 
@@ -143,18 +152,19 @@ describe("bảng cấu hình: giao diện (agent A) khớp handler (agent B)", (
 						assert.deepEqual(component.channelTypes, [...BOARD_CHANNEL_TYPES]);
 						assert.equal(component.maxValues, 1);
 					}
-					if (action.type === "pollRole" || action.type === "adminRole")
+					if (action.type === "pollRoles" || action.type === "adminRoles")
 					{
-						assert.equal(component.minValues, 0, "bỏ chọn phải gửi được thao tác (min_values = 0)");
-						assert.equal(component.maxValues, 1);
-						assert.equal(action.drawnRoleId, action.type === "pollRole" ? ROLE_POLL : ROLE_ADMIN);
+						assert.equal(component.minValues, 0, "bỏ chọn hết phải gửi được thao tác (min_values = 0)");
+						assert.equal(component.maxValues, 25);
+						const drawn = action.type === "pollRoles" ? [ROLE_POLL] : [ROLE_ADMIN, ROLE_ADMIN_2];
+						assert.equal(action.fingerprint, roleListFingerprint(drawn));
 					}
 					if (action.type === "announce") assert.equal(action.enabled, !DEFAULT_GUILD_SETTINGS.levelUpAnnouncements);
 					if (action.type === "mode") assert.equal(component.disabled === true, action.mode === mode, "nút chế độ đang dùng bị khoá");
 				}
 			}
 			const reachable: readonly ConfigPanelAction["type"][] = [
-				"nav", "mode", "channels", "teams", "announce", "xpForm", "pollForm", "pollRole", "board", "boardOff", "adminRole", "tierPanel",
+				"nav", "mode", "channels", "teams", "announce", "xpForm", "pollForm", "pollRoles", "board", "boardOff", "adminRoles", "tierPanel",
 			];
 			for (const type of reachable) assert.ok(seen.has(type), `không có component nào cho thao tác ${type}`);
 		});

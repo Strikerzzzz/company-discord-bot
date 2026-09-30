@@ -288,9 +288,9 @@ describe("web: trang Vote — đóng vote", () =>
 		assert.equal(services.polls.get(GUILD, poll.id)?.closedAt, null);
 
 		await assert.rejects(login(harness, PLAIN_USER), "thành viên thường không đăng nhập được");
-		services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const former = await login(harness, ROLE_ADMIN_USER);
-		services.guildConfig.updateSettings(GUILD, { adminRoleId: null }, ADMIN_USER);
+		services.guildConfig.updateSettings(GUILD, { adminRoleIds: [] }, ADMIN_USER);
 		assert.equal((await call(harness, pageUrl("/polls"), { cookies: former.cookies })).status, 403);
 		const denied = await call(harness, pageUrl("/polls/close"), { cookies: former.cookies, form: withCsrf(former, { id: String(poll.id), "xac-nhan": "1" }) });
 		assert.equal(denied.status, 403);

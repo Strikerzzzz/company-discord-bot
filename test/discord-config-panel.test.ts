@@ -17,6 +17,7 @@ import {
 	INVALID_CONFIG_PANEL,
 	pageOfAction,
 	parseConfigPanelId,
+	roleListFingerprint,
 	XpFormValues,
 } from "../src/discord/views/configPanel";
 import { INVALID_PANEL_ACTION, TierPanelData, tierPanelReply, tierPanelUpdate } from "../src/discord/views/tierPanel";
@@ -24,13 +25,14 @@ import InteractionCreate from "../src/events/interactionCreate";
 import ButtonHandler from "../src/handlers/ButtonHandler";
 import ConfigCmd, {
 	BOARD_CHANNEL_NOT_VISIBLE,
-	CONFIG_ROLE_CHANGED,
+	CONFIG_ROLES_CHANGED,
 	FORM_UNCHANGED,
 	SELECT_AT_LEAST_ONE_ROLE,
 	SELECTED_CHANNEL_UNAVAILABLE,
 } from "../src/interactions/commands/config";
 import { TierRoleService } from "../src/modules/gamification/TierRoleService";
 import { LiveBoard, LiveBoardService } from "../src/modules/live-board/LiveBoardService";
+import { MAX_GRANT_ROLES } from "../src/modules/guild-config/types";
 import { MAX_TEAMS } from "../src/modules/team/TeamService";
 import { AppServices } from "../src/services";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, createTestContext, GUILD, TestContext, USER_A } from "./helpers";
@@ -410,9 +412,9 @@ function panelData(harness: Harness, notice: string | null = null): ConfigPanelD
 	const teamIds = teams.list(GUILD);
 	const boardChannelId = harness.liveBoards.get(GUILD)?.channelId ?? null;
 	const missingIds = new Set<string>();
-	for (const roleId of [settings.adminRoleId, settings.pollCreatorRoleId, ...teamIds])
+	for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...teamIds])
 	{
-		if (roleId !== null && !harness.world.roles.has(roleId)) missingIds.add(roleId);
+		if (!harness.world.roles.has(roleId)) missingIds.add(roleId);
 	}
 	if (boardChannelId !== null && !harness.world.channels.has(boardChannelId)) missingIds.add(boardChannelId);
 	return {
@@ -515,7 +517,10 @@ describe("bảng cấu hình: mở bảng, định tuyến theo namespace, quy�
 			{ kind: "string", id: id({ type: "mode", mode: "selected" }), values: ["home"] },
 			{ kind: "role", id: id({ type: "channels", enabled: true }), values: [ROLE_A] },
 			{ kind: "channel", id: id({ type: "teams", add: true }), values: [CHANNEL_GENERAL] },
-			{ kind: "channel", id: id({ type: "adminRole", drawnRoleId: null }), values: [CHANNEL_GENERAL] },
+			{ kind: "channel", id: id({ type: "adminRoles", fingerprint: roleListFingerprint([]) }), values: [CHANNEL_GENERAL] },
+			{ kind: "button", id: id({ type: "pollRoles", fingerprint: roleListFingerprint([]) }) },
+			{ kind: "role", id: "cfgui:admin:none", values: [ROLE_A] },
+			{ kind: "role", id: `cfgui:pollrole:${ROLE_A}`, values: [] },
 			{ kind: "role", id: id({ type: "board" }), values: [ROLE_A] },
 			{ kind: "modal", id: id({ type: "mode", mode: "selected" }), fields },
 			{ kind: "modal", id: id({ type: "xpForm" }), fields },
@@ -542,8 +547,8 @@ describe("bảng cấu hình: mở bảng, định tuyến theo namespace, quy�
 			button({ type: "announce", enabled: false }),
 			button({ type: "xpForm" }),
 			{ kind: "modal", id: id({ type: "pollSave", drawn: { defaultPollXp: 5, pollXpDailyCap: 25, contributionVotePoints: 1 } }), fields: {} },
-			{ kind: "role", id: id({ type: "adminRole", drawnRoleId: null }), values: [ROLE_A] },
-			{ kind: "role", id: id({ type: "pollRole", drawnRoleId: null }), values: [ROLE_A] },
+			{ kind: "role", id: id({ type: "adminRoles", fingerprint: roleListFingerprint([]) }), values: [ROLE_A] },
+			{ kind: "role", id: id({ type: "pollRoles", fingerprint: roleListFingerprint([]) }), values: [ROLE_A] },
 			{ kind: "channel", id: id({ type: "board" }), values: [CHANNEL_BOT] },
 			button({ type: "boardOff" }),
 			button({ type: "tierPanel" }),
@@ -562,7 +567,7 @@ describe("bảng cấu hình: mở bảng, định tuyến theo namespace, quy�
 	test("admin bot nhờ role admin (không có Manage Server) dùng được bảng", async () =>
 	{
 		const harness = createHarness();
-		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleId: ADMIN_ROLE }, ADMIN);
+		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: [ADMIN_ROLE] }, ADMIN);
 		const calls = await dispatch(harness, button({ type: "mode", mode: "selected" }, { caller: { id: USER_A, manageGuild: false, roleIds: [ADMIN_ROLE] } }));
 		assert.deepEqual(methods(calls), ["update"]);
 		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).xpChannelMode, "selected");
@@ -826,100 +831,180 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 	});
 });
 
-// ---------- Role tạo vote và role admin ----------
+// ---------- Role tạo vote và role admin (chọn nhiều, DEC-044) ----------
 
-describe("bảng cấu hình: role tạo vote và role admin bot", () =>
+/** Ô chọn nhiều role của bảng vẽ từ danh sách `drawn` (vân tay lúc vẽ), gửi các role đang chọn `values`. */
+function grantsCall(type: "pollRoles" | "adminRoles", drawn: readonly string[], values: string[], caller?: CallerSpec): Call
 {
-	test("role tạo vote: chọn là đặt; bỏ chọn khi vẫn đúng role lúc vẽ bảng là xoá; vốn chưa đặt thì không ghi", async () =>
+	return { kind: "role", id: id({ type, fingerprint: roleListFingerprint(drawn) }), values, caller };
+}
+
+const INTEGRATION_HINT = "⚠️ Lưu ý: `/admin` và `/config` mặc định chỉ dành cho người có quyền Manage Server; Discord chặn những người khác "
+	+ "trước khi lệnh tới bot. Để role này dùng được, vào **Server Settings → Integrations → chọn bot** rồi cho phép role này dùng `/admin` và `/config`.";
+
+describe("bảng cấu hình: role tạo vote và role admin bot (chọn nhiều)", () =>
+{
+	test("role tạo vote: chọn nhiều role là đặt cả danh sách; bỏ chọn một role là bỏ role đó; bỏ chọn hết là chỉ admin", async () =>
 	{
 		const harness = createHarness();
 		const { guildConfig } = harness.context.deps;
 
-		const set = await dispatch(harness, { kind: "role", id: id({ type: "pollRole", drawnRoleId: null }), values: [ROLE_A] });
+		const set = await dispatch(harness, grantsCall("pollRoles", [], [ROLE_B, ROLE_A]));
 		assert.deepEqual(methods(set), ["update"]);
-		assert.equal(guildConfig.getSettings(GUILD).pollCreatorRoleId, ROLE_A);
-		assertPanel(harness, set[0], "poll", `Đã cập nhật cấu hình vote:\n• Role tạo vote: **<@&${ROLE_A}>**`);
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, [ROLE_A, ROLE_B]);
+		assertPanel(harness, set[0], "poll", `Đã cập nhật cấu hình vote:\nĐã thêm <@&${ROLE_B}>, <@&${ROLE_A}> vào danh sách role tạo vote.\n`
+			+ `• Role tạo vote: **<@&${ROLE_A}>, <@&${ROLE_B}>**`);
 
-		const clear = await dispatch(harness, { kind: "role", id: id({ type: "pollRole", drawnRoleId: ROLE_A }), values: [] });
-		assert.equal(guildConfig.getSettings(GUILD).pollCreatorRoleId, null);
-		assertPanel(harness, clear[0], "poll", "Đã cập nhật cấu hình vote:\n• Role tạo vote: **chưa đặt (chỉ admin)**");
+		const dropOne = await dispatch(harness, grantsCall("pollRoles", [ROLE_A, ROLE_B], [ROLE_B]));
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, [ROLE_B]);
+		assertPanel(harness, dropOne[0], "poll", `Đã cập nhật cấu hình vote:\nĐã bỏ <@&${ROLE_A}> khỏi danh sách role tạo vote.\n• Role tạo vote: **<@&${ROLE_B}>**`);
 
-		const again = await dispatch(harness, { kind: "role", id: id({ type: "pollRole", drawnRoleId: null }), values: [] });
+		const clear = await dispatch(harness, grantsCall("pollRoles", [ROLE_B], []));
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, []);
+		assertPanel(harness, clear[0], "poll", `Đã cập nhật cấu hình vote:\nĐã bỏ <@&${ROLE_B}> khỏi danh sách role tạo vote.\n• Role tạo vote: **chưa đặt (chỉ admin)**`);
+
+		const again = await dispatch(harness, grantsCall("pollRoles", [], []));
 		assertPanel(harness, again[0], "poll", "Không có gì thay đổi:\n• Role tạo vote: **chưa đặt (chỉ admin)**");
-		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ pollCreatorRoleId: ROLE_A }, { pollCreatorRoleId: null }]);
+		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [
+			{ pollCreatorRoleIds: [ROLE_A, ROLE_B], addedRoles: [ROLE_B, ROLE_A] },
+			{ pollCreatorRoleIds: [ROLE_B], removedRoles: [ROLE_A] },
+			{ pollCreatorRoleIds: [], removedRoles: [ROLE_B] },
+		]);
 	});
 
-	test("chọn lại đúng role đang đặt (bảng cũ hoặc bấm nhầm): không ghi, không audit, báo không có gì thay đổi", async () =>
+	test("chọn đúng danh sách đang đặt: không ghi, không audit, báo không có gì thay đổi", async () =>
 	{
 		const harness = createHarness();
-		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_A }, USER_A);
-		const same = await dispatch(harness, { kind: "role", id: id({ type: "adminRole", drawnRoleId: null }), values: [ROLE_A] });
+		harness.context.deps.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_A, ROLE_B] }, USER_A);
+		const same = await dispatch(harness, grantsCall("adminRoles", [ROLE_B, ROLE_A], [ROLE_B, ROLE_A]));
 		assert.deepEqual(methods(same), ["update"]);
-		assertPanel(harness, same[0], "board", `Không có gì thay đổi:\n• Role admin bot: **<@&${ROLE_A}>**`);
-		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ adminRoleId: ROLE_A }]);
-	});
-
-	test("bỏ chọn trên bảng cũ (role đã bị đổi sau khi vẽ): vẽ lại bảng theo dữ liệu mới, báo riêng, không xoá", async () =>
-	{
-		const harness = createHarness();
-		const { guildConfig } = harness.context.deps;
-		guildConfig.updateSettings(GUILD, { pollCreatorRoleId: ROLE_B, adminRoleId: ROLE_B }, USER_A);
-
-		for (const action of [
-			{ type: "pollRole", drawnRoleId: ROLE_A },
-			{ type: "pollRole", drawnRoleId: null },
-			{ type: "adminRole", drawnRoleId: ROLE_A },
-			{ type: "adminRole", drawnRoleId: null },
-		] as const)
-		{
-			const calls = await dispatch(harness, { kind: "role", id: id(action), values: [] });
-			assert.deepEqual(methods(calls), ["update", "followUp"], id(action));
-			assertPanel(harness, calls[0], action.type === "pollRole" ? "poll" : "board");
-			assert.equal(privateText(calls[1]), CONFIG_ROLE_CHANGED);
-		}
-		const settings = guildConfig.getSettings(GUILD);
-		assert.equal(settings.pollCreatorRoleId, ROLE_B);
-		assert.equal(settings.adminRoleId, ROLE_B);
+		assertPanel(harness, same[0], "board", `Không có gì thay đổi:\n• Role admin bot: **<@&${ROLE_A}>, <@&${ROLE_B}>**`);
 		assert.equal(audits(harness.context, "config.update").length, 1);
 	});
 
-	test("role admin bot: đặt kèm nhắc cho phép role trong Integrations; bỏ chọn khi vẫn đúng role lúc vẽ bảng là xoá", async () =>
+	test("bảng cũ (danh sách đã bị đổi sau khi vẽ): vẽ lại bảng theo dữ liệu mới, báo riêng, không ghi gì", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+		guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: [ROLE_B], adminRoleIds: [ROLE_A, ROLE_B] }, USER_A);
+
+		const stale: Call[] = [
+			grantsCall("pollRoles", [ROLE_A], [ROLE_A, ROLE_C]),
+			grantsCall("pollRoles", [], []),
+			grantsCall("adminRoles", [ROLE_A], [ROLE_A, ROLE_C]),
+			grantsCall("adminRoles", [ROLE_A, ROLE_B, ROLE_C], []),
+		];
+		for (const call of stale)
+		{
+			const calls = await dispatch(harness, call);
+			assert.deepEqual(methods(calls), ["update", "followUp"], call.id);
+			assertPanel(harness, calls[0], pageOfAction(parseConfigPanelId(call.id)));
+			assert.equal(privateText(calls[1]), CONFIG_ROLES_CHANGED);
+		}
+		const settings = guildConfig.getSettings(GUILD);
+		assert.deepEqual(settings.pollCreatorRoleIds, [ROLE_B]);
+		assert.deepEqual(settings.adminRoleIds, [ROLE_A, ROLE_B]);
+		assert.equal(audits(harness.context, "config.update").length, 1);
+	});
+
+	test("hai admin cùng mở bảng: người lưu sau từ bảng cũ bị từ chối; vẽ lại rồi lưu thì chỉ theo lựa chọn mới", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+		guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_A] }, USER_A);
+		await dispatch(harness, grantsCall("adminRoles", [ROLE_A], [ROLE_A, ROLE_B]));
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_A, ROLE_B]);
+
+		const late = await dispatch(harness, grantsCall("adminRoles", [ROLE_A], [ROLE_A, ROLE_C]));
+		assert.deepEqual(methods(late), ["update", "followUp"]);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_A, ROLE_B], "không mất role B người kia vừa thêm");
+
+		await dispatch(harness, grantsCall("adminRoles", [ROLE_A, ROLE_B], [ROLE_A, ROLE_B, ROLE_C]));
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_A, ROLE_B, ROLE_C]);
+	});
+
+	test("role admin bot: thêm kèm nhắc Integrations; người có role thứ hai là admin; bỏ role đó thì người đó mất quyền", async () =>
 	{
 		const harness = createHarness();
 		const { guildConfig } = harness.context.deps;
 
-		const set = await dispatch(harness, { kind: "role", id: id({ type: "adminRole", drawnRoleId: null }), values: [ROLE_C] });
+		const set = await dispatch(harness, grantsCall("adminRoles", [], [ROLE_C, ADMIN_ROLE]));
 		assert.deepEqual(methods(set), ["update"]);
-		assert.equal(guildConfig.getSettings(GUILD).adminRoleId, ROLE_C);
-		const notice = `Đã đặt <@&${ROLE_C}> làm role admin bot. Người có quyền Manage Server vẫn luôn là admin.\n`
-			+ "⚠️ Lưu ý: `/admin` và `/config` mặc định chỉ dành cho người có quyền Manage Server; Discord chặn những người khác trước khi lệnh tới bot. "
-			+ "Để role này dùng được, vào **Server Settings → Integrations → chọn bot** rồi cho phép role này dùng `/admin` và `/config`.";
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_C, ADMIN_ROLE]);
+		const notice = [
+			"Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.",
+			`Đã thêm <@&${ROLE_C}>, <@&${ADMIN_ROLE}> vào danh sách role admin bot.`,
+			`• Role admin bot: **<@&${ROLE_C}>, <@&${ADMIN_ROLE}>**`,
+			INTEGRATION_HINT,
+		].join("\n");
 		assertPanel(harness, set[0], "board", notice);
 
-		const clear = await dispatch(harness, { kind: "role", id: id({ type: "adminRole", drawnRoleId: ROLE_C }), values: [] });
-		assert.equal(guildConfig.getSettings(GUILD).adminRoleId, null);
-		assertPanel(harness, clear[0], "board", "Đã xoá role admin bot. Chỉ người có quyền Manage Server dùng được lệnh admin.");
+		const secondRoleAdmin: CallerSpec = { id: USER_A, manageGuild: false, roleIds: [ADMIN_ROLE] };
+		const allowed = await dispatch(harness, button({ type: "mode", mode: "selected" }, { caller: secondRoleAdmin }));
+		assert.deepEqual(methods(allowed), ["update"], "có role thứ hai trong danh sách là admin");
+
+		const drop = await dispatch(harness, grantsCall("adminRoles", [ROLE_C, ADMIN_ROLE], [ROLE_C]));
+		assertPanel(harness, drop[0], "board", "Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.\n"
+			+ `Đã bỏ <@&${ADMIN_ROLE}> khỏi danh sách role admin bot.\n• Role admin bot: **<@&${ROLE_C}>**`);
+		const denied = await dispatch(harness, button({ type: "mode", mode: "all" }, { caller: secondRoleAdmin }));
+		assert.deepEqual(methods(denied), ["reply"]);
+		assert.equal(privateText(denied[0]), NO_PERMISSION);
+		assert.equal(guildConfig.getSettings(GUILD).xpChannelMode, "selected");
+
+		const clear = await dispatch(harness, grantsCall("adminRoles", [ROLE_C], []));
+		assertPanel(harness, clear[0], "board", "Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.\n"
+			+ `Đã bỏ <@&${ROLE_C}> khỏi danh sách role admin bot.\n• Role admin bot: **chưa đặt**\nGiờ chỉ người có quyền Manage Server là admin bot.`);
 	});
 
-	test("role tạo vote và role admin chặn @everyone, role integration, role danh hiệu như lệnh gõ; không ghi gì", async () =>
+	test("role mới chặn @everyone, role integration, role danh hiệu, role không có trong dữ liệu gửi kèm như lệnh gõ; một role sai thì không ghi role nào", async () =>
 	{
 		const harness = createHarness();
 		harness.tierRoles.set(GUILD, "bac-3", ROLE_TIER, ADMIN);
-		const cases: [ConfigPanelAction, string][] = [
-			[{ type: "pollRole", drawnRoleId: null }, "làm role tạo vote"],
-			[{ type: "adminRole", drawnRoleId: null }, "làm role admin bot"],
+		const cases: ["pollRoles" | "adminRoles", string][] = [
+			["pollRoles", "làm role tạo vote"],
+			["adminRoles", "làm role admin bot"],
 		];
-		for (const [action, purpose] of cases)
+		for (const [type, purpose] of cases)
 		{
-			await refused(harness, { kind: "role", id: id(action), values: [GUILD] }, `Không thể dùng @everyone ${purpose}.`);
-			await refused(harness, { kind: "role", id: id(action), values: [ROLE_MANAGED] }, `Không thể dùng role do bot hoặc integration quản lý ${purpose}.`);
-			await refused(harness, { kind: "role", id: id(action), values: [ROLE_TIER] }, tierRoleRefusal(purpose));
-			await refused(harness, { kind: "role", id: id(action), values: [ROLE_UNKNOWN] }, SELECTED_ROLE_UNAVAILABLE);
+			await refused(harness, grantsCall(type, [], [ROLE_A, GUILD]), `Không thể dùng @everyone ${purpose}.`);
+			await refused(harness, grantsCall(type, [], [ROLE_A, ROLE_MANAGED]), `Không thể dùng role do bot hoặc integration quản lý ${purpose}.`);
+			await refused(harness, grantsCall(type, [], [ROLE_TIER]), tierRoleRefusal(purpose));
+			await refused(harness, grantsCall(type, [], [ROLE_UNKNOWN]), SELECTED_ROLE_UNAVAILABLE);
 		}
 		const settings = harness.context.deps.guildConfig.getSettings(GUILD);
-		assert.equal(settings.pollCreatorRoleId, null);
-		assert.equal(settings.adminRoleId, null);
+		assert.deepEqual(settings.pollCreatorRoleIds, []);
+		assert.deepEqual(settings.adminRoleIds, []);
 		assert.deepEqual(audits(harness.context, "config"), []);
+	});
+
+	test("role đã lưu mà không còn trong server: không điền sẵn nên lưu lựa chọn là bỏ; role vốn có trong danh sách không bị kiểm tra lại", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+		const drawn = [ROLE_A, ROLE_TIER, ROLE_UNKNOWN];
+		guildConfig.updateSettings(GUILD, { adminRoleIds: drawn }, ADMIN);
+		harness.tierRoles.set(GUILD, "bac-3", ROLE_TIER, ADMIN);
+		const board = await dispatch(harness, { kind: "string", id: id({ type: "nav" }), values: ["board"] });
+		assertPanel(harness, board[0], "board");
+		assert.ok(textOf(toJson(board[0].payload)).includes(`Role đã lưu không còn trong server: <@&${ROLE_UNKNOWN}>.`));
+
+		const saved = await dispatch(harness, grantsCall("adminRoles", drawn, [ROLE_A, ROLE_TIER, ROLE_B]));
+		assert.deepEqual(methods(saved), ["update"]);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_A, ROLE_B, ROLE_TIER]);
+		const entries = audits(harness.context, "config.update");
+		assert.deepEqual(entries[entries.length - 1]?.details, { adminRoleIds: [ROLE_A, ROLE_B, ROLE_TIER], addedRoles: [ROLE_B], removedRoles: [ROLE_UNKNOWN] });
+	});
+
+	test("vượt MAX_GRANT_ROLES sau khi lưu: vẽ lại bảng, báo lỗi, không ghi", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+		const full = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => `57000000000000000${String(index).padStart(2, "0")}`);
+		guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: full }, ADMIN);
+		const calls = await dispatch(harness, grantsCall("pollRoles", full, [...full, ROLE_A]));
+		assert.deepEqual(methods(calls), ["update", "followUp"]);
+		assert.match(privateText(calls[1]), /Chỉ được đặt tối đa 25 role được tạo vote/);
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, full);
 	});
 });
 

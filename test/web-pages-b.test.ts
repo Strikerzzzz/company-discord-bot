@@ -4,7 +4,6 @@ import { ChannelType, PermissionFlagsBits } from "discord.js";
 import { DEFAULT_GUILD_SETTINGS } from "../src/modules/guild-config/types";
 import { NO_AUDIT_ENTRIES } from "../src/web/pages/audit";
 import { BOARD_CHANGED_ELSEWHERE, BOARD_SELECT_CHANNEL } from "../src/web/pages/board";
-import { MISSING_ROLE_OPTION, ROLE_NOT_FOUND, ROLES_STALE_FORM, ROLES_UNCHANGED } from "../src/web/pages/roles";
 import { SETTINGS_STALE_FORM, SETTINGS_UNCHANGED } from "../src/web/pages/settings";
 import { escapeHtml } from "../src/web/html";
 import { GUILD } from "./helpers";
@@ -24,15 +23,12 @@ import {
 	login,
 	ROLE_ADMIN_BOT,
 	ROLE_ADMIN_USER,
-	ROLE_MANAGED,
 	ROLE_TEAM_A,
-	ROLE_TEAM_B,
 	WebHarness,
 } from "./web-helpers";
 
 const EVIL = "<img src=x onerror=alert(1)>";
 const ROLE_EVIL = "510000000000000009";
-const ROLE_GONE = "519999999999999998";
 const CHANNEL_EVIL = "410000000000000009";
 const CHANNEL_GONE = "419999999999999999";
 const USER_TARGET = "310000000000000009";
@@ -227,119 +223,6 @@ describe("web: trang cài đặt điểm", () =>
 	});
 });
 
-describe("web: trang quyền", () =>
-{
-	test("đặt rồi bỏ role admin bot và role tạo vote (một lần ghi cho cả hai)", async () =>
-	{
-		const { harness, auth } = await setup();
-		const body = await page(harness, auth, "/roles");
-		const form = drawnForm(body, "/roles");
-		assert.equal(form.adminRoleId, "");
-		assert.equal(form["d:adminRoleId"], "");
-		assert.ok(body.includes("— Không đặt —"));
-
-		const saved = await submit(harness, auth, "/roles", { ...form, adminRoleId: ROLE_ADMIN_BOT, pollCreatorRoleId: ROLE_TEAM_B });
-		expectFlash(saved, "ok", "Đã cập nhật quyền", "@Admin bot", "@Frontend", "Integrations");
-		let settings = harness.services.guildConfig.getSettings(GUILD);
-		assert.equal(settings.adminRoleId, ROLE_ADMIN_BOT);
-		assert.equal(settings.pollCreatorRoleId, ROLE_TEAM_B);
-		assert.equal(auditCount(harness), 1);
-		assert.deepEqual(harness.services.audit.list(GUILD, 1)[0]?.details, { adminRoleId: ROLE_ADMIN_BOT, pollCreatorRoleId: ROLE_TEAM_B });
-
-		const drawn = drawnForm(saved, "/roles");
-		assert.equal(drawn.adminRoleId, ROLE_ADMIN_BOT);
-		assert.equal(drawn["d:pollCreatorRoleId"], ROLE_TEAM_B);
-		const cleared = await submit(harness, auth, "/roles", { ...drawn, adminRoleId: "", pollCreatorRoleId: "" });
-		expectFlash(cleared, "ok", "Role admin bot", "chưa đặt");
-		settings = harness.services.guildConfig.getSettings(GUILD);
-		assert.equal(settings.adminRoleId, null);
-		assert.equal(settings.pollCreatorRoleId, null);
-
-		expectFlash(await submit(harness, auth, "/roles", drawnForm(cleared, "/roles")), "ok", ROLES_UNCHANGED);
-		assert.equal(auditCount(harness), 2);
-	});
-
-	test("danh sách chỉ có role hợp lệ; role managed, role danh hiệu, @everyone, role không tồn tại bị từ chối và không ghi gì", async () =>
-	{
-		const { harness, auth } = await setup();
-		harness.services.tierRoles.set(GUILD, "bac-1", ROLE_TEAM_A, ADMIN_USER);
-		const body = await page(harness, auth, "/roles");
-		for (const roleId of [ROLE_MANAGED, ROLE_TEAM_A, GUILD]) assert.ok(!body.includes(`<option value="${roleId}"`), roleId);
-		assert.ok(body.includes(`<option value="${ROLE_TEAM_B}">@Frontend</option>`));
-
-		const form = drawnForm(body, "/roles");
-		const before = auditCount(harness);
-		const cases: [Record<string, string>, string][] = [
-			[{ adminRoleId: ROLE_MANAGED }, "Không thể dùng role do bot hoặc integration quản lý làm role admin bot."],
-			[{ pollCreatorRoleId: ROLE_TEAM_A }, "role danh hiệu"],
-			[{ adminRoleId: GUILD }, "Không thể dùng @everyone làm role admin bot."],
-			[{ pollCreatorRoleId: "519999999999999997" }, ROLE_NOT_FOUND],
-			[{ adminRoleId: ROLE_ADMIN_BOT, pollCreatorRoleId: ROLE_MANAGED }, "làm role tạo vote"],
-		];
-		for (const [change, message] of cases)
-		{
-			expectFlash(await submit(harness, auth, "/roles", { ...form, ...change }), "error", message);
-		}
-		assert.equal(auditCount(harness), before);
-		const settings = harness.services.guildConfig.getSettings(GUILD);
-		assert.equal(settings.adminRoleId, null, "ô hợp lệ cũng không được ghi khi ô kia sai");
-		assert.equal(settings.pollCreatorRoleId, null);
-
-		const noDrawn: Record<string, string> = { ...form, adminRoleId: ROLE_ADMIN_BOT };
-		delete noDrawn["d:adminRoleId"];
-		expectFlash(await submit(harness, auth, "/roles", noDrawn), "error", ROLES_STALE_FORM);
-	});
-
-	test("role đang đặt không còn trong server vẫn hiện là lựa chọn đang chọn, ghi \"(không còn trong server)\"", async () =>
-	{
-		const { harness, auth } = await setup();
-		harness.services.guildConfig.updateSettings(GUILD, { pollCreatorRoleId: ROLE_GONE }, ADMIN_USER);
-		const body = await page(harness, auth, "/roles");
-		assert.match(body, new RegExp(`<option value="${ROLE_GONE}" selected>[^<]*${escapeHtml(MISSING_ROLE_OPTION).replace(/[()]/gu, "\\$&")}</option>`, "u"));
-		assert.ok(body.includes("Role đã lưu không còn trong server"));
-
-		const form = drawnForm(body, "/roles");
-		assert.equal(form.pollCreatorRoleId, ROLE_GONE);
-		expectFlash(await submit(harness, auth, "/roles", form), "ok", ROLES_UNCHANGED);
-		await submit(harness, auth, "/roles", { ...form, pollCreatorRoleId: "" });
-		assert.equal(harness.services.guildConfig.getSettings(GUILD).pollCreatorRoleId, null);
-	});
-
-	test("bỏ role khi role vừa bị người khác đổi: không xoá, báo lỗi", async () =>
-	{
-		const { harness, auth } = await setup();
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
-		const stale = drawnForm(await page(harness, auth, "/roles"), "/roles");
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_TEAM_B }, ADMIN_USER);
-		expectFlash(await submit(harness, auth, "/roles", { ...stale, adminRoleId: "" }), "error", "vừa được đổi ở nơi khác");
-		assert.equal(harness.services.guildConfig.getSettings(GUILD).adminRoleId, ROLE_TEAM_B);
-	});
-
-	test("cảnh báo tự khoá quyền chỉ hiện với người là admin nhờ role admin bot (không có Manage Server)", async () =>
-	{
-		const harness = createWebHarness();
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
-		const roleAdmin = await login(harness, ROLE_ADMIN_USER);
-		const warned = await page(harness, roleAdmin, "/roles");
-		assert.ok(warned.includes("rl-lockout") && warned.includes("mất quyền quản trị ngay lập tức"), "có cảnh báo");
-		assert.ok(warned.includes("@Admin bot"));
-
-		const admin = await login(harness, ADMIN_USER);
-		assert.ok(!(await page(harness, admin, "/roles")).includes("rl-lockout"), "người có Manage Server không bị cảnh báo");
-	});
-
-	test("tên role độc hại luôn bị escape (danh sách, chip, flash)", async () =>
-	{
-		const { harness, auth } = await setup();
-		addRole(harness.world, { id: ROLE_EVIL, name: EVIL, position: 6 });
-		const body = await page(harness, auth, "/roles");
-		assert.ok(!body.includes(EVIL) && body.includes(`@${escapeHtml(EVIL)}`));
-		const saved = await submit(harness, auth, "/roles", { ...drawnForm(body, "/roles"), pollCreatorRoleId: ROLE_EVIL });
-		assert.ok(!saved.includes(EVIL), "flash và chip escape tên role");
-		expectFlash(saved, "ok", escapeHtml(EVIL));
-	});
-});
-
 describe("web: trang Bảng vàng", () =>
 {
 	test("đang tắt: chọn kênh (chỉ kênh chữ/thông báo, theo vị trí), không có nút tắt; đặt kênh thì đăng bảng và ghi audit", async () =>
@@ -476,7 +359,7 @@ describe("web: trang nhật ký quản trị", () =>
 	test("hiện thao tác vừa làm: giờ Việt Nam, người thao tác, hành động, đối tượng bằng tên kênh/role/người, chi tiết", async () =>
 	{
 		const { harness, auth } = await setup();
-		await submit(harness, auth, "/roles", { ...drawnForm(await page(harness, auth, "/roles"), "/roles"), adminRoleId: ROLE_ADMIN_BOT });
+		await submit(harness, auth, "/roles", { ...drawnForm(await page(harness, auth, "/roles"), "/roles"), admin: ROLE_ADMIN_BOT });
 		await submit(harness, auth, "/board", { ...drawnForm(await page(harness, auth, "/board"), "/board"), channelId: CHANNEL_CHAT });
 		harness.services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
 		harness.services.audit.record(GUILD, ADMIN_USER, "xp.adjust", USER_TARGET, { delta: 5, reason: "thưởng dự_án *a* ~b~" });

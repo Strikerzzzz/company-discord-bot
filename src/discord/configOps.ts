@@ -4,11 +4,14 @@ import { GuildBasedChannel, Guild, GuildMember, PermissionFlagsBits, Permissions
 import type DiscordClient from "../classes/DiscordClient";
 import { TIER_SETS, TierKey, tierByKey, TierSet } from "../modules/activity/tiers";
 import { parseTierDisplayName, TierRenameInput } from "../modules/gamification/TierSetService";
+import { RoleGrantResult } from "../modules/guild-config/GuildConfigService";
+import { RoleGrantKey } from "../modules/guild-config/types";
 import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
 import { channelMention, roleMention } from "./format";
 import { deleteLiveBoardMessage, refreshLiveBoard } from "./liveBoard";
 import { BOT_MEMBER_UNAVAILABLE } from "./tierRoleSetup";
+import { settingLine } from "./views/admin";
 import { BOARD_CHANNEL_TYPES } from "./views/configPanel";
 
 type PermissionList = readonly (readonly [bigint, string])[];
@@ -147,6 +150,53 @@ export function assertUsableRole(
 {
 	assertAssignableRole(role, guildId, purpose);
 	assertNotTierRole(services, guildId, role.id, purpose);
+}
+
+/**
+ * Việc của từng danh sách role được cấp quyền (DEC-044) trong thông báo lỗi của assertUsableRole ("làm role admin bot"), giống
+ * nhau ở lệnh gõ, bảng cấu hình và web. Mỗi role THÊM vào danh sách phải qua assertUsableRole với việc này.
+ */
+export const ROLE_GRANT_PURPOSES: Readonly<Record<RoleGrantKey, string>> = {
+	adminRoleIds: "làm role admin bot",
+	pollCreatorRoleIds: "làm role tạo vote",
+};
+
+/** Tên danh sách trong thông báo kết quả. */
+const ROLE_GRANT_NAMES: Readonly<Record<RoleGrantKey, string>> = {
+	adminRoleIds: "role admin bot",
+	pollCreatorRoleIds: "role tạo vote",
+};
+
+/** changeRoleGrants có thêm hoặc bỏ role nào không (không có thì không ghi gì, không audit). */
+export function roleGrantChanged(result: RoleGrantResult): boolean
+{
+	return result.added.length > 0 || result.removed.length > 0;
+}
+
+function roleMentions(roleIds: readonly string[]): string
+{
+	return roleIds.map(roleMention).join(", ");
+}
+
+/**
+ * Các dòng mô tả kết quả GuildConfigService.changeRoleGrants (lệnh gõ, bảng cấu hình, web): role vừa thêm, vừa bỏ, role vốn
+ * đúng trạng thái, danh sách sau khi lưu; bỏ hết role admin bot thì nhắc chỉ người có Manage Server là admin. Người gọi tự thêm
+ * dòng đầu ("Đã cập nhật…" hay "Không có gì thay đổi") và các ghi chú riêng.
+ */
+export function roleGrantChangeLines(key: RoleGrantKey, result: RoleGrantResult): string[]
+{
+	const name = ROLE_GRANT_NAMES[key];
+	const lines: string[] = [];
+	if (result.added.length > 0) lines.push(`Đã thêm ${roleMentions(result.added)} vào danh sách ${name}.`);
+	if (result.removed.length > 0) lines.push(`Đã bỏ ${roleMentions(result.removed)} khỏi danh sách ${name}.`);
+	if (result.alreadyGranted.length > 0) lines.push(`Vốn đã là ${name}: ${roleMentions(result.alreadyGranted)}.`);
+	if (result.notGranted.length > 0) lines.push(`Vốn không phải ${name}: ${roleMentions(result.notGranted)}.`);
+	lines.push(settingLine(key, result.roleIds));
+	if (key === "adminRoleIds" && result.roleIds.length === 0 && result.removed.length > 0)
+	{
+		lines.push("Giờ chỉ người có quyền Manage Server là admin bot.");
+	}
+	return lines;
 }
 
 function collapseSpaces(text: string): string

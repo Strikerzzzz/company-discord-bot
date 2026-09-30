@@ -515,16 +515,16 @@ describe("/config tier", () =>
 		assert.deepEqual(harness.tierRoles.list(GUILD), []);
 	});
 
-	test("set-role: từ chối role đang là role admin bot, role tạo vote hoặc role team (vai trò khác của role bị méo khi bot tự thêm/gỡ)", async () =>
+	test("set-role: từ chối role là một trong các role admin bot, role tạo vote, hoặc role team (vai trò khác của role bị méo khi bot tự thêm/gỡ)", async () =>
 	{
 		const harness = createHarness();
 		const { guildConfig, teams } = harness.context.deps;
 		const cases: [string, () => void][] = [
-			["role admin bot", () => guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_KIM_DAN }, ADMIN)],
-			["role được tạo vote", () => guildConfig.updateSettings(GUILD, { adminRoleId: null, pollCreatorRoleId: ROLE_KIM_DAN }, ADMIN)],
+			["role admin bot", () => guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_TEAM, ROLE_KIM_DAN] }, ADMIN)],
+			["role được tạo vote", () => guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_TEAM], pollCreatorRoleIds: [ROLE_TEAM, ROLE_KIM_DAN] }, ADMIN)],
 			["role của một team", () =>
 			{
-				guildConfig.updateSettings(GUILD, { pollCreatorRoleId: null }, ADMIN);
+				guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: [] }, ADMIN);
 				teams.add(GUILD, ROLE_KIM_DAN, ADMIN);
 			}],
 		];
@@ -829,13 +829,13 @@ describe("role danh hiệu không dùng được vào việc khác", () =>
 		harness.tierRoles.set(GUILD, "bac-3", ROLE_KIM_DAN, ADMIN);
 		const { guildConfig, teams } = harness.context.deps;
 
-		await rejects(harness, { subcommand: "admin-role", options: { role } }, tierRoleRefusal("làm role admin bot"));
+		await rejects(harness, { subcommand: "admin-role", options: { them: role } }, tierRoleRefusal("làm role admin bot"));
 		await rejects(harness, { subcommand: "poll", options: { "role-tao-vote": role, "xp-mac-dinh": 8 } }, tierRoleRefusal("làm role tạo vote"));
 		await rejects(harness, { group: "team", subcommand: "add", options: { role } }, tierRoleRefusal("làm team"));
 
 		const settings = guildConfig.getSettings(GUILD);
-		assert.equal(settings.adminRoleId, null);
-		assert.equal(settings.pollCreatorRoleId, null);
+		assert.deepEqual(settings.adminRoleIds, []);
+		assert.deepEqual(settings.pollCreatorRoleIds, []);
 		assert.notEqual(settings.defaultPollXp, 8);
 		assert.deepEqual(teams.list(GUILD), []);
 		assert.deepEqual(audits(harness.context, "config").concat(audits(harness.context, "team")), []);
@@ -849,8 +849,8 @@ describe("role danh hiệu không dùng được vào việc khác", () =>
 		assert.deepEqual(harness.context.deps.teams.list(GUILD), [ROLE_TEAM]);
 
 		harness.tierRoles.clear(GUILD, "bac-3", ADMIN);
-		replyText(await run(harness, { subcommand: "admin-role", options: { role } }));
-		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).adminRoleId, ROLE_KIM_DAN);
+		replyText(await run(harness, { subcommand: "admin-role", options: { them: role } }));
+		assert.deepEqual(harness.context.deps.guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_KIM_DAN]);
 	});
 });
 

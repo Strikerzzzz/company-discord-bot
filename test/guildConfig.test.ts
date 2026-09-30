@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_GUILD_SETTINGS } from "../src/modules/guild-config/types";
+import { DEFAULT_GUILD_SETTINGS, MAX_GRANT_ROLES } from "../src/modules/guild-config/types";
 import { canCreatePoll, isAdmin } from "../src/modules/guild-config/permissions";
 import { MAX_BULK_CHANNELS } from "../src/modules/guild-config/GuildConfigService";
 import { MAX_TEAMS } from "../src/modules/team/TeamService";
@@ -18,14 +18,16 @@ describe("GuildConfigService", () =>
 	test("cập nhật một phần, giữ nguyên phần còn lại, ghi audit, không ảnh hưởng guild khác", () =>
 	{
 		const { deps } = createTestContext();
-		const next = deps.guildConfig.updateSettings(GUILD, { xpPerMessage: 15, adminRoleId: ROLE_BACKEND }, ADMIN);
+		const next = deps.guildConfig.updateSettings(GUILD, { xpPerMessage: 15, adminRoleIds: [ROLE_BACKEND] }, ADMIN);
 		assert.equal(next.xpPerMessage, 15);
 		assert.equal(next.xpCooldownSeconds, DEFAULT_GUILD_SETTINGS.xpCooldownSeconds);
+		assert.deepEqual(next.adminRoleIds, [ROLE_BACKEND]);
 		assert.deepEqual(deps.guildConfig.getSettings(GUILD), next);
 		assert.equal(deps.guildConfig.getSettings(OTHER_GUILD).xpPerMessage, DEFAULT_GUILD_SETTINGS.xpPerMessage);
+		assert.deepEqual(deps.guildConfig.getSettings(OTHER_GUILD).adminRoleIds, []);
 		const [entry] = deps.audit.list(GUILD, 5);
 		assert.equal(entry.action, "config.update");
-		assert.deepEqual(entry.details, { xpPerMessage: 15, adminRoleId: ROLE_BACKEND });
+		assert.deepEqual(entry.details, { xpPerMessage: 15, adminRoleIds: [ROLE_BACKEND] });
 	});
 
 	test("từ chối giá trị ngoài giới hạn bằng UserError tiếng Việt", () =>
@@ -126,23 +128,111 @@ describe("GuildConfigService", () =>
 	});
 });
 
-describe("permissions (PROP-013)", () =>
+describe("GuildConfigService: danh sách role được cấp quyền (DEC-044)", () =>
 {
-	const settings = { adminRoleId: ROLE_BACKEND, pollCreatorRoleId: ROLE_FRONTEND };
+	const role = (index: number): string => `5600000000000000${String(index).padStart(2, "0")}`;
 
-	test("isAdmin: Manage Server hoặc role admin đã cấu hình", () =>
+	test("updateSettings thay toàn bộ danh sách: bỏ trùng, role giữ lại không đổi thứ tự, role mới theo created_at rồi role_id", () =>
 	{
-		assert.equal(isAdmin({ hasManageGuild: true, roleIds: [] }, { adminRoleId: null }), true);
-		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_BACKEND] }, settings), true);
-		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_OTHER] }, settings), false);
-		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_BACKEND] }, { adminRoleId: null }), false);
+		const { deps, clock } = createTestContext();
+		const { guildConfig } = deps;
+		guildConfig.updateSettings(GUILD, { adminRoleIds: [role(3), role(1), role(3)] }, ADMIN);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [role(1), role(3)], "cùng lúc thêm thì theo role_id");
+		clock.advance(1000);
+		guildConfig.updateSettings(GUILD, { adminRoleIds: [role(0), role(3)], pollCreatorRoleIds: [role(2)] }, ADMIN);
+		const settings = guildConfig.getSettings(GUILD);
+		assert.deepEqual(settings.adminRoleIds, [role(3), role(0)], "role 3 giữ mốc cũ nên đứng trước role 0 mới thêm");
+		assert.deepEqual(settings.pollCreatorRoleIds, [role(2)]);
+		assert.deepEqual(deps.audit.list(GUILD, 1)[0]?.details, { adminRoleIds: [role(0), role(3)], pollCreatorRoleIds: [role(2)] });
+		assert.deepEqual(guildConfig.getSettings(OTHER_GUILD).pollCreatorRoleIds, []);
+
+		guildConfig.updateSettings(GUILD, { xpPerMessage: 12 }, ADMIN);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [role(3), role(0)], "sửa mục khác không đụng danh sách role");
+		guildConfig.updateSettings(GUILD, { adminRoleIds: [] }, ADMIN);
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, []);
 	});
 
-	test("canCreatePoll: admin hoặc role tạo vote (DEC-026)", () =>
+	test("updateSettings: quá MAX_GRANT_ROLES role (sau khi bỏ trùng) bị từ chối, không ghi gì kể cả mục khác", () =>
+	{
+		const { deps } = createTestContext();
+		const full = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => role(index));
+		deps.guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: [...full, ...full] }, ADMIN);
+		assert.equal(deps.guildConfig.getSettings(GUILD).pollCreatorRoleIds.length, MAX_GRANT_ROLES);
+		assert.throws(() => deps.guildConfig.updateSettings(GUILD, { xpPerMessage: 20, adminRoleIds: [...full, ROLE_BACKEND] }, ADMIN), /tối đa 25 role admin bot/);
+		assert.equal(deps.guildConfig.getSettings(GUILD).xpPerMessage, DEFAULT_GUILD_SETTINGS.xpPerMessage);
+		assert.deepEqual(deps.guildConfig.getSettings(GUILD).adminRoleIds, []);
+	});
+
+	test("changeRoleGrants: chỉ ghi phần chênh lệch, bỏ qua role vốn đúng trạng thái, một audit có danh sách mới và phần thêm/bỏ", () =>
+	{
+		const { deps } = createTestContext();
+		const { guildConfig } = deps;
+		const first = guildConfig.changeRoleGrants(GUILD, "adminRoleIds", { add: [ROLE_BACKEND, ROLE_FRONTEND, ROLE_BACKEND] }, ADMIN);
+		assert.deepEqual(first, { added: [ROLE_BACKEND, ROLE_FRONTEND], removed: [], alreadyGranted: [], notGranted: [], roleIds: [ROLE_BACKEND, ROLE_FRONTEND] });
+
+		const second = guildConfig.changeRoleGrants(GUILD, "adminRoleIds", { add: [ROLE_FRONTEND, ROLE_OTHER], remove: [ROLE_BACKEND, role(9)] }, ADMIN);
+		assert.deepEqual(second, { added: [ROLE_OTHER], removed: [ROLE_BACKEND], alreadyGranted: [ROLE_FRONTEND], notGranted: [role(9)], roleIds: [ROLE_FRONTEND, ROLE_OTHER] });
+		assert.deepEqual(guildConfig.getSettings(GUILD).adminRoleIds, [ROLE_FRONTEND, ROLE_OTHER]);
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, [], "danh sách còn lại không đổi");
+
+		const audits = deps.audit.list(GUILD, 10);
+		assert.equal(audits.length, 2);
+		assert.deepEqual(audits[0]?.details, { adminRoleIds: [ROLE_FRONTEND, ROLE_OTHER], addedRoles: [ROLE_OTHER], removedRoles: [ROLE_BACKEND] });
+		assert.deepEqual(audits[1]?.details, { adminRoleIds: [ROLE_BACKEND, ROLE_FRONTEND], addedRoles: [ROLE_BACKEND, ROLE_FRONTEND] });
+
+		const nothing = guildConfig.changeRoleGrants(GUILD, "adminRoleIds", { add: [ROLE_OTHER], remove: [ROLE_BACKEND] }, ADMIN);
+		assert.deepEqual(nothing, { added: [], removed: [], alreadyGranted: [ROLE_OTHER], notGranted: [ROLE_BACKEND], roleIds: [ROLE_FRONTEND, ROLE_OTHER] });
+		assert.equal(deps.audit.list(GUILD, 10).length, 2, "không đổi gì thì không audit");
+	});
+
+	test("changeRoleGrants: vượt MAX_GRANT_ROLES hoặc vừa thêm vừa bỏ cùng role thì từ chối, không ghi gì; bỏ bớt trong cùng lần thì thêm được", () =>
+	{
+		const { deps } = createTestContext();
+		const { guildConfig } = deps;
+		const full = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => role(index));
+		guildConfig.changeRoleGrants(GUILD, "pollCreatorRoleIds", { add: full }, ADMIN);
+		const before = deps.audit.list(GUILD, 10).length;
+		assert.throws(() => guildConfig.changeRoleGrants(GUILD, "pollCreatorRoleIds", { add: [ROLE_BACKEND] }, ADMIN), /tối đa 25 role được tạo vote: đang có 25 role/);
+		assert.throws(() => guildConfig.changeRoleGrants(GUILD, "adminRoleIds", { add: [ROLE_BACKEND], remove: [ROLE_BACKEND] }, ADMIN), UserError);
+		assert.equal(deps.audit.list(GUILD, 10).length, before);
+		assert.deepEqual(guildConfig.getSettings(GUILD).pollCreatorRoleIds, full);
+
+		const swapped = guildConfig.changeRoleGrants(GUILD, "pollCreatorRoleIds", { add: [ROLE_BACKEND], remove: [role(0)] }, ADMIN);
+		assert.deepEqual(swapped.added, [ROLE_BACKEND]);
+		assert.equal(guildConfig.getSettings(GUILD).pollCreatorRoleIds.length, MAX_GRANT_ROLES);
+		assert.doesNotThrow(() => guildConfig.changeRoleGrants(GUILD, "pollCreatorRoleIds", { add: [ROLE_BACKEND], remove: [role(1)] }, ADMIN), "role vốn có không tính là thêm");
+	});
+
+	test("guild chưa có dòng guild_settings vẫn đọc được danh sách role (changeRoleGrants không tạo dòng cấu hình)", () =>
+	{
+		const { deps, db } = createTestContext();
+		deps.guildConfig.changeRoleGrants(GUILD, "adminRoleIds", { add: [ROLE_BACKEND] }, ADMIN);
+		assert.deepEqual(db.prepare("SELECT COUNT(*) AS count FROM guild_settings").get(), { count: 0 });
+		assert.deepEqual(deps.guildConfig.getSettings(GUILD), { ...DEFAULT_GUILD_SETTINGS, adminRoleIds: [ROLE_BACKEND] });
+		assert.deepEqual(DEFAULT_GUILD_SETTINGS.adminRoleIds, [], "không sửa nhầm mảng của giá trị mặc định");
+	});
+});
+
+describe("permissions (PROP-013, DEC-044)", () =>
+{
+	const settings = { adminRoleIds: [ROLE_OTHER, ROLE_BACKEND], pollCreatorRoleIds: [ROLE_FRONTEND] };
+
+	test("isAdmin: Manage Server hoặc có ít nhất một role trong danh sách role admin", () =>
+	{
+		assert.equal(isAdmin({ hasManageGuild: true, roleIds: [] }, { adminRoleIds: [] }), true);
+		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_BACKEND] }, settings), true, "role thứ hai trong danh sách cũng là admin");
+		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_OTHER] }, settings), true);
+		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_FRONTEND] }, settings), false);
+		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [] }, settings), false);
+		assert.equal(isAdmin({ hasManageGuild: false, roleIds: [ROLE_BACKEND] }, { adminRoleIds: [] }), false);
+	});
+
+	test("canCreatePoll: admin hoặc có một role tạo vote (DEC-026)", () =>
 	{
 		assert.equal(canCreatePoll({ hasManageGuild: false, roleIds: [ROLE_FRONTEND] }, settings), true);
 		assert.equal(canCreatePoll({ hasManageGuild: false, roleIds: [ROLE_BACKEND] }, settings), true);
-		assert.equal(canCreatePoll({ hasManageGuild: false, roleIds: [ROLE_OTHER] }, settings), false);
+		assert.equal(canCreatePoll({ hasManageGuild: false, roleIds: ["500000000000000077"] }, settings), false);
+		assert.equal(canCreatePoll({ hasManageGuild: false, roleIds: [ROLE_FRONTEND] }, { adminRoleIds: [], pollCreatorRoleIds: [] }), false);
 	});
 });
 

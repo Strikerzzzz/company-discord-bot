@@ -164,7 +164,7 @@ describe("web: đăng nhập bằng Discord", () =>
 		assert.equal(admin.session.displayName, "Admin <b>");
 
 		await assert.rejects(login(harness, ROLE_ADMIN_USER), /noadmin/);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const roleAdmin = await login(harness, ROLE_ADMIN_USER);
 		const page = await call(harness, `/g/${GUILD}/thu`, { cookies: roleAdmin.cookies });
 		assert.equal(page.status, 200);
@@ -205,9 +205,9 @@ describe("web: phân quyền và form", () =>
 	test("quyền được kiểm tra lại ở mỗi request: mất quyền admin thì trang bị chặn ngay", async () =>
 	{
 		const harness = createWebHarness([TEST_PAGE]);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const auth = await login(harness, ROLE_ADMIN_USER);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: null }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [] }, ADMIN_USER);
 		assert.equal((await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies })).status, 403);
 		assert.equal((await call(harness, `/g/${GUILD}/thu`, { form: withCsrf(auth), cookies: auth.cookies })).status, 403);
 	});
@@ -277,9 +277,9 @@ describe("web: sửa lỗi review bảo mật Phase 16", () =>
 	test("mất quyền admin: phiên bị huỷ ngay (cookie cũ không dùng lại được); về trang chính thì báo đã huỷ", async () =>
 	{
 		const harness = createWebHarness([TEST_PAGE]);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const auth = await login(harness, ROLE_ADMIN_USER);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: null }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [] }, ADMIN_USER);
 		const denied = await call(harness, `/g/${GUILD}/thu`, { cookies: auth.cookies });
 		assert.equal(denied.status, 403);
 		assert.equal(setCookieValue(denied, SESSION_COOKIE), "");
@@ -334,7 +334,7 @@ describe("web: sửa lỗi review bảo mật Phase 16", () =>
 	test("mỗi người tối đa 5 phiên: đăng nhập thêm chỉ bỏ phiên cũ nhất của chính người đó, không đá phiên người khác", async () =>
 	{
 		const harness = createWebHarness([TEST_PAGE]);
-		harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const other = await login(harness, ROLE_ADMIN_USER);
 		const first = await login(harness, ADMIN_USER);
 		for (let index = 0; index < MAX_SESSIONS_PER_USER; index++) await login(harness, ADMIN_USER);

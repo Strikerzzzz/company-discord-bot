@@ -128,7 +128,7 @@ async function flashAfter(harness: WebHarness, auth: LoggedIn, path: string): Pr
 
 async function adminPair(harness: WebHarness): Promise<[LoggedIn, LoggedIn]>
 {
-	harness.services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+	harness.services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 	return [await login(harness, ADMIN_USER), await login(harness, ROLE_ADMIN_USER)];
 }
 
@@ -748,7 +748,7 @@ describe("web trang A: tổng quan", () =>
 		const harness = createWebHarness();
 		const auth = await login(harness, ADMIN_USER);
 		const { guildConfig, teams, liveBoards, tierRoles } = harness.services;
-		guildConfig.updateSettings(GUILD, { xpPerMessage: 15, adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		guildConfig.updateSettings(GUILD, { xpPerMessage: 15, adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		liveBoards.setChannel(GUILD, CHANNEL_CHAT, ADMIN_USER);
 		tierRoles.set(GUILD, "bac-1", ROLE_TEAM_B, ADMIN_USER);
 		harness.clock.advance(60 * 60 * 1000);

@@ -337,9 +337,9 @@ describe("web: trang Contribution — gỡ", () =>
 		assert.equal(services.contributions.get(GUILD, contribution.id)?.status, "active");
 
 		await assert.rejects(login(harness, PLAIN_USER), "thành viên thường không đăng nhập được");
-		services.guildConfig.updateSettings(GUILD, { adminRoleId: ROLE_ADMIN_BOT }, ADMIN_USER);
+		services.guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_ADMIN_BOT] }, ADMIN_USER);
 		const former = await login(harness, ROLE_ADMIN_USER);
-		services.guildConfig.updateSettings(GUILD, { adminRoleId: null }, ADMIN_USER);
+		services.guildConfig.updateSettings(GUILD, { adminRoleIds: [] }, ADMIN_USER);
 		assert.equal((await call(harness, pageUrl("/contributions"), { cookies: former.cookies })).status, 403);
 		const denied = await call(harness, pageUrl("/contributions/remove"), { cookies: former.cookies, form: withCsrf(former, { id: String(contribution.id), "xac-nhan": "1" }) });
 		assert.equal(denied.status, 403);
