@@ -11,6 +11,7 @@ import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
+import { BulkSelection, bulkChecked, bulkSelection, selectAllLinks } from "../widgets";
 
 const PATH = "/teams";
 const SNOWFLAKE = /^\d{17,20}$/u;
@@ -27,13 +28,14 @@ function blockedReason(role: Role, tierRoleIds: ReadonlySet<string>): string | n
 
 // ---------- GET ----------
 
-function roleRow(guild: Guild, role: Role, isTeam: boolean, reason: string | null): RawHtml
+function roleRow(guild: Guild, role: Role, isTeam: boolean, reason: string | null, selection: BulkSelection): RawHtml
 {
 	const id = role.id;
 	const note = reason === null ? "" : `${reason}: ${isTeam ? "vẫn bỏ team được, nhưng không thêm lại được." : "không dùng làm team được."}`;
+	const checked = bulkChecked(selection, isTeam, reason === null);
 	return html`<tr>
 <td><label for="team-${id}">${roleChip(guild, id)}</label><input type="hidden" name="t:${id}" value="${isTeam ? 1 : 0}"></td>
-<td><input type="checkbox" id="team-${id}" name="team" value="${id}"${isTeam ? html` checked` : ""}${reason !== null && !isTeam ? html` disabled` : ""}></td>
+<td><input type="checkbox" id="team-${id}" name="team" value="${id}"${checked ? html` checked` : ""}${reason !== null && !isTeam ? html` disabled` : ""}></td>
 <td class="tm-note">${note}</td>
 </tr>`;
 }
@@ -47,6 +49,7 @@ function renderTeams(ctx: GuildPageContext): WebResponse
 	const tierRoleIds = new Set(tierRoles.list(guild.id).map(mapping => mapping.roleId));
 	const roles = sortedRoles(guild);
 	const gone = teamIds.filter(roleId => !guild.roles.cache.has(roleId));
+	const selection = bulkSelection(ctx.req.query);
 
 	const goneSection = gone.length === 0 ? "" : html`<section class="card"><h2>Team không còn trong server (${gone.length})</h2>
 <p class="muted">Role của các team này đã bị xoá khỏi server nên không còn ai thuộc team. Tick để gỡ khỏi danh sách team (điểm lịch sử vẫn giữ).</p>
@@ -64,9 +67,9 @@ ${teamIds.length === 0 ? html`<p class="muted">Chưa có team nào. Tick role �
 </section>
 ${goneSection}
 <section class="card"><h2>Role của server (${roles.length})</h2>
-${roles.length === 0 ? html`<p class="muted">Server chưa có role nào ngoài @everyone.</p>` : html`<div class="tm-scroll"><table class="table tm-table">
+${roles.length === 0 ? html`<p class="muted">Server chưa có role nào ngoài @everyone.</p>` : html`${selectAllLinks(ctx, PATH, selection)}<div class="tm-scroll"><table class="table tm-table">
 <thead><tr><th>Role</th><th>Là team</th><th>Ghi chú</th></tr></thead>
-<tbody>${roles.map(role => roleRow(guild, role, teamSet.has(role.id), blockedReason(role, tierRoleIds)))}</tbody></table></div>`}
+<tbody>${roles.map(role => roleRow(guild, role, teamSet.has(role.id), blockedReason(role, tierRoleIds), selection))}</tbody></table></div>`}
 </section>
 <div class="actions"><button class="btn btn-primary" type="submit">💾 Lưu thay đổi</button></div>
 </form>`,

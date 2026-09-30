@@ -34,6 +34,7 @@ code { background: #eef0f8; padding: 1px 5px; border-radius: 4px; font-size: 0.9
 .tabs a.active { background: var(--brand); color: #fff; }
 .danger-zone { border-color: #f5c2bf; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+.select-all { margin: 0 0 10px; font-weight: 600; }
 textarea { font: inherit; padding: 8px 10px; border: 1px solid #cfd3e3; border-radius: 8px; background: #fff; color: var(--text); width: 100%; max-width: 420px; }
 main { flex: 1; padding: 24px 32px; max-width: 1100px; }
 h1 { font-size: 24px; margin: 0 0 6px; }

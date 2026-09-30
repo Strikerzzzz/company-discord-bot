@@ -8,6 +8,44 @@ import { GuildPageContext } from "./types";
 
 /** Tên tham số trang trong query (`?trang=2`). */
 export const PAGE_PARAM = "trang";
+/** Tham số "chọn tất cả" của trang có bảng ô tick (`?chon=tat-ca` hoặc `?chon=bo-het`). */
+export const SELECT_ALL_PARAM = "chon";
+
+/**
+ * Chọn hàng loạt trên trang có bảng ô tick (trang không có JavaScript, CSP): "all" = vẽ lại trang với mọi ô tick được đã tick,
+ * "none" = mọi ô bỏ tick, null = như đang lưu. Chỉ đổi cách vẽ, chưa ghi gì: input ẩn vẫn mang giá trị đang lưu, admin bấm Lưu thì
+ * trang chỉ ghi phần khác đi.
+ */
+export type BulkSelection = "all" | "none" | null;
+
+export function bulkSelection(query: URLSearchParams): BulkSelection
+{
+	const value = query.get(SELECT_ALL_PARAM);
+	if (value === "tat-ca") return "all";
+	if (value === "bo-het") return "none";
+	return null;
+}
+
+/** Ô tick có được tick khi vẽ không: theo chọn hàng loạt nếu có (ô bị khoá không tick thêm), không thì theo giá trị đang lưu. */
+export function bulkChecked(selection: BulkSelection, saved: boolean, selectable = true): boolean
+{
+	if (selection === "all") return saved || selectable;
+	if (selection === "none") return false;
+	return saved;
+}
+
+/**
+ * Link "✅ Chọn tất cả · ⬜ Bỏ chọn tất cả" cho bảng ô tick của trang `path`; đang chọn hàng loạt thì thêm lời nhắc chưa lưu và
+ * link về như đang lưu.
+ */
+export function selectAllLinks(ctx: Pick<GuildPageContext, "guild">, path: string, selection: BulkSelection): RawHtml
+{
+	const link = (value: string): string => guildUrl(ctx, `${path}?${SELECT_ALL_PARAM}=${value}`);
+	const pending = selection === null
+		? ""
+		: html`<div class="warn-box">${selection === "all" ? "Đã tick sẵn mọi ô." : "Đã bỏ tick mọi ô."} Bot <strong>chưa lưu</strong> gì: xem lại rồi bấm Lưu, hoặc <a href="${guildUrl(ctx, path)}">về như đang lưu</a>.</div>`;
+	return html`<p class="select-all"><a href="${link("tat-ca")}">✅ Chọn tất cả</a> · <a href="${link("bo-het")}">⬜ Bỏ chọn tất cả</a></p>${pending}`;
+}
 const MAX_PAGE_NUMBER = 1_000_000;
 const SNOWFLAKE = /^\d{17,20}$/u;
 const USER_MENTION = /^<@!?(\d{17,20})>$/u;

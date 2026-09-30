@@ -15,6 +15,7 @@ import { html, RawHtml } from "../html";
 import { WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
+import { BulkSelection, bulkChecked, bulkSelection, selectAllLinks } from "../widgets";
 
 const PATH = "/channels";
 const SNOWFLAKE = /^\d{17,20}$/u;
@@ -144,13 +145,13 @@ function statusCell(id: string, label: string, custom: boolean): RawHtml
 <label class="ch-reset"><input type="checkbox" name="reset" value="${id}" aria-label="Bỏ cấu hình riêng của ${label}"> Bỏ cấu hình riêng</label>`;
 }
 
-function channelRow(guild: Guild, { channel, state, custom }: ChannelEntry, settings: GuildSettings): RawHtml
+function channelRow(guild: Guild, { channel, state, custom }: ChannelEntry, settings: GuildSettings, selection: BulkSelection): RawHtml
 {
 	const id = channel.id;
 	const label = channelLabel(guild, id);
 	return html`<tr>
 <td><label for="on-${id}">${label}</label><input type="hidden" name="d:${id}" value="${encodeState(state)}"></td>
-<td><input type="checkbox" id="on-${id}" name="on" value="${id}"${state.enabled ? html` checked` : ""}></td>
+<td><input type="checkbox" id="on-${id}" name="on" value="${id}"${bulkChecked(selection, state.enabled) ? html` checked` : ""}></td>
 <td>${statusCell(id, label, custom)}</td>
 <td>${numberInput(`xp:${id}`, state.xpPerMessage, settings.xpPerMessage, "xpPerMessage", `XP mỗi tin riêng của ${label}`)}</td>
 <td>${numberInput(`cd:${id}`, state.xpCooldownSeconds, settings.xpCooldownSeconds, "xpCooldownSeconds", `Cooldown riêng của ${label}`)}</td>
@@ -186,6 +187,7 @@ function renderChannels(ctx: GuildPageContext): WebResponse
 		};
 	});
 	const enabledCount = entries.filter(entry => entry.state.enabled).length;
+	const selection = bulkSelection(ctx.req.query);
 	const noneEnabled = enabledCount === 0 && !hidden.some(isEnabled);
 
 	const body = entries.length === 0
@@ -196,7 +198,7 @@ function renderChannels(ctx: GuildPageContext): WebResponse
 <thead><tr><th>Kênh</th><th>Tính XP</th><th>Trạng thái</th><th>XP mỗi tin</th><th>Cooldown (giây)</th></tr></thead>
 <tbody>${groupEntries(guild, entries).map(group => html`
 <tr class="ch-cat"><th colspan="5">${group.category ? html`📁 ${group.category.name}` : "Không có danh mục"}</th></tr>
-${group.entries.map(entry => channelRow(guild, entry, settings))}`)}
+${group.entries.map(entry => channelRow(guild, entry, settings, selection))}`)}
 </tbody></table>`;
 	const hiddenNote = hidden.length === 0
 		? ""
@@ -216,6 +218,7 @@ ${XP_CHANNEL_MODES.map(option => modeOption(option, mode))}
 <p>Đang tính XP: <strong>${enabledCount}/${entries.length}</strong> kênh. Giá trị chung: <strong>${settings.xpPerMessage} XP</strong> mỗi tin, cooldown <strong>${settings.xpCooldownSeconds} giây</strong> (sửa ở <a href="${guildUrl(ctx, "/settings")}">Cài đặt điểm</a>); ô trống là dùng giá trị chung.</p>
 ${hiddenNote}
 ${mode === "selected" && noneEnabled ? html`<div class="warn-box">${NO_XP_CHANNEL_WARNING} Tick kênh bên dưới rồi bấm Lưu để bật.</div>` : ""}
+${entries.length === 0 ? "" : selectAllLinks(ctx, PATH, selection)}
 <div class="ch-scroll">${body}</div>
 <p class="muted ch-note">Tin trong thread và bài trong forum tính theo kênh cha. Danh mục (category) không chọn được: hãy tick từng kênh trong đó. "Cấu hình riêng" là kênh đã được bật, tắt hoặc đặt XP riêng; kênh "theo chế độ" đổi theo chế độ ở trên. Tick "Bỏ cấu hình riêng" để kênh quay về theo chế độ (như <code>/config channel reset</code>); khi đó bot bỏ qua các thay đổi khác của kênh đó trong lần lưu này.</p>
 </section>
