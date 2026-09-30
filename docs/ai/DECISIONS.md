@@ -438,6 +438,31 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Schema: migration 6 thêm cột `guild_settings.level_up_channel_id` (NULL = kênh vừa nhắn). Backup cũ khôi phục vào code mới thì tự migrate; code cũ gặp DB mới thì từ chối chạy, như mọi migration.
   - Server ezOne sẽ đặt kênh `#🤖bot-commands` sau khi cập nhật.
 
+### DEC-045 — Trang Kênh tính XP hiện mọi kênh cho admin bot
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("cái chỗ chọn kênh tăng exp ấy -> hiển thị tất cả các kênh cho người có quyền quản trị ra nhé, chứ tôi vào 1 số kênh bị ẩn đi thì sao tôi quản trị đc")
+- **Nội dung:**
+  - Trang **Kênh tính XP** trên web hiện và cho sửa **mọi kênh** tính XP được, kể cả kênh riêng tư mà tài khoản đăng nhập không xem được trên Discord. Các kênh đó có nhãn 🔒 và một dòng ghi chú.
+  - Quyết định này thay cho quy tắc của review bảo mật Phase 16 ("trang kênh ẩn và không cho sửa các kênh người đăng nhập không xem được"), **chỉ ở trang Kênh tính XP**.
+  - Các nơi khác vẫn giữ quy tắc riêng tư: flash, tổng quan, nhật ký, Bảng vàng, ô chọn kênh thông báo, contribution, vote.
+  - Người vào được web luôn là admin bot (Manage Server hoặc role admin bot, DEC-039).
+
+### DEC-046 — Merge Phase 17 vào main và cài lên server
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("chạy lại 2 lượt rồi vào main rồi lên server lên")
+- **Nội dung:**
+  - 2 review độc lập (bảo mật; tính đúng đắn và API Discord) chạy lại trên `1af1eaa..3a6a126`. Kết quả: không có lỗi CAO; review đúng đắn có 4 lỗi TRUNG BÌNH, 2 review có tổng cộng 10 lỗi THẤP.
+  - Đã sửa ở `18a4ce8`, gồm:
+    - chống gửi trùng (bấm đúp);
+    - khoá sao lưu;
+    - lõi `channelAccess` dùng chung cho lệnh và web;
+    - form XP phải chọn Cộng/Trừ;
+    - snowflake không vượt giới hạn 64 bit;
+    - cảnh báo kênh thông báo có giới hạn tần suất;
+    - thêm test.
+  - Còn lại ghi vào PROP-038 (mở rộng): nhật ký hiện câu hỏi vote và tiêu đề contribution ở kênh riêng tư.
+  - Merge `phase-17/web-full` vào `main` rồi cài lên server `192.168.0.206` (có migration 6: sao lưu trước khi cài).
+
 ---
 
 ## Đang chờ quyết định
