@@ -401,6 +401,43 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
       - `/poll close|results|list`;
       - `/leaderboard`.
 
+### DEC-042 — Duyệt Phase 17: web quản trị đủ tính năng
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("1 oke có", "2 tạo vote bằng lệnh trên discord và có thể quản lý lịch sử trên web cũng được", "duyệt làm hết đi nhé")
+- **Nội dung:**
+  - Làm bù 17 mục còn thiếu của DEC-041 trên branch `phase-17/web-full`: nền móng, 3 agent song song, 2 review độc lập (bảo mật; tính đúng đắn). Merge vào `main` vẫn chờ duyệt ở cuối phase.
+  - **Được chỉnh và reset điểm trên web** như lệnh `/admin`:
+    - cộng/trừ/reset XP và điểm contribution của một người;
+    - reset toàn server, phải gõ `XAC NHAN` như lệnh;
+    - mọi thao tác ghi audit với người đăng nhập.
+  - **Vote vẫn chỉ tạo bằng lệnh `/poll create`** trong Discord. Web quản lý lịch sử vote: danh sách (mở/đóng), kết quả, đóng vote. Phiếu vẫn ẩn danh (DEC-026).
+  - Các trang mới:
+    - Thành viên: tìm theo tên hoặc ID, hồ sơ, chỉnh điểm;
+    - Bảng xếp hạng: 12 bảng dạng bảng;
+    - Contribution: danh sách, chi tiết, gỡ;
+    - Vote;
+    - Thống kê;
+    - Reset điểm;
+    - Sao lưu: tạo bản sao lưu, xem danh sách. **Không tải file database qua web**, vì file chứa dữ liệu của mọi thành viên.
+  - Quy tắc dùng chung đặt ở `src/discord/adminOps.ts`; lệnh `/admin` cũng chuyển sang dùng nó.
+  - Web chỉ chỉnh điểm cho tài khoản Discord thật và không phải bot, như option `thanh-vien` của lệnh.
+  - Mục trong kênh mà admin đăng nhập không xem được: giấu tiêu đề, câu hỏi và tên kênh. Chi tiết vote thì báo "không tìm thấy", như `/poll results`. Contribution vẫn gỡ được, như `/admin contribution remove` (lệnh này không kiểm tra kênh).
+
+### DEC-043 — Kênh nhận thông báo lên level
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("tin nhắn tăng level cần có chỗ setup là các tin nhắn thông báo như này thì nó sẽ thông báo cụ thể vào kênh nào - hiện tại thì tôi mong muốn nó sẽ thông báo chỉ vào kênh #🤖bot-commands", "phải có chỗ setup cho tôi đó nhé"; kèm ảnh bot chúc mừng lên level ngay trong thread công việc)
+- **Nội dung (business rule do người phụ trách quyết):**
+  - Admin chọn **một kênh nhận thông báo lên level và lên bậc**. Đã chọn thì bot **chỉ** gửi vào kênh đó, không gửi vào kênh hay thread thành viên vừa nhắn.
+  - Kênh đã chọn bị xoá hoặc bot mất quyền gửi tin thì bot bỏ qua thông báo và ghi cảnh báo vào log; **không** gửi về kênh vừa nhắn.
+  - Chưa chọn (mặc định) thì như trước: gửi ở kênh vừa nhắn. Thiết lập "thông báo lên level" bật/tắt giữ nguyên, và tắt thì không gửi ở đâu cả.
+  - Chỉ nhận kênh văn bản hoặc kênh thông báo. Người đặt phải tự xem và gửi được tin ở kênh đó (LL-013); bot cần View Channel và Send Messages.
+  - Nơi đặt:
+    - web, trang Cài đặt điểm;
+    - lệnh `/config xp kenh-thong-bao:<kênh>` (bỏ bằng `bo-kenh-thong-bao:True`);
+    - `/config view` và `/config panel` hiện kênh đang đặt.
+  - Schema: migration 6 thêm cột `guild_settings.level_up_channel_id` (NULL = kênh vừa nhắn). Backup cũ khôi phục vào code mới thì tự migrate; code cũ gặp DB mới thì từ chối chạy, như mọi migration.
+  - Server ezOne sẽ đặt kênh `#🤖bot-commands` sau khi cập nhật.
+
 ---
 
 ## Đang chờ quyết định

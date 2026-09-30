@@ -131,7 +131,9 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
       4. transaction: cooldown theo member_xp.last_message_xp_at → cooldown
                       Ledger.record(xp, snapshot team) + cập nhật last_message_xp_at
   → lên level và bật thông báo → vượt mốc cảnh giới thì gửi thông báo "đột phá", ngược lại gửi "tu vi tăng tiến"
-    (views/progression.ts; chỉ ping đúng người đó)
+    (views/progression.ts; chỉ ping đúng người đó). Gửi vào kênh `guild_settings.level_up_channel_id` nếu admin đã chọn
+    (DEC-043; kênh không còn hoặc bot thiếu View Channel/Send Messages thì bỏ qua và ghi cảnh báo, không gửi về kênh vừa
+    nhắn); chưa chọn thì gửi ở kênh (thread) vừa nhắn
   → mọi tin được XP: syncTierRoles (thêm role cảnh giới hiện tại, bỏ role cảnh giới khác; DEC-031)
 ```
 
@@ -310,9 +312,24 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
 - Selfcheck: `checkWebConfig` (dùng đúng `loadWebConfig`) in trạng thái tắt/bật, địa chỉ lắng nghe và redirect cần đăng ký; lỗi chỉ nêu tên biến.
 - Unit systemd không đổi: cổng > 1024 không cần capability; `RestrictAddressFamilies` đã có `AF_INET` và `AF_INET6`.
 
-**Database:** không đổi schema, không có migration mới (vẫn 5 migration). Phiên lưu trong bộ nhớ, nên phương án migration 6 (bảng phiên) của PROP-037 không làm (DEC-039). Backup/restore không đổi. Mọi thao tác ghi đi qua service có sẵn, audit với `actorId` là Discord user ID của người đăng nhập.
+**Database:** Phase 16 không đổi schema. Phiên lưu trong bộ nhớ, nên phương án bảng phiên của PROP-037 không làm (DEC-039). Phase 17 không thêm migration cho web; migration 6 là của DEC-043 (kênh thông báo lên level, mục 4). Mọi thao tác ghi đi qua service có sẵn, audit với `actorId` là Discord user ID của người đăng nhập.
 
-**Trang:** 8 module trong `src/web/pages/` (`NavKey` → đường dẫn dưới `/g/<guildId>`): `overview` (rỗng) · `channels` `/channels` · `teams` `/teams` · `settings` `/settings` · `roles` `/roles` · `board` `/board` · `tiers` `/tiers` · `audit` `/audit`. Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), thêm vào `PAGE_MODULES`; cần mục menu thì thêm `NavKey` và `NAV_ITEMS`.
+**Trang:** 15 module trong `src/web/pages/` (`NavKey` → đường dẫn dưới `/g/<guildId>`), menu chia 3 nhóm (`NavItem.group`):
+
+| Nhóm | Trang (đường dẫn) | Tương ứng lệnh |
+| --- | --- | --- |
+| Dữ liệu | `overview` (rỗng) | `/config view` |
+| | `members` `/members`, `/members/view?u=<userId>`; POST `/members/xp`, `/members/xp-reset`, `/members/contribution`, `/members/contribution-reset` | `/admin xp view·give·remove·reset`, `/admin contribution adjust·reset` |
+| | `leaderboard` `/leaderboard?loai=&pv=&ky=&trang=` | `/leaderboard` |
+| | `contributions` `/contributions?tt=&u=&trang=`, `/contributions/view?id=`; POST `/contributions/remove` | `/contribution list·view`, `/admin contribution remove` |
+| | `polls` `/polls?tt=&trang=`, `/polls/view?id=`; POST `/polls/close` | `/poll list·results·close` (tạo vote chỉ bằng lệnh, DEC-042) |
+| | `stats` `/stats` | `/admin stats` |
+| Cấu hình | `channels`, `teams`, `settings`, `roles`, `board`, `tiers` | `/config …` |
+| Hệ thống | `reset` `/reset`; POST `/reset/xp`, `/reset/contribution` | `/admin xp reset-all`, `/admin contribution reset-all` |
+| | `backup` `/backup`; POST `/backup` | `/admin backup` (không có đường tải file) |
+| | `audit` `/audit` | `/admin audit` |
+
+Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), thêm vào `PAGE_MODULES`; cần mục menu thì thêm `NavKey` và `NAV_ITEMS`.
 
 **Phủ tính năng (DEC-041):**
 - Mọi việc admin làm được trên Discord phải có trên web. `test/web-parity.test.ts` đọc định nghĩa lệnh thật (`loadModules`, như `commands.test.ts`) và đối chiếu từng subcommand và context menu với bảng `COVERAGE`. Mỗi mục có tên option lúc xếp loại và thuộc một trong ba loại:
@@ -320,19 +337,48 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
   - `discordOnly`: kèm lý do;
   - `pending`: chỉ các mục trong `PENDING_AT_DEC_041`.
 - Lệnh, subcommand hay option mới chưa xếp loại thì test fail.
+- Phase 17 (DEC-042) đã làm hết 17 mục ban đầu, nên `PENDING_AT_DEC_041` rỗng: không lệnh nào được ở loại `pending`.
 - Logic dùng chung giữa lệnh và trang đặt trong `src/discord/` theo mẫu `configOps.ts`: hàm nhận `client`/`services` và dữ liệu thuần, trả thông báo kiểu Discord, và các tác dụng phụ lên Discord inject được để test.
+
+**Thao tác quản trị dùng chung: `src/discord/adminOps.ts` (Phase 17)**
+- Quy tắc và thông báo của `/admin xp|contribution|backup`, dùng chung cho lệnh `/admin` và web. Gồm hằng số (`RESET_CONFIRMATION`, `MAX_ADJUST`, `REASON_MAX_LENGTH`, `MANUAL_BACKUP_COOLDOWN_MS`...), kiểm tra đầu vào (`normalizeReason`, `assertXpAmount`, `assertContributionDelta`, `assertResetConfirmation`) và thao tác:
+  - `adjustMemberXp`, `resetMemberXp`, `resetAllXp`;
+  - `adjustMemberContribution`, `resetMemberContribution`, `resetAllContribution`;
+  - `removeContribution`;
+  - `syncMemberTierRoles`;
+  - `assertManualBackupAllowed`, `createManualBackup`;
+  - `assertAdjustableUser`: tài khoản thật, không phải bot, như option `thanh-vien`.
+- `AdminActions` (`WebDeps.adminActions`, mặc định `DEFAULT_ADMIN_ACTIONS`): tác dụng phụ lên Discord inject được để test:
+  - sửa message contribution/vote;
+  - `syncTierRoles`;
+  - `searchMembers`: REST `members/search`, không cần intent GuildMembers;
+  - `displays`: MemberDirectory;
+  - `fetchUser`: REST, null nếu không có tài khoản.
+- Lệnh trả lời trước rồi mới gọi API role hoặc sửa message (giới hạn 3 giây của interaction). Web gọi xong rồi mới chuyển hướng; đồng bộ role hay sửa message thất bại thì nối một dòng cảnh báo vào thông báo.
+
+**Phần chung của các trang dữ liệu (Phase 17)**
+- `src/web/discord.ts`:
+  - `fetchMember` (server kiểm quyền);
+  - `lookupMember` (trang lấy thành viên được thao tác; Discord lỗi thì UserError);
+  - `canViewItemChannel` / `hiddenChannelIds`: cùng quy tắc `canViewChannel` của lệnh, người xem luôn là admin. Kênh không còn thì xem được; thread riêng tư cần là thành viên hoặc có Manage Threads.
+- `src/web/widgets.ts`: `queryPage` (`?trang=`), `pager` (giữ bộ lọc), `parseUserId` (ID hoặc mention), `parsePositiveId`, `userCell`/`memberLink` (avatar chỉ từ `cdn.discordapp.com`), `formatDateTime`, `HIDDEN_ITEM_TEXT`, `withMessageEditNote`.
+- `GuildRoute.errorRedirect`: POST của trang chi tiết chỉ định trang GET để quay về khi có lỗi (ví dụ `/members/view?u=<id>`). Server chỉ nhận đường dẫn con chữ thường kèm query đơn giản (`ERROR_REDIRECT`); sai định dạng hoặc hàm ném lỗi thì dùng `pageAfterPost`.
+- `discordText` đổi mốc thời gian `<t:giây:kiểu>` thành giờ Việt Nam và bỏ dấu `\` của markdown đã escape, nên thông báo của adminOps và service hiện đúng trên web.
+- Danh sách có phân trang ở tầng service: `PollService.listPage` (mở/đóng tính tại thời điểm đọc, như `Poll.open`), `ContributionService.listPage` (lọc tác giả, trạng thái kể cả đã gỡ). Kẹp trang bằng `src/shared/paging.ts`; SQL dùng named parameter.
+- Riêng tư: mục trong kênh admin không xem được bị giấu tiêu đề, câu hỏi, tên kênh và link. Chi tiết vote thì 400 "không tìm thấy" (như `/poll results`); contribution vẫn gỡ được (như `/admin contribution remove`).
+- Sao lưu: web chỉ tạo bản sao lưu và liệt kê tên file, không có route đọc file. `BackupService.list` không tạo thư mục khi chỉ đọc.
 
 ## 4. Dữ liệu
 
 | Nhóm | Bảng |
 | --- | --- |
-| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
+| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`, `level_up_channel_id`), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
 | Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration (5 migration, version lưu ở `PRAGMA user_version`):
+Migration (6 migration, version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
@@ -348,6 +394,9 @@ Migration (5 migration, version lưu ở `PRAGMA user_version`):
   - Backup cũ (version ≤ 4) khôi phục vào code mới thì tự migrate lên 5 lúc khởi động, với chế độ `all`. Guild đã chuyển sang `selected` phải chọn lại chế độ và bật lại channel sau khi khôi phục (DEPLOY mục 6).
   - Code cũ (migration ≤ 4) gặp DB version 5 thì từ chối khởi động, như mọi migration; selfcheck của code cũ báo ❌.
 - Phase 16 (trang web quản trị, DEC-039) **không** thêm migration: phiên đăng nhập web chỉ lưu trong bộ nhớ (mục 3.7).
+- **6** (DEC-043): `guild_settings.level_up_channel_id TEXT` (NULL = gửi thông báo lên level ở kênh vừa nhắn, như trước). Guild đang chạy nhận NULL nên hành vi không đổi khi cập nhật.
+  - Backup/restore: vẫn một file SQLite. Backup cũ (≤ 5) khôi phục vào code mới thì tự migrate lên 6, kênh thông báo trở về NULL: đặt lại sau khi khôi phục.
+  - Code cũ (≤ 5) gặp DB version 6 thì từ chối khởi động; selfcheck của code cũ báo ❌.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;

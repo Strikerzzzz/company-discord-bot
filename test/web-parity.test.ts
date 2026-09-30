@@ -27,7 +27,7 @@ type Coverage =
 	| { options: readonly string[]; pending: string };
 
 /**
- * Việc còn thiếu trên web. Lúc chốt DEC-041 (2026-09-30) có 17 mục; Phase 17 đã làm hết (DEC-044), nên từ nay không lệnh nào được
+ * Việc còn thiếu trên web. Lúc chốt DEC-041 (2026-09-30) có 17 mục; Phase 17 đã làm hết (DEC-042), nên từ nay không lệnh nào được
  * xếp vào `pending`: tính năng mới phải có trang web ngay.
  */
 const PENDING_AT_DEC_041: ReadonlySet<string> = new Set<string>();

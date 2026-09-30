@@ -66,7 +66,11 @@ Admin cấu hình bot bằng trình duyệt thay cho, hoặc cùng với, lệnh
 - **Chạy trong chính process của bot**: không có server hay dịch vụ riêng, không cần cài thêm gì. Web tắt khi không đặt `WEB_PORT`.
 - **Chỉ dùng trong mạng nội bộ công ty hoặc qua VPN.** Không mở cổng ra Internet.
 - **Đăng nhập bằng tài khoản Discord** (scope `identify`: bot chỉ biết bạn là ai), không có mật khẩu riêng. Chỉ người có Manage Server hoặc role admin bot vào được; quyền được kiểm tra lại ở mỗi lần mở trang hay bấm lưu. Phiên đăng nhập 8 giờ, khởi động lại bot thì phải đăng nhập lại.
-- **Các trang**: tổng quan; kênh tính XP (toàn bộ kênh cùng lúc, XP và cooldown riêng); team; cài đặt điểm (XP, chống spam, vote, contribution); quyền (role admin bot, role tạo vote); Bảng vàng; danh hiệu (bộ, tên bậc, role theo bậc); nhật ký quản trị.
+- **Các trang**:
+  - Dữ liệu: tổng quan; thành viên (tìm, hồ sơ, cộng/trừ/reset điểm); bảng xếp hạng; contribution (danh sách, gỡ); vote (lịch sử, kết quả, đóng); thống kê.
+  - Cấu hình: kênh tính XP (toàn bộ kênh cùng lúc, XP và cooldown riêng); team; cài đặt điểm (XP, chống spam, thông báo lên level và kênh nhận thông báo, vote, contribution); quyền (role admin bot, role tạo vote); Bảng vàng; danh hiệu (bộ, tên bậc, role theo bậc).
+  - Hệ thống: reset điểm toàn server; sao lưu; nhật ký quản trị.
+- **Mọi việc admin làm được bằng lệnh đều làm được trên web** (DEC-041). Tạo vote vẫn bằng lệnh `/poll create`.
 - Mọi thao tác được kiểm tra như lệnh Discord và ghi audit log với người thao tác là tài khoản Discord đã đăng nhập. Lệnh và bảng trong Discord giữ nguyên.
 
 | Biến môi trường | Bắt buộc khi bật web | Ý nghĩa |

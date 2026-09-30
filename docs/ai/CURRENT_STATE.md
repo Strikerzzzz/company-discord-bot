@@ -11,7 +11,14 @@
   - Bản đang chạy: **`8da7fe2`** (gồm Phase 15 và 16).
   - Trang web quản trị **đã bật** ở `http://192.168.0.206:8787`, bằng `deploy/enable-web.sh`: `ufw` chỉ mở cổng 8787 cho 10/8, 172.16/12, 192.168/16. Ngày 2026-09-30 đã có lượt đăng nhập admin thành công.
   - `main` mới hơn bản đang chạy chỉ ở script `deploy/enable-web.sh`, tài liệu và test.
-- **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động. Còn 17 mục thiếu trên web (`/admin xp|contribution|stats|backup`, xem/đóng vote, xem contribution, bảng xếp hạng): **Phase 17, chờ duyệt kế hoạch**.
+- **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động.
+- **Phase 17 (DEC-042) và kênh thông báo lên level (DEC-043)** trên branch `phase-17/web-full`, **chưa merge, chưa cài lên server**:
+  - 7 trang web mới: Thành viên, Bảng xếp hạng, Contribution, Vote, Thống kê, Reset điểm, Sao lưu. `test/web-parity.test.ts` không còn mục nào thiếu.
+  - Nền móng `src/discord/adminOps.ts`, dùng chung cho `/admin` và web.
+  - Kênh nhận thông báo lên level (migration 6), đặt trên web hoặc bằng `/config xp kenh-thong-bao`.
+  - Cách làm: nền móng, 3 agent song song, tích hợp. 1018/1019 test pass; test còn lại bỏ qua vì là test quyền thư mục kiểu Linux.
+  - Đang chạy 2 review độc lập (bảo mật; tính đúng đắn). Sau đó chờ người phụ trách duyệt merge.
+  - Sau khi cài: đặt kênh thông báo lên level là `#🤖bot-commands` (web, trang Cài đặt điểm), rồi kiểm theo `docs/TEST-PLAN.md` mục 13.
 - Việc người phụ trách còn làm trên Discord hoặc web:
   - chuyển kênh tính XP sang "chỉ kênh được bật" và tick các kênh được tính;
   - reset điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`;
@@ -53,7 +60,8 @@ Lịch sử Phase 15–16 (giữ để tra cứu):
 | `/leaderboard` | Ảnh bảng xếp hạng; Activity/Contribution × cá nhân/team × tổng/tuần/tháng; nút chuyển bảng, trang, "Hạng của tôi" |
 | Bảng vàng | `/config board`: một message 2–3 ảnh bảng xếp hạng, tự cập nhật 10 phút |
 | Quản trị | `/admin xp|contribution|stats|audit|backup`; `/config` (XP, channel, team, admin-role, poll, contribution, tier, board) và `/config panel` |
-| Web quản trị | `http://<server>:<WEB_PORT>`, đăng nhập Discord, chỉ mạng nội bộ (DEC-039): tổng quan, kênh, team, cài đặt điểm, quyền, Bảng vàng, danh hiệu, nhật ký. Theo DEC-041 mọi tính năng phải có trên web; phần `/admin` còn thiếu làm ở Phase 17 |
+| Web quản trị | `http://<server>:<WEB_PORT>`, đăng nhập Discord, chỉ mạng nội bộ (DEC-039). Phase 16: tổng quan, kênh, team, cài đặt điểm, quyền, Bảng vàng, danh hiệu, nhật ký. Phase 17 (branch, chưa merge): thành viên, bảng xếp hạng, contribution, vote, thống kê, reset điểm, sao lưu. Mọi tính năng phải có trên web (DEC-041) |
+| Thông báo lên level | Bật/tắt; kênh nhận thông báo (DEC-043, branch Phase 17): đã chọn thì chỉ gửi vào kênh đó, chưa chọn thì gửi ở kênh vừa nhắn |
 | Vận hành | Migration tự động (3 migration), backup hàng ngày, systemd hardening, runbook `docs/DEPLOY.md` |
 
 ## 3. Kiểm chứng
@@ -115,3 +123,4 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-29 | DEC-036: cài lên server `192.168.0.206` (systemd, Node 22.23.2). 782/782 test pass trên server, selfcheck 0 ❌, bot online ở server ezOne. LL-021 (pipe PowerShell chèn BOM/CRLF). |
 | 2026-09-29 | DEC-037…040: Phase 15 (`/config panel`, chế độ kênh) và Phase 16 (web quản trị) merge vào `main`, cài lên server (`8da7fe2`), bật web ở cổng 8787 bằng `deploy/enable-web.sh`. |
 | 2026-09-30 | DEC-041: rule mọi tính năng quản lý được trên web; `test/web-parity.test.ts`; đề xuất Phase 17 làm bù 17 mục còn thiếu. |
+| 2026-09-30 | DEC-042: duyệt Phase 17 (nền móng adminOps, 3 agent, tích hợp; 7 trang mới). DEC-043: kênh nhận thông báo lên level (migration 6). PROP-038 (nhật ký giấu tiêu đề contribution ở kênh riêng tư). 1018/1019 test. |

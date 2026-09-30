@@ -26,7 +26,7 @@
 | 14 | Hoàn tất trước khi chạy thật | **Đã merge vào `main`** (DEC-035) | DEC-034 |
 | 15 | Bảng cấu hình chung, chế độ kênh tính XP | **Đã merge vào `main`** (DEC-038) | DEC-037 |
 | 16 | Trang web quản trị (mạng nội bộ, đăng nhập Discord) | **Đã merge vào `main`** (DEC-040) | DEC-039 |
-| 17 | Web quản trị đủ tính năng (làm bù theo DEC-041) | **Đề xuất, chờ duyệt kế hoạch** | DEC-041 |
+| 17 | Web quản trị đủ tính năng (làm bù theo DEC-041), kênh thông báo lên level | **Đã code trên branch `phase-17/web-full`**, đang review; chờ duyệt merge | DEC-041, DEC-042, DEC-043 |
 
 ## Chi tiết
 
@@ -120,7 +120,7 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
   - Ảnh thẻ và thông báo theo giọng văn từng bộ.
 - **Cách làm:** nền móng (dữ liệu bộ, TierSetService, migration 4) → 3 agent song song (vẽ ảnh; bảng điều khiển và role; giọng văn và tài liệu) → review độc lập.
 
-### Phase 17 — Web quản trị đủ tính năng · ĐỀ XUẤT (DEC-041)
+### Phase 17 — Web quản trị đủ tính năng · ĐÃ CODE, CHỜ MERGE (DEC-042)
 
 - **Mục tiêu:** làm bù 17 mục còn thiếu trên web (danh sách ở DEC-041), để `PENDING_AT_DEC_041` trong `test/web-parity.test.ts` về rỗng.
 - **Trang dự kiến:**
@@ -131,7 +131,8 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
   - Bảng xếp hạng: dạng bảng.
   - Thống kê.
   - Sao lưu: tạo bản sao lưu, xem danh sách; không tải file database qua web.
-- **Cách làm:** nền móng (tách logic dùng chung khỏi `admin.ts` và `poll.ts` sang `src/discord/`), agent song song theo trang, review bảo mật và tính đúng đắn độc lập.
+- **Cách làm:** nền móng (tách logic dùng chung khỏi `admin.ts` sang `src/discord/adminOps.ts`), agent song song theo trang, review bảo mật và tính đúng đắn độc lập.
+- **Làm thêm (DEC-043):** kênh nhận thông báo lên level (migration 6), theo yêu cầu của người phụ trách trong lúc làm Phase 17.
 
 ### Phase 11 — Security review và Deployment
 
@@ -160,3 +161,4 @@ Give/remove/reset XP và contribution (có xác nhận, ghi audit log), thống 
 | 2026-09-29 | DEC-039: thêm Phase 16 (trang web quản trị) |
 | 2026-09-29 | DEC-040: merge Phase 16 vào `main` |
 | 2026-09-30 | DEC-041: rule "mọi tính năng quản lý được trên web"; thêm Phase 17 (làm bù cho tính năng cũ), chờ duyệt |
+| 2026-09-30 | DEC-042: duyệt Phase 17; DEC-043: thêm kênh thông báo lên level vào Phase 17 |

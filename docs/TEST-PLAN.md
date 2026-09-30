@@ -303,3 +303,56 @@
 **Tắt web**
 
 - [ ] Xoá `WEB_PORT`, chạy `sudo bash ~/deploy/start.sh` → selfcheck ghi "tắt"; từ máy khác `/healthz` không kết nối được; bot vẫn chạy, lệnh Discord bình thường. Bật lại nếu tiếp tục dùng web.
+
+## 13. Web quản trị đủ tính năng và kênh thông báo lên level (Phase 17, DEC-041…043)
+
+> Làm sau khi cập nhật lên bản Phase 17. Dùng A, B, C như mục 0. Chạy thử trên một thành viên thử nghiệm (ví dụ C); xong thì trả lại điểm.
+> Nên tạo bản sao lưu trước (trang **Sao lưu**), vì mục này có reset điểm.
+
+**Kênh nhận thông báo lên level (DEC-043)**
+
+- [ ] Trang **Cài đặt điểm**, ô "Kênh nhận thông báo lên level" đang là "Kênh thành viên vừa nhắn (mặc định)". Danh sách chỉ có kênh văn bản và kênh thông báo mà A xem được; không có kênh thoại, danh mục.
+- [ ] Chọn `#🤖bot-commands`, lưu → báo "Kênh thông báo lên level: #🤖bot-commands"; `/config view` và trang Tổng quan khớp; `/admin audit` có một dòng đổi cấu hình của A.
+- [ ] Cho C lên level (A cộng XP cho C trên trang **Thành viên** cho gần mốc, rồi C nhắn một tin hợp lệ trong một thread công việc) → lời chúc mừng xuất hiện ở `#🤖bot-commands` và ping C; **không** có tin nào trong thread.
+- [ ] Tạm bỏ quyền Send Messages của bot ở `#🤖bot-commands`, cho C lên level lần nữa → không có tin ở đâu cả; log có cảnh báo "kênh thông báo … không còn hoặc bot thiếu quyền". Trả lại quyền.
+- [ ] Chọn một kênh mà bot không gửi được tin → bị từ chối "Bot thiếu quyền …", không có gì thay đổi.
+- [ ] `/config xp bo-kenh-thong-bao:True` → `/config view` ghi "kênh thành viên vừa nhắn". `/config xp kenh-thong-bao:#🤖bot-commands` → đặt lại được. Chọn cả hai option cùng lúc → bị từ chối.
+
+**Thành viên**
+
+- [ ] Trang **Thành viên**: tab "Theo XP" và "Theo contribution" khớp `/leaderboard` kỳ tổng; tên và avatar đúng; phân trang giữ tab.
+- [ ] Gõ vài chữ đầu tên C vào ô tìm → có C; dán ID của C (hoặc mention `<@ID>`) → mở thẳng hồ sơ C.
+- [ ] Hồ sơ C khớp `/admin xp view thanh-vien:C` (level, tổng XP, hạng, cảnh giới, biến động gần nhất).
+- [ ] Cộng 100 XP cho C kèm lý do "test web" → báo "Đã cộng 100 XP cho @C…"; `/admin xp view` khớp; nếu C vượt mốc bậc và bot có Manage Roles thì role danh hiệu của C đổi theo, và thông báo có dòng 🏅. Trừ lại 100 XP → về như cũ.
+- [ ] Nhập `1.000`, `2,5`, `0`, `-3` vào ô XP → mỗi lần bị từ chối, điểm không đổi, trang vẫn ở hồ sơ C.
+- [ ] Cộng 5 rồi trừ 5 điểm contribution cho C → `/rank thanh-vien:C` khớp. Trừ nhiều hơn điểm hiện có → bị từ chối (điểm không âm).
+- [ ] Bấm reset XP mà không tick ô xác nhận → bị từ chối. Tick rồi reset (chỉ làm trên tài khoản thử nghiệm) → C về 0 XP; `/admin audit` có dòng reset do A.
+- [ ] Mở hồ sơ bot (dán ID của bot) → báo không thao tác được với bot, không có form. Dán một ID bịa (17–20 chữ số) → "Không tìm thấy tài khoản Discord có ID này".
+
+**Bảng xếp hạng, Thống kê**
+
+- [ ] 12 tổ hợp loại × phạm vi × kỳ của trang **Bảng xếp hạng** khớp `/leaderboard` tương ứng (điểm và thứ tự); bảng team hiện tên role.
+- [ ] Trang **Thống kê** khớp `/admin stats`. Kênh riêng tư mà A không xem được hiện "#kênh-riêng-tư".
+
+**Contribution**
+
+- [ ] Trang **Contribution** liệt kê giống `/contribution list`; lọc theo C và "Đã gỡ" hoạt động; phân trang giữ bộ lọc.
+- [ ] Mở một contribution thử nghiệm → nội dung khớp `/contribution view`; link mở đúng message trong Discord.
+- [ ] Gỡ contribution đó (tick xác nhận) → trang báo đã gỡ; message trong Discord chuyển "Đã bị gỡ", mất nút; điểm của tác giả bị huỷ (`/rank`); `/admin audit` có dòng gỡ do A.
+- [ ] Contribution đăng trong kênh A không xem được (nếu có): danh sách và chi tiết không hiện tiêu đề, nội dung, tên kênh.
+
+**Vote**
+
+- [ ] Trang **Vote** có ghi chú "tạo vote bằng /poll create"; tab Đang mở/Đã đóng khớp `/poll list`.
+- [ ] B tạo một vote thử bằng `/poll create`, vài người bấm chọn. Trên web, kết quả khớp `/poll results`, không có tên người vote.
+- [ ] Đóng vote trên web (tick xác nhận) → message vote trong Discord chuyển sang đã đóng, nút bị vô hiệu; `/poll results` ghi đã đóng.
+
+**Reset điểm, Sao lưu**
+
+- [ ] Trang **Reset điểm**: gõ sai chuỗi (ví dụ `xac nhan`) → bị từ chối, điểm không đổi. (Chỉ làm tiếp khi thật sự muốn reset toàn server, ví dụ đúng đợt bắt đầu tính điểm lại theo DEPLOY mục 7.4.) Gõ `XAC NHAN` → reset; `/leaderboard` trống; `/admin audit` có dòng reset toàn server do A.
+- [ ] Trang **Sao lưu**: bấm tạo → báo tên file; file có trong thư mục backup trên server; bấm lại ngay → bị từ chối "Mỗi 10 phút chỉ tạo được một bản" kèm giờ Việt Nam (không phải chuỗi `<t:…>`). Trang không có link tải file.
+
+**Quyền và an toàn**
+
+- [ ] C gõ thẳng `http://192.168.0.206:8787/g/<Server ID>/members` → không vào được.
+- [ ] Tên hoặc tiêu đề có `<b>` (contribution thử, câu hỏi vote thử) hiện nguyên văn ở danh sách, chi tiết và dòng báo kết quả.

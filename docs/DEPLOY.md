@@ -289,6 +289,11 @@ Mỗi bước ghi trang tương ứng trên `/config panel` và lệnh gõ tay t
 3. **Chỉnh XP và chống spam** nếu muốn đổi XP mỗi tin, cooldown, độ dài tối thiểu, khoảng chống trùng, hoặc tắt thông báo lên level.
    - Trên bảng: trang **XP**.
    - Lệnh gõ tay: `/config xp`.
+   - **Kênh nhận thông báo lên level** (DEC-043), nên đặt, ví dụ kênh lệnh bot:
+     - chưa đặt thì bot chúc mừng ngay trong kênh hay thread người đó vừa nhắn, kể cả thread công việc;
+     - đặt rồi thì bot chỉ gửi vào kênh đã chọn;
+     - đặt trên web (trang **Cài đặt điểm**, ô "Kênh nhận thông báo lên level") hoặc bằng `/config xp kenh-thong-bao:<kênh>`; bỏ bằng `bo-kenh-thong-bao:True`;
+     - bot cần View Channel và Send Messages ở kênh đó; kênh bị xoá hoặc bot mất quyền thì bot không gửi thông báo nữa (log có cảnh báo).
 4. **Chỉnh vote và contribution**: XP mặc định khi vote; giới hạn XP một người nhận từ vote trong một ngày (giờ Việt Nam; mặc định 25, **0 = không giới hạn**; DEC-028); điểm mỗi lượt ghi nhận contribution; role được tạo vote (không đặt thì chỉ admin tạo được vote).
    - Trên bảng: trang **Vote**.
    - Lệnh gõ tay: `/config poll` (có option `gioi-han-xp-ngay`, `role-tao-vote`), `/config contribution`.
@@ -557,12 +562,19 @@ Unit systemd **không cần sửa**: cổng lớn hơn 1024 nên không cần qu
 | Trang | Làm được gì | Tương ứng trong Discord |
 | --- | --- | --- |
 | **Tổng quan** | Tóm tắt cấu hình của server | `/config view`, trang Tổng quan của `/config panel` |
+| **Thành viên** | Tìm theo tên hoặc dán ID; danh sách theo XP hoặc contribution. Hồ sơ một người: level, hạng, cảnh giới, biến động XP gần nhất, contribution gần nhất. Cộng/trừ XP, cộng/trừ điểm contribution (kèm lý do), reset XP hoặc điểm contribution của người đó (phải tick xác nhận). Chỉnh XP xong bot đồng bộ role danh hiệu | `/admin xp view · give · remove · reset`, `/admin contribution adjust · reset` |
+| **Bảng xếp hạng** | 12 bảng: Activity/Contribution × cá nhân/team × tổng/tuần/tháng, dạng bảng, có phân trang | `/leaderboard` |
+| **Contribution** | Danh sách (lọc còn hiệu lực/đã gỡ, theo tác giả), chi tiết, gỡ contribution (huỷ điểm, message trong Discord chuyển sang "Đã bị gỡ") | `/contribution list · view`, `/admin contribution remove` |
+| **Vote** | Lịch sử vote (đang mở/đã đóng), kết quả, đóng vote. **Tạo vote vẫn bằng lệnh `/poll create`** trong Discord. Phiếu ẩn danh: web không hiện ai chọn gì | `/poll list · results · close` |
+| **Thống kê** | Số người có XP, tổng XP, XP và lượt được XP 7 ngày, top kênh 7 ngày, contribution, vote, team | `/admin stats` |
 | **Kênh tính XP** | Chọn chế độ kênh (mục 7.3). Thấy **toàn bộ kênh** cùng lúc, không giới hạn 25; tick để bật hoặc tắt tính XP; đặt XP và cooldown riêng của từng kênh | `/config channel mode · set · reset · list`, trang Kênh |
 | **Team** | Thêm, bỏ team. Có mục gỡ team mà role đã bị xoá khỏi server | `/config team`, trang Team |
-| **Cài đặt điểm** | XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng, thông báo lên level; XP khi vote, giới hạn XP vote mỗi ngày; điểm mỗi lượt ghi nhận contribution | `/config xp`, `/config poll`, `/config contribution`, trang XP và Vote |
+| **Cài đặt điểm** | XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng, thông báo lên level và **kênh nhận thông báo lên level**; XP khi vote, giới hạn XP vote mỗi ngày; điểm mỗi lượt ghi nhận contribution | `/config xp`, `/config poll`, `/config contribution`, trang XP và Vote |
 | **Quyền** | Role admin bot, role được tạo vote | `/config admin-role`, `/config poll role-tao-vote` |
 | **Bảng vàng** | Chọn kênh Bảng vàng hoặc tắt (mục 7.2) | `/config board` |
 | **Danh hiệu** | Chọn bộ, đổi tên bậc, gán role theo bậc, tạo/đồng bộ role (mục 7.1) | `/config tier panel`, `/config tier …` |
+| **Reset điểm** | Reset XP hoặc điểm contribution của **toàn server**, phải gõ `XAC NHAN` (mục 7.4). Nên tạo bản sao lưu trước | `/admin xp reset-all`, `/admin contribution reset-all` |
+| **Sao lưu** | Tạo bản sao lưu ngay (mỗi 10 phút một bản), xem danh sách bản thủ công và bản tự động. **Không tải file database qua web**; chép ra ngoài server theo mục 6 | `/admin backup` |
 | **Nhật ký** | Xem nhật ký quản trị | `/admin audit` |
 
 Cách trang hoạt động:
