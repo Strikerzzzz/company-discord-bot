@@ -515,6 +515,15 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Lệnh `/rank-style bo:<…>`, audit `tier_pref.allow`, `tier_pref.clear`.
   - Nút ❓ có customId `rankhelp:show`.
 
+### DEC-048 — Merge Phase 18 vào main và cài lên server
+
+- **Ngày:** 2026-09-30 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("duyệt nhé")
+- **Nội dung:**
+  - Merge `phase-18/quick-wins` vào `main`: chọn tất cả, nhiều role quyền (migration 7), bộ Mobile Legends, trang Kênh tính XP hiện mọi kênh (DEC-045), bộ danh hiệu cá nhân và nút ❓ (migration 8).
+  - 3 review độc lập không có lỗi CAO. Lỗi TRUNG BÌNH đã sửa: bảng role admin bỏ "Chọn tất cả" và bắt tick xác nhận; nút ❓ chỉ nêu kênh người bấm xem được.
+  - Kiểm thử: 1094/1095 test trên Windows, 1095/1095 trên server Linux.
+  - Cài lên `192.168.0.206`: sao lưu trước, vì có migration 7 và 8.
+
 ---
 
 ## Đang chờ quyết định
