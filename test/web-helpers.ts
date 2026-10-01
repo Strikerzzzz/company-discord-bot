@@ -64,7 +64,13 @@ export interface FakeChannelSpec
 	position?: number;
 	/** Quyền theo kênh của từng thành viên (mặc định: quyền cấp server của thành viên đó). */
 	permissionsByMember?: Record<string, bigint[]>;
+	/** Chỉ cho thread: đã lưu trữ (mặc định false). */
+	archived?: boolean;
+	/** Chỉ cho thread: thành viên của thread (members.fetch tìm thấy), dùng khi kiểm tra thread riêng tư. Mặc định không ai. */
+	threadMembers?: string[];
 }
+
+const THREAD_TYPES: readonly ChannelType[] = [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread];
 
 export interface FakeRoleSpec
 {
@@ -120,6 +126,12 @@ export function addRole(world: WebWorld, spec: FakeRoleSpec): void
 
 export function addChannel(world: WebWorld, spec: FakeChannelSpec): void
 {
+	const thread = THREAD_TYPES.includes(spec.type);
+	const threadMembers = {
+		fetch: (options: { member: string }): Promise<object> => ((spec.threadMembers ?? []).includes(options.member)
+			? Promise.resolve({ id: options.member })
+			: Promise.reject(Object.assign(new Error("Unknown Member"), { status: 404, code: 10007 }))),
+	};
 	world.channels.set(spec.id, {
 		id: spec.id,
 		name: spec.name,
@@ -129,7 +141,7 @@ export function addChannel(world: WebWorld, spec: FakeChannelSpec): void
 		rawPosition: spec.position ?? 0,
 		guild: world.guild,
 		guildId: world.guild.id,
-		isThread: () => false,
+		isThread: () => thread,
 		isDMBased: () => false,
 		isTextBased: () => spec.type !== ChannelType.GuildCategory,
 		permissionsFor(member: { id: string }): PermissionsBitField
@@ -139,6 +151,7 @@ export function addChannel(world: WebWorld, spec: FakeChannelSpec): void
 			const memberSpec = world.members.get(member.id);
 			return new PermissionsBitField(memberSpec?.permissions ?? []);
 		},
+		...(thread ? { archived: spec.archived ?? false, members: threadMembers } : {}),
 	});
 }
 

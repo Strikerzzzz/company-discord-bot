@@ -36,12 +36,13 @@ export function bulkChecked(selection: BulkSelection, saved: boolean, selectable
 }
 
 /**
- * Link "✅ Chọn tất cả · ⬜ Bỏ chọn tất cả" cho bảng ô tick của trang `path`; đang chọn hàng loạt thì thêm lời nhắc chưa lưu và
- * link về như đang lưu. `param` là tên tham số của bảng (như bulkSelection).
+ * Link "✅ Chọn tất cả · ⬜ Bỏ chọn tất cả" cho bảng ô tick của trang `path` (có thể kèm query, như `/retro/view?id=3`); đang chọn
+ * hàng loạt thì thêm lời nhắc chưa lưu và link về như đang lưu. `param` là tên tham số của bảng (như bulkSelection).
  */
 export function selectAllLinks(ctx: Pick<GuildPageContext, "guild">, path: string, selection: BulkSelection, param = SELECT_ALL_PARAM): RawHtml
 {
-	const link = (value: string): string => guildUrl(ctx, `${path}?${param}=${value}`);
+	const separator = path.includes("?") ? "&" : "?";
+	const link = (value: string): string => guildUrl(ctx, `${path}${separator}${param}=${value}`);
 	const pending = selection === null
 		? ""
 		: html`<div class="warn-box">${selection === "all" ? "Đã tick sẵn mọi ô." : "Đã bỏ tick mọi ô."} Bot <strong>chưa lưu</strong> gì: xem lại rồi bấm Lưu, hoặc <a href="${guildUrl(ctx, path)}">về như đang lưu</a>.</div>`;

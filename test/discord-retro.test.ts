@@ -23,6 +23,7 @@ import { PostedRef, REMIND_COOLDOWN_MS, RetroActions, SUMMARY_NOT_POSTED, VOTE_N
 import { runRetroSweep } from "../src/discord/retroScheduler";
 import { otherRoleUsage } from "../src/discord/tierRoleSetup";
 import {
+	PARTICIPANTS_ADMIN_ONLY,
 	parseRetroComponentId,
 	plainText,
 	RETRO_TEXT_MAX,
@@ -417,6 +418,18 @@ describe("/retro create", () =>
 		await assert.rejects(w.cmd.execute(chatInput("create", { ten: "Phiên hai", team: { id: ROLE_FRONTEND } }, { ...ADMIN_MEMBER, channelId: CHANNEL_BOT }).interaction), userError(/team đã cấu hình/));
 	});
 
+	test("không trả lời được interaction (không đăng được tin của phiên): đóng phiên vừa tạo để kênh không bị giữ, báo lỗi", async () =>
+	{
+		const w = world();
+		const call = chatInput("create", { ten: "Retro Sprint 24" }, ADMIN_MEMBER);
+		Object.assign(call.interaction, { reply: () => Promise.reject(new Error("Unknown interaction")) });
+		await assert.rejects(w.cmd.execute(call.interaction), /Unknown interaction/u);
+		const session = w.services.retro.latestInChannel(GUILD, CHANNEL_GENERAL);
+		assert.equal(session?.status, "closed");
+		assert.equal(w.services.retro.findOpenInChannel(GUILD, CHANNEL_GENERAL), null);
+		await createByCommand(w, { ten: "Retro Sprint 24 (lại)" });
+	});
+
 	test("chưa bật ghi Confluence: vẫn lưu link và báo riêng cho người tạo", async () =>
 	{
 		const w = world({ docWriter: false });
@@ -592,20 +605,39 @@ describe("/retro quản lý phiên", () =>
 		assert.equal(w.services.retro.get(GUILD, session.id)?.status, "open");
 	});
 
-	test("status: người quản lý thấy danh sách người đã điền; thành viên chỉ thấy số người; phiên ở kênh không xem được thì 'không tìm thấy'", async () =>
+	test("status: chỉ admin bot thấy danh sách người đã điền; người quản lý khác thấy số người và Confluence; thành viên chỉ thấy số người; phiên ở kênh không xem được thì 'không tìm thấy'", async () =>
 	{
 		const w = world();
+		w.services.retro.changeManagerRoles(GUILD, { add: [ROLE_OTHER] }, ADMIN);
 		const session = await createByCommand(w, { link: DOC });
 		await fill(w, session, USER_A, { learned: "x" });
 		await fill(w, session, USER_B, { learned: "y" });
 
-		const manager = chatInput("status", {}, ADMIN_MEMBER);
+		const admin = chatInput("status", {}, ADMIN_MEMBER);
+		await w.cmd.execute(admin.interaction);
+		const adminText = admin.edits[0].content ?? "";
+		assert.match(adminText, /Đã điền: \*\*2\*\* người/u);
+		assert.ok(adminText.includes(`<@${USER_A}>, <@${USER_B}>`), adminText);
+		assert.match(adminText, /Confluence: chưa ghi\./u);
+		assert.ok(!adminText.includes(PARTICIPANTS_ADMIN_ONLY));
+		assert.deepEqual(admin.edits[0].allowedMentions, { parse: [] });
+
+		const manager = chatInput("status", {}, MANAGER);
 		await w.cmd.execute(manager.interaction);
 		const managerText = manager.edits[0].content ?? "";
 		assert.match(managerText, /Đã điền: \*\*2\*\* người/u);
-		assert.ok(managerText.includes(`<@${USER_A}>, <@${USER_B}>`), managerText);
+		assert.ok(!managerText.includes(USER_A) && !managerText.includes(USER_B), "người quản lý không phải admin không thấy tên");
+		assert.ok(managerText.includes(PARTICIPANTS_ADMIN_ONLY));
 		assert.match(managerText, /Confluence: chưa ghi\./u);
-		assert.deepEqual(manager.edits[0].allowedMentions, { parse: [] });
+
+		const creator = await createByCommand(w, { ten: "Retro của người quản lý" }, { ...MANAGER, channelId: CHANNEL_BOT });
+		await fill(w, creator, USER_A, { learned: "z" });
+		w.services.retro.changeManagerRoles(GUILD, { remove: [ROLE_OTHER] }, ADMIN);
+		const own = chatInput("status", { id: creator.id }, { userId: USER_C });
+		await w.cmd.execute(own.interaction);
+		const ownText = own.edits[0].content ?? "";
+		assert.ok(!ownText.includes(USER_A), "người tạo phiên (không phải admin) không thấy tên");
+		assert.ok(ownText.includes(PARTICIPANTS_ADMIN_ONLY));
 
 		const member = chatInput("status", {}, { userId: USER_C });
 		await w.cmd.execute(member.interaction);

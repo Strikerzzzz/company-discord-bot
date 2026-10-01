@@ -77,8 +77,8 @@ const GRANT_TABLES: readonly GrantTable[] = [
 	},
 ];
 
-/** Lý do role không thêm vào danh sách được (cùng quy tắc với assertUsableRole); null nếu dùng được. */
-function blockedReason(role: Role | undefined, tierRoleIds: ReadonlySet<string>): string | null
+/** Lý do role không thêm vào danh sách được (cùng quy tắc với assertUsableRole); null nếu dùng được. Trang Retro dùng lại cho role quản lý retro. */
+export function blockedReason(role: Role | undefined, tierRoleIds: ReadonlySet<string>): string | null
 {
 	if (!role) return "Không còn trong server";
 	if (role.managed) return "Role do bot hoặc integration quản lý";
