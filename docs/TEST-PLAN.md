@@ -404,3 +404,23 @@
 - [ ] Hoà: `/retro pick` chọn tên → như trên. Chỉ có một tên đề xuất: `/retro vote` báo dùng `pick`.
 - [ ] Web **Retro → Cài đặt**: đổi XP điền retro, XP người đề xuất, thời hạn vote, thêm role quản lý retro → có hiệu lực ở phiên tiếp theo; `/admin audit` ghi đúng người.
 - [ ] Web: xoá nội dung phiên (tick + gõ XOA) → nội dung mất, danh sách người đã điền và XP vẫn giữ.
+
+## 16. Contribution có kênh riêng, duyệt, 👎, XP người bấm (Phase 20, DEC-051)
+
+> Làm sau khi cài bản Phase 20 (migration 10: sao lưu trước). A là admin, R là thành viên có role duyệt contribution, C và D là thành viên thường.
+
+- [ ] Trước khi chọn kênh: C gõ `/contribution submit` → bot báo admin chưa chọn kênh contribution.
+- [ ] Web **Cài đặt điểm**: A chọn kênh contribution (kênh PM đã tạo) → lưu được. Chọn một kênh bot thiếu quyền → báo thiếu quyền, không lưu. Đặt XP cho người bấm 5, giới hạn ngày 25.
+- [ ] Web **Quyền**: thêm role duyệt contribution cho R → `/config view` hiện role đó.
+- [ ] C gõ `/contribution submit` ở một kênh bất kỳ → C nhận trả lời riêng kèm link; thẻ "⏳ Chờ duyệt" hiện ở kênh contribution, có nút ✅ Duyệt và ❌ Từ chối. D bấm Duyệt → bị từ chối (không có quyền).
+- [ ] C chuột phải tin của D trong một kênh riêng tư → "Ghi nhận đóng góp" → thẻ ở kênh contribution không nêu tên kênh riêng tư.
+- [ ] R bấm ❌ Từ chối một bài → form lý do; gửi → thẻ đổi thành "Không được duyệt" (không hiện lý do); tác giả nhận tin nhắn riêng kèm lý do. Gửi lại bài mới từ cùng tin nhắn nguồn → được.
+- [ ] R bấm ✅ Duyệt bài của C → thẻ có nút 👍 Ghi nhận và 👎 Không ghi nhận; C nhận đúng một tin nhắn riêng. R duyệt được cả bài của chính R.
+- [ ] D bấm 👍 → +5 XP (`/rank`), bài +1 điểm (theo "Điểm mỗi lượt ghi nhận"). D bấm 👎 → form lý do; gửi → đổi sang 👎, không cộng thêm XP; điểm bài về 0. D bấm 👎 lần nữa → rút, XP 5 bị thu lại.
+- [ ] Bài có 1 👍 mà 3 người 👎 → điểm bài là 0, không âm; tổng contribution của tác giả không bị trừ sang bài khác.
+- [ ] C (tác giả) bấm 👍/👎 bài của mình → bị từ chối. Tác giả không nhận tin nhắn nào khi có người bấm.
+- [ ] Bấm 👍 ở 6 bài trong một ngày với XP 5, giới hạn 25 → bài thứ 6 không được XP, bot báo đã hết hạn mức hôm nay.
+- [ ] `/contribution view <id>`: R và A thấy danh sách người bấm 👍/👎 kèm lý do; D chỉ thấy số lượng.
+- [ ] Web **Contribution**: lọc "Chờ duyệt"; trang chi tiết duyệt/từ chối được (từ chối bắt buộc lý do), thẻ trong Discord đổi theo; bảng lượt 👍/👎 có tên và lý do; Nhật ký ghi "Duyệt contribution"/"Từ chối contribution" với người thao tác.
+- [ ] Thẻ contribution cũ (trước Phase 20) vẫn bấm 👍 được; lần bấm đầu vẽ lại thẻ có nút 👎.
+- [ ] `/config contribution kenh:#... xp-nguoi-bam:5 gioi-han-xp-ngay:25 role-duyet:@R` → kết quả giống web.

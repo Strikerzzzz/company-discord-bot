@@ -154,18 +154,26 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
 - Hệ quả: channel vốn đã đúng trạng thái theo chế độ **lúc thao tác** thì không có dòng. Ví dụ ở `all`, bật bằng bảng một channel chưa có dòng là `unchanged`; đổi sang `selected` sau đó thì channel này không tính XP. `setChannel` (`/config channel set`) luôn ghi dòng, kể cả khi chỉ đặt XP hay cooldown riêng: khi đó trạng thái bật/tắt hiện hành (có thể đến từ chế độ) được lưu cứng vào dòng.
 - Hiển thị: `xpChannelModeLabel` (views/admin.ts) cho `/config view`, chân `/config channel list` và audit (`xpChannelMode`).
 
-### 3.3 Contribution (DEC-025)
-- **Gửi contribution**:
-  - `/contribution submit` → `ContributionService.submit` (validate, lưu snapshot team của tác giả).
-  - Context menu "Ghi nhận đóng góp": **không chép nội dung tin nhắn**. Chỉ lưu link, `source_message_id` và tiêu đề cố định kiểu "Đóng góp từ tin nhắn trong #kênh" (PEND-017). Mỗi tin nhắn chỉ là nguồn của một contribution còn hiệu lực. Context menu lấy role của tác giả qua REST sau khi `deferReply`.
-  - Bot đăng message công khai kèm nút `contrib:<id>` và lưu vị trí message. Người không có quyền gửi tin ở kênh đó thì bị từ chối.
-- **Bấm nút ghi nhận** → `toggleVote`:
-  - không tự ghi nhận; đã ghi nhận thì rút (void event);
-  - lượt đã bị admin reset thì không ghi nhận lại được (PEND-015);
-  - điểm = `contributionVotePoints` tại thời điểm ghi nhận;
-  - `votes` chỉ đếm lượt còn hiệu lực.
-- **Xem**: `/contribution view` trả lời riêng, không có nút; có nút link tới bài đăng gốc.
-- **Admin gỡ contribution** → `voidByReference` huỷ mọi điểm của nó, và message gốc chuyển sang "Đã bị gỡ".
+### 3.3 Contribution (DEC-025, DEC-051)
+- **Kênh contribution** (`guild_settings.contribution_channel_id`, Phase 20): admin chọn trên web (Cài đặt điểm) hoặc `/config contribution kenh`, qua `configOps.resolveContributionChannel` (kênh văn bản/thông báo; người chọn xem và gửi được tin ở đó; bot có View Channel, Send Messages, Embed Links). Chưa chọn kênh thì `ContributionService.submit` ném UserError.
+- **Gửi contribution** (gửi từ đâu cũng được, thẻ luôn đăng ở kênh contribution):
+  - `/contribution submit` → `ContributionService.submit` (validate, lưu snapshot team của tác giả, trạng thái **chờ duyệt**).
+  - Context menu "Ghi nhận đóng góp": **không chép nội dung tin nhắn**. Chỉ lưu link, `source_message_id` và tiêu đề cố định (PEND-017); tiêu đề không nêu tên kênh nguồn nếu `@everyone` không xem được kênh đó. Mỗi tin nhắn chỉ là nguồn của một contribution còn hiệu lực và chưa bị từ chối. Context menu lấy role của tác giả qua REST sau khi defer.
+  - Người gửi phải xem được kênh contribution; bot kiểm tra quyền của mình (`missingContributionBotPermissions`) rồi đăng thẻ, lưu vị trí message (`attachMessage`) và trả lời riêng kèm link.
+- **Duyệt** (`contributionOps.approveContribution` / `rejectContribution`, dùng chung cho nút trên thẻ và web):
+  - người duyệt = admin bot hoặc có role trong `contributionReviewerRoleIds` (`canReviewContributions`, kiểm tra trong code mỗi lần); được duyệt cả bài của mình;
+  - duyệt → thẻ mở nút 👍/👎; từ chối bắt buộc lý do (3–300), thẻ ghi "Không được duyệt" nhưng không hiện lý do;
+  - sau khi duyệt hoặc từ chối, bot nhắn riêng (`AdminActions.sendDirectMessage`) cho tác giả và người gửi; lỗi DM chỉ ghi log. Không nhắn theo từng lượt 👍/👎.
+  - audit `contribution.approve` / `contribution.reject` (target = tác giả).
+- **👍 Ghi nhận / 👎 Không ghi nhận** → `ContributionService.vote({ action: "up" | "down" | "withdraw" })`, tầng Discord đọc `voterState` để biết bấm lại là rút hay đổi:
+  - mỗi người một trong hai, đổi/rút được; không bấm bài của mình; 👎 bắt buộc lý do (3–200), chỉ admin và người duyệt xem (`listVoters`);
+  - mỗi lượt một event trong `contribution_events` (👍 = `+contributionVotePoints`, 👎 = `−contributionVotePoints`, actor là người bấm, `reference_id` = contribution). Điểm của contribution = max(0, tổng các lượt): khi tổng âm, `recomputeFloor` giữ đúng một **event sàn** (nguồn `vote`, actor NULL, `reference_id` = contribution) bằng phần âm; `contributions.floor_event_id` trỏ tới event sàn gần nhất. Gỡ contribution (`voidByReference`) hay reset huỷ luôn event sàn;
+  - PROP-024/PROP-031: thao tác làm giảm điểm (rút 👍, thêm/đổi sang 👎) mà phải bù vì tác giả đang bị trừ điểm thì lượt bị khoá (rút 👍: giữ dòng `contribution_votes` với event đã huỷ; 👎: `contribution_downvotes.locked_at`). Lượt có event bị admin reset cũng bị khoá;
+  - **XP người bấm**: lượt đầu tiên của một người trên một contribution được `contributionInteractionXp` Activity XP (xpLedger nguồn `admin`, actor là bot, `reference_id` = `contribution:<id>`), giới hạn `contributionInteractionXpDailyCap` mỗi ngày giờ VN; bảng `contribution_interaction_xp` giữ một dòng mỗi người mỗi contribution (`xp_event_id` NULL = không được XP). Đổi 👍↔👎 giữ XP; rút hẳn thì huỷ event XP và xoá dòng.
+  - `votes` / `downvotes` chỉ đếm lượt còn hiệu lực; `score` là tổng event chưa huỷ của contribution.
+- **Xem**: `/contribution view` trả lời riêng; người duyệt và admin thấy thêm lượt 👍/👎 kèm lý do và lý do từ chối; tác giả/người gửi thấy lý do từ chối bài của mình.
+- **Admin gỡ contribution** (mọi trạng thái) → `voidByReference` huỷ mọi điểm của nó, và message gốc chuyển sang "Đã bị gỡ". XP người bấm đã nhận được giữ nguyên.
+- Contribution có từ trước migration 10 mang `review_state = 'approved'`: thẻ cũ (nút `contrib:<id>`) vẫn bấm 👍 được, lần bấm đầu sẽ vẽ lại thẻ có nút 👎.
 
 ### 3.4 Vote / bầu cử (DEC-026)
 - `/poll create`: chỉ admin hoặc role tạo vote; XP riêng chỉ admin đặt được. Nút có dạng `poll:<id>:<index>`.
@@ -412,14 +420,14 @@ Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), th
 
 | Nhóm | Bảng |
 | --- | --- |
-| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`, `level_up_channel_id`), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
+| Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`, `level_up_channel_id`, `contribution_channel_id`, `contribution_interaction_xp`, `contribution_interaction_xp_daily_cap`), `guild_role_grants` (role admin bot, role tạo vote, role duyệt contribution), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
 | Retro | `retro_sessions`, `retro_entries`, `retro_config`, `retro_manager_roles` (Phase 19) |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
-| Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
+| Contribution | `contributions` (có `source_message_id`, cột duyệt và `floor_event_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` (👍), `contribution_downvotes` (👎), `contribution_interaction_xp` (XP người bấm) |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration (9 migration sau Phase 19; version lưu ở `PRAGMA user_version`):
+Migration (10 migration sau Phase 20; version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
@@ -451,6 +459,12 @@ Migration (9 migration sau Phase 19; version lưu ở `PRAGMA user_version`):
   - Thêm cột `retro_entries.order_keys` (khoá ngẫu nhiên 128 bit cho từng ô; mỗi cột trộn riêng) và `retro_sessions.summary_posted_at` (lịch quét đăng bù bảng tổng hợp).
   - Xoá nội dung: kết nối bật `PRAGMA secure_delete=ON` (đặt trong `openDatabase`), sau khi xoá thì chạy `wal_checkpoint(TRUNCATE)`. Backup cũ và lịch sử trang Confluence vẫn giữ bản cũ.
   - Code cũ (≤ 8) gặp DB version 9 thì từ chối khởi động.
+- **10** (Phase 20, DEC-051): duyệt contribution, 👎, XP người bấm.
+  - `contributions`: thêm `review_state TEXT NOT NULL DEFAULT 'approved' CHECK (pending|approved|rejected)` (dòng cũ nhận `approved`), `reviewed_by`, `reviewed_at`, `review_reason`, `floor_event_id`. Unique index nguồn tin nhắn dựng lại, bỏ qua bài bị từ chối: `... WHERE source_message_id IS NOT NULL AND status = 'active' AND review_state <> 'rejected'`; thêm index `(guild_id, review_state, created_at)`.
+  - Bảng `contribution_downvotes (contribution_id, guild_id, voter_id, event_id, reason, locked_at, created_at)`, khoá chính `(contribution_id, voter_id)`; bảng `contribution_interaction_xp (contribution_id, guild_id, user_id, xp_event_id, created_at)`.
+  - `guild_settings`: `contribution_channel_id`, `contribution_interaction_xp` (mặc định 5), `contribution_interaction_xp_daily_cap` (mặc định 25).
+  - `guild_role_grants` dựng lại để CHECK nhận thêm `contribution_reviewer` (chép nguyên dữ liệu).
+  - Backup/restore: vẫn một file SQLite; backup cũ tự migrate lên 10 (contribution cũ coi như đã duyệt, chưa có kênh contribution: admin chọn lại). Code cũ (≤ 9) gặp DB version 10 thì từ chối khởi động.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;

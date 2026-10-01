@@ -1,44 +1,29 @@
 # CURRENT STATE
 
 > Đọc file này đầu tiên ở mỗi phiên. Cập nhật sau mỗi phase hoặc task đáng kể.
-> Cập nhật lần cuối: **2026-09-30**
+> Cập nhật lần cuối: **2026-10-01**
 
 ## 1. Phase hiện tại
 
-**Bot đã chạy thật** (Phase 11), từ 2026-09-29 (DEC-036). `main` có đủ Phase 0–16. Không còn branch nào đang dở.
+**Bot đang chạy thật** từ 2026-09-29 (DEC-036). `main` có đủ Phase 0–19.
 
 - Server: `192.168.0.206` (Ubuntu 22.04, máy dùng chung), systemd unit `company-discord-bot`, Node 22.23.2. Guild: server Discord **ezOne**; Application "ezOne Bot".
-  - Bản đang chạy: **`8da7fe2`** (gồm Phase 15 và 16).
-  - Trang web quản trị **đã bật** ở `http://192.168.0.206:8787`, bằng `deploy/enable-web.sh`: `ufw` chỉ mở cổng 8787 cho 10/8, 172.16/12, 192.168/16. Ngày 2026-09-30 đã có lượt đăng nhập admin thành công.
-  - `main` mới hơn bản đang chạy chỉ ở script `deploy/enable-web.sh`, tài liệu và test.
-- **DEC-041 (2026-09-30):** rule mới, mọi tính năng mới hay cũ đều phải quản lý được trên web. Có `test/web-parity.test.ts` kiểm tra tự động.
-- **Phase 17 đã merge vào `main` (DEC-046, `c8359b6`) và đang chạy trên server** từ 2026-09-30 16:01 (migration 6 đã áp dụng). Còn: bot thiếu quyền ở kênh Bảng vàng (`1554360825995726899`), người phụ trách cấp quyền hoặc đổi kênh.
-- **Phase 18 (DEC-044, DEC-047) trên branch `phase-18/quick-wins`**, chưa merge:
-  - đã gộp:
-    - "Chọn tất cả" cho bảng ô tick;
-    - nhiều role admin bot và role tạo vote (migration 7, `guild_role_grants`);
-    - bộ danh hiệu thứ 6 Mobile Legends, có `textColor`/`borderColor` cho bậc;
-    - trang Kênh tính XP hiện mọi kênh cho admin (DEC-045);
-  - kết quả: 1049/1050 test pass;
-  - bộ danh hiệu cá nhân (migration 8, `/rank-style`) và nút ❓ trên thẻ `/rank` (DEC-047);
-  - 3 review độc lập (bảo mật, đúng đắn; riêng phần DEC-047) không có lỗi CAO; đã sửa:
-    - bảng role admin không có "Chọn tất cả", thêm role admin phải tick xác nhận;
-    - nút ❓ chỉ nêu kênh người bấm xem được;
-    - tiêu đề thẻ escape mention;
-  - 1094/1095 test pass trên Windows; 1095/1095 trên server Linux (thư mục thử `~/deploy/p18-test`);
-  - **chờ người phụ trách duyệt merge vào `main` và cài lên server** (migration 7 và 8: sao lưu trước).
-- Chi tiết Phase 17 (giữ để tra cứu):
-  - 7 trang web mới: Thành viên, Bảng xếp hạng, Contribution, Vote, Thống kê, Reset điểm, Sao lưu. `test/web-parity.test.ts` không còn mục nào thiếu.
-  - Nền móng `src/discord/adminOps.ts`, dùng chung cho `/admin` và web.
-  - Kênh nhận thông báo lên level (migration 6), đặt trên web hoặc bằng `/config xp kenh-thong-bao`.
-  - Cách làm: nền móng, 3 agent song song, tích hợp. 1018/1019 test pass; test còn lại bỏ qua vì là test quyền thư mục kiểu Linux.
-  - Đang chạy 2 review độc lập (bảo mật; tính đúng đắn). Sau đó chờ người phụ trách duyệt merge.
-  - Sau khi cài: đặt kênh thông báo lên level là `#🤖bot-commands` (web, trang Cài đặt điểm), rồi kiểm theo `docs/TEST-PLAN.md` mục 13.
-- Việc người phụ trách còn làm trên Discord hoặc web:
-  - chuyển kênh tính XP sang "chỉ kênh được bật" và tick các kênh được tính;
-  - reset điểm bằng `/admin xp reset-all` và `/admin contribution reset-all`;
-  - kiểm theo `docs/TEST-PLAN.md`.
-- Bot **chưa có quyền Manage Roles**: người mời bot không có quyền này. Role danh hiệu chờ chủ server bật quyền cho role của bot.
+  - Bản đang chạy: **`bb5189e`** (Phase 19, migration 9), cài ngày 2026-10-01. Selfcheck có 3 ⚠️ đã biết, không phải lỗi: Node 22 thay vì 24 (DEC-036); file `-wal` và "schema version cũ" khi bot cũ còn chạy lúc selfcheck (selfcheck chỉ đọc file chính).
+  - Web quản trị bật ở `http://192.168.0.206:8787` (`deploy/enable-web.sh`).
+  - Bảng vàng: đã chuyển sang `#🤖bot-commands` (2026-10-01, sau khi role bot được cấp View Channel, Send Messages, Attach Files).
+  - Confluence (DEC-049): IT đã thêm route tới `docs.ezcloud.vn` (10.19.193.111) qua VPN của server; kiểm tra 2026-10-01: cổng 443 mở, HTTPS trả 401 khi không có token (cả curl và Node). Người phụ trách đã chạy `deploy/enable-confluence.sh` với token mới và báo chạy OK; chưa xem lại log vì máy dev tạm mất kết nối SSH tới server (VPN máy dev đổi dải 172.16.193.x).
+- **Phase 20 (DEC-051, PROP-040) đang làm trên branch `phase-20/contribution-review`:** contribution có kênh riêng, phải được duyệt rồi mới mở 👍/👎, nút 👎 Không ghi nhận (điểm = max(0, 👍 − 👎)), XP cho người bấm, DM khi duyệt/từ chối, role duyệt.
+  - Nền móng `1940485`: migration 10, cấu hình, `ContributionService` (duyệt, `vote`, event sàn, XP người bấm), `src/discord/contributionOps.ts`, `configOps.resolveContributionChannel`, `AdminActions.sendDirectMessage`.
+  - 3 agent song song: service và test nghiệp vụ; tầng Discord (thẻ, nút, modal, `/config contribution`, panel); trang web (Contribution chờ duyệt, Cài đặt điểm, Quyền). Sau đó tích hợp, review độc lập, rồi chờ người phụ trách duyệt merge và cài (migration 10: sao lưu trước).
+  - Sau khi cài: chọn kênh contribution (PM đã tạo kênh), thêm role duyệt, chỉnh "Điểm mỗi lượt ghi nhận" nếu muốn (người phụ trách nêu ví dụ 2).
+- Việc người phụ trách còn làm: chuyển kênh tính XP sang "chỉ kênh được bật" nếu chưa; kiểm theo `docs/TEST-PLAN.md` (mục 14 Phase 18, 15 retro); quyết định XP cho thả cảm xúc (đề xuất 2 XP/lượt cho người thả, tối đa 10 XP/ngày, cần intent `GuildMessageReactions`).
+- Bot **chưa có quyền Manage Roles**: role danh hiệu chờ chủ server bật quyền cho role của bot.
+
+Lịch sử Phase 17–19 (giữ để tra cứu):
+
+- Phase 17 (DEC-042, merge DEC-046): web quản trị đủ tính năng (thành viên, bảng xếp hạng, contribution, vote, thống kê, reset điểm, sao lưu), `src/discord/adminOps.ts`, kênh thông báo lên level (migration 6, DEC-043), DEC-041 + `test/web-parity.test.ts`.
+- Phase 18 (DEC-044, DEC-047, merge DEC-048): chọn tất cả, nhiều role admin/tạo vote (migration 7), bộ danh hiệu Mobile Legends, bộ danh hiệu cá nhân (migration 8, `/rank-style`), nút ❓ trên thẻ `/rank`, trang Kênh tính XP hiện mọi kênh cho admin (DEC-045).
+- Phase 19 (DEC-049, DEC-050): retro sprint theo team trong kênh/thread, ẩn danh trên Discord và Confluence, vote tên sprint, XP điền retro (1 lần/ngày) và thưởng tên thắng (chỉ khi vote thật), tự ghi vào Confluence nội bộ (migration 9).
 
 Lịch sử Phase 15–16 (giữ để tra cứu):
 
@@ -69,7 +54,7 @@ Lịch sử Phase 15–16 (giữ để tra cứu):
 | Bộ danh hiệu | 5 bộ (Tu tiên, Rank game, Kiếm hiệp, Cây xanh, Vũ trụ) × 8 bậc cùng mốc level; admin chọn bộ, đổi tên/emoji từng bậc; thông báo, ảnh thẻ theo giọng văn và trang trí của bộ (DEC-033) |
 | Role danh hiệu | Bảng điều khiển `/config tier panel` (menu chọn bộ, 8 ô chọn role, form đổi tên, nút tạo/đồng bộ role) và lệnh `/config tier …`; bot tự tạo role (không quyền), tự thêm/bỏ role khi thành viên nhắn tin được XP. Chặn role nguy hiểm, mentionable, trùng vai trò khác; người gán cần Manage Roles cấp server |
 | Chuỗi ngày, huy hiệu | Chuỗi ngày hoạt động (giờ Việt Nam), 15 huy hiệu; chỉ hiển thị, không cộng điểm |
-| Contribution | `/contribution submit/view/list`, context menu "Ghi nhận đóng góp", nút 👍; điểm không bao giờ âm (tự bù, PROP-024); rút ghi nhận khi tác giả đang bị phạt thì không ghi nhận lại được (PROP-031) |
+| Contribution | `/contribution submit/view/list`, context menu "Ghi nhận đóng góp", nút 👍; điểm không bao giờ âm (tự bù, PROP-024); rút ghi nhận khi tác giả đang bị phạt thì không ghi nhận lại được (PROP-031). Phase 20 (branch): kênh riêng, duyệt, 👎, XP người bấm (DEC-051) |
 | Vote/bầu cử | `/poll create/close/results/list`, ẩn danh, XP một lần; giới hạn XP từ vote mỗi ngày do admin đặt (mặc định 25) |
 | `/rank` | Ảnh thẻ tu luyện (avatar, cảnh giới, level, tiến độ, hạng, XP tuần, contribution, chuỗi ngày, huy hiệu) kèm chữ tóm tắt huy hiệu |
 | `/leaderboard` | Ảnh bảng xếp hạng; Activity/Contribution × cá nhân/team × tổng/tuần/tháng; nút chuyển bảng, trang, "Hạng của tôi" |
@@ -77,7 +62,8 @@ Lịch sử Phase 15–16 (giữ để tra cứu):
 | Quản trị | `/admin xp|contribution|stats|audit|backup`; `/config` (XP, channel, team, admin-role, poll, contribution, tier, board) và `/config panel` |
 | Web quản trị | `http://<server>:<WEB_PORT>`, đăng nhập Discord, chỉ mạng nội bộ (DEC-039). Phase 16: tổng quan, kênh, team, cài đặt điểm, quyền, Bảng vàng, danh hiệu, nhật ký. Phase 17 (branch, chưa merge): thành viên, bảng xếp hạng, contribution, vote, thống kê, reset điểm, sao lưu. Mọi tính năng phải có trên web (DEC-041) |
 | Thông báo lên level | Bật/tắt; kênh nhận thông báo (DEC-043, branch Phase 17): đã chọn thì chỉ gửi vào kênh đó, chưa chọn thì gửi ở kênh vừa nhắn |
-| Vận hành | Migration tự động (3 migration), backup hàng ngày, systemd hardening, runbook `docs/DEPLOY.md` |
+| Retro | `/retro` theo kênh/thread của team, ẩn danh, vote tên sprint, ghi Confluence nội bộ (Phase 19, DEC-049) |
+| Vận hành | Migration tự động (9 migration trên `main`, migration 10 ở Phase 20), backup hàng ngày, systemd hardening, runbook `docs/DEPLOY.md` |
 
 ## 3. Kiểm chứng
 
@@ -139,3 +125,6 @@ Ngày 2026-09-27, trên máy dev (Windows, Node 22.23.2) và **bản copy sạch
 | 2026-09-29 | DEC-037…040: Phase 15 (`/config panel`, chế độ kênh) và Phase 16 (web quản trị) merge vào `main`, cài lên server (`8da7fe2`), bật web ở cổng 8787 bằng `deploy/enable-web.sh`. |
 | 2026-09-30 | DEC-041: rule mọi tính năng quản lý được trên web; `test/web-parity.test.ts`; đề xuất Phase 17 làm bù 17 mục còn thiếu. |
 | 2026-09-30 | DEC-042: duyệt Phase 17 (nền móng adminOps, 3 agent, tích hợp; 7 trang mới). DEC-043: kênh nhận thông báo lên level (migration 6). PROP-038 (nhật ký giấu tiêu đề contribution ở kênh riêng tư). 1018/1019 test. |
+| 2026-09-30 | DEC-041…048: Phase 17 (web đủ tính năng) và Phase 18 (chọn tất cả, nhiều role, bộ Mobile Legends, bộ danh hiệu cá nhân, nút ❓) merge vào `main` và cài lên server. |
+| 2026-10-01 | DEC-049, DEC-050: Phase 19 (retro, Confluence) merge và cài (`bb5189e`). Bảng vàng chuyển sang `#🤖bot-commands`. Server vào được Confluence; bật ghi Confluence. |
+| 2026-10-01 | DEC-051 (PROP-040): mở Phase 20, contribution có kênh riêng, duyệt, 👎, XP người bấm. Nền móng `1940485`, 3 agent song song. |
