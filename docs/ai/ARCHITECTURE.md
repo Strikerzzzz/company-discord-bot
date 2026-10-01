@@ -388,14 +388,17 @@ Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), th
   - `writeRetroDoc`, `retroDocSection`;
   - `RetroActions` (ghi Confluence, sửa/đăng tin) inject được để test.
 - **Discord:**
-  - lệnh `/retro create|close|reopen|extend|vote|status|remind|pick|write`; không đặt `setDefaultMemberPermissions`, để role quản lý retro dùng được; quyền kiểm trong code;
+  - lệnh `/retro create|close|reopen|extend|vote|status|remind|pick|write|repost|summary`; không đặt `setDefaultMemberPermissions`, để role quản lý retro dùng được; quyền kiểm trong code;
+  - người quản lý không phải admin phải xem được kênh của phiên (`requireVisibleSession`), không thì báo "không tìm thấy";
+  - bot phải có View Channel, Send Messages (thread: Send Messages in Threads), Embed Links ở kênh của phiên, và là thành viên nếu đó là thread riêng tư (`assertBotCanUseRetroChannel`, dùng chung cho lệnh và web);
   - nút `retro:fill:<id>` mở form `retro:form:<id>` gồm 5 ô;
   - `retroScheduler` chạy mỗi 30 giây: tự đóng phiên quá hạn, chốt vote tên đã đóng;
   - `afterPollClosed` móc vào lúc vote đóng (lệnh, lịch quét, web);
   - `/retro status`: chỉ admin bot thấy tên người đã điền.
 - **Confluence** `src/integrations/confluence.ts`:
   - REST Data Center: GET `/rest/api/content/{id}?expand=body.storage,version`, PUT với version+1; header Bearer, `redirect: "error"`, timeout 15 giây; gặp 409 thì đọc lại và thử lại;
-  - chỉ gọi host `CONFLUENCE_BASE_URL` (bắt buộc https);
+  - chỉ gọi host `CONFLUENCE_BASE_URL` (bắt buộc https); `redirect: "manual"`, phản hồi 3xx báo lỗi rõ; luôn đọc hoặc huỷ phần thân phản hồi;
+  - chỉ ghi vào trang thuộc space trong `CONFLUENCE_SPACE_KEYS` (GET `expand=space`); không ghi khi khu vực không đổi; trang dùng `<ac:layout>` thì thêm một layout-section một cột ở cuối;
   - bot quản lý một khu vực cuối trang, giữa macro anchor `ezbot-retro-<guild>-<phiên>-start` và `…-end`: tiêu đề, bảng 5 cột ẩn danh, tên sprint đã chốt; ghi lại thì thay đúng khu vực đó;
   - lỗi lưu vào `confluence_error`, hiện trên web, có nút ghi lại;
   - không đặt `CONFLUENCE_*` thì bỏ bước ghi;
@@ -445,7 +448,8 @@ Migration (9 migration sau Phase 19; version lưu ở `PRAGMA user_version`):
   - Bảng `retro_entries`: `id` tự tăng, `UNIQUE(session_id, user_id)`, 5 cột chữ, `team_role_ids` (snapshot), `fill_xp_event_id`.
   - Bảng `retro_config` (mặc định 20 / 100 / 1440 phút) và `retro_manager_roles`.
   - Xoá nội dung một phiên thì đặt các cột chữ về NULL (DEC-049, ngoại lệ có chủ ý của DEC-027).
-  - Backup vẫn giữ chữ cũ cho tới khi bị xoay vòng; SQLite không bật `secure_delete`.
+  - Thêm cột `retro_entries.order_keys` (khoá ngẫu nhiên 128 bit cho từng ô; mỗi cột trộn riêng) và `retro_sessions.summary_posted_at` (lịch quét đăng bù bảng tổng hợp).
+  - Xoá nội dung: kết nối bật `PRAGMA secure_delete=ON` (đặt trong `openDatabase`), sau khi xoá thì chạy `wal_checkpoint(TRUNCATE)`. Backup cũ và lịch sử trang Confluence vẫn giữ bản cũ.
   - Code cũ (≤ 8) gặp DB version 9 thì từ chối khởi động.
 
 Quy tắc:

@@ -646,10 +646,12 @@ Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì rese
    - Ngày 2026-10-01, server **chưa vào được**: thiếu route dải 10.19.193.0/24 trên VPN `tun0`, đã nhờ IT.
 2. Tạo Personal Access Token trên Confluence, nên dùng **tài khoản dành riêng cho bot**, chỉ có quyền sửa các trang retro. Không gửi token qua chat.
 3. Trên server: `sudo bash ~/deploy/enable-confluence.sh`. Script:
-   - hỏi địa chỉ Confluence (ví dụ `https://docs.ezcloud.vn`) và token; màn hình không hiện token khi dán;
-   - thử token, rồi ghi `CONFLUENCE_BASE_URL`, `CONFLUENCE_TOKEN` vào `.env`.
+   - hỏi địa chỉ Confluence (ví dụ `https://docs.ezcloud.vn`), token (màn hình không hiện token khi dán), và **các space bot được ghi** (`CONFLUENCE_SPACE_KEYS`, ví dụ `P2`; khoá space nằm trong link trang, đoạn `/spaces/<khoá>/`);
+   - thử token, rồi ghi `CONFLUENCE_BASE_URL`, `CONFLUENCE_TOKEN`, `CONFLUENCE_SPACE_KEYS` vào `.env`;
+   - Confluence dùng chứng chỉ của CA nội bộ thì đặt thêm `NODE_EXTRA_CA_CERTS=<file .pem>`. Không bao giờ tắt kiểm chứng TLS.
 4. `sudo bash ~/deploy/start.sh`. Log phải có "Ghi retro vào Confluence: bật (...)".
-5. Bot ghi vào **cuối trang** đã gắn một khu vực "🤖 Retro từ Discord: <tên phiên>", gồm bảng 5 cột ẩn danh và tên sprint đã chốt. Đừng sửa tay trong khu vực này; bot ghi lại sẽ thay nó.
+5. Khi phiên **đã đóng**, bot ghi vào **cuối trang** đã gắn một khu vực "🤖 Retro từ Discord: <tên phiên>": bảng 5 cột ẩn danh, mỗi cột trộn riêng, cùng tên sprint đã chốt. Đừng sửa tay trong khu vực này; bot ghi lại sẽ thay nó. Trang ngoài các space được phép thì bot từ chối ghi.
+   - Tin của phiên bị xoá: `/retro repost`. Bảng tổng hợp không đăng được: `/retro summary`. Cả hai đều có nút trên web.
 6. Ghi lỗi thì trang chi tiết phiên trên web hiện lỗi, có nút **Ghi lại vào Confluence**, và phần **xuất chữ để dán tay**.
 
 ## 8. Xử lý sự cố

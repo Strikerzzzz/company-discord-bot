@@ -542,6 +542,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - tên sprint chỉ toàn số bị từ chối, theo luật của mẫu: "cấm đặt tên Sprint là số".
   - **Ẩn danh:**
     - database lưu người điền để **admin bot** theo dõi (web và `/retro status`): chỉ danh sách ai đã điền, không ghép với nội dung; người quản lý retro không phải admin chỉ thấy số lượng;
+    - nội dung chỉ hiện trên web và Confluence khi phiên đã đóng, để không ghép được tên người vừa điền với ý vừa thêm. Nhật ký không ghi mã phiếu;
     - bot không đếm được ai chưa điền: không có intent GuildMembers; `/retro remind` ping role team;
     - bảng trên Discord và trên Confluence không có tên người viết.
   - **Lưu nội dung** (quyết định đầu tiên cho phép lưu chữ người dùng viết):
@@ -562,10 +563,12 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - khi đóng phiên (và khi người quản lý bấm "ghi lại"), bot ghi vào **một khu vực riêng ở cuối trang** đã gắn, không chèn vào bảng người khác đang sửa. Khu vực gồm:
       - macro anchor đầu và cuối;
       - tiêu đề "🤖 Retro từ Discord: <tên phiên>";
-      - bảng 5 cột đúng như mẫu, mỗi phiếu một dòng, không có tên;
+      - bảng 5 cột đúng như mẫu, không có tên. **Mỗi cột trộn riêng** bằng khoá ngẫu nhiên, nên một hàng không phải câu trả lời của một người (review bảo mật Phase 19). Cột tên sprint là các tên đã bỏ trùng, xếp theo chữ cái;
       - dòng "🏆 Tên sprint được chọn" khi đã chốt;
     - ghi lại thì thay đúng khu vực đó, không ghi trùng; mất dấu kết thúc thì báo lỗi, không đoán;
     - web có nút xuất chữ của khu vực này để dán tay, dùng khi server chưa vào được Confluence;
+    - **chỉ ghi khi phiên đã đóng**, và chỉ vào trang thuộc space trong `CONFLUENCE_SPACE_KEYS` (danh sách rỗng thì từ chối ghi). Lý do: tránh bot bị dùng để sửa trang bất kỳ mà token có quyền;
+    - nội dung không đổi thì không ghi; ghi tay tối đa một lần mỗi 30 giây cho mỗi phiên;
     - chỉ nhận link trang cùng host với `CONFLUENCE_BASE_URL`, để không gửi token sang nơi khác;
     - không thêm dependency (dùng `fetch` có sẵn); lỗi được ghi lại và hiện trên web để thử lại;
     - không đặt `CONFLUENCE_*` thì mọi phần khác của retro vẫn chạy, chỉ bỏ bước ghi Confluence.
