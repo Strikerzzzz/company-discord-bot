@@ -643,7 +643,7 @@ Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì rese
 **Bật ghi Confluence:**
 
 1. Server phải truy cập được Confluence. Kiểm tra trên server: `curl -s -o /dev/null -w "%{http_code}\n" https://docs.ezcloud.vn/rest/api/space?limit=1`; ra `401` hay `200` là được, `000` là chưa có đường mạng (cần IT).
-   - Ngày 2026-10-01, server **chưa vào được**: thiếu route dải 10.19.193.0/24 trên VPN `tun0`, đã nhờ IT.
+   - Ngày 2026-10-01: lúc đầu server chưa vào được (thiếu route tới 10.19.193.111 trên VPN `tun0`); IT đã thêm route, kiểm lại ra `401` (cả `curl` lẫn Node).
 2. Tạo Personal Access Token trên Confluence, nên dùng **tài khoản dành riêng cho bot**, chỉ có quyền sửa các trang retro. Không gửi token qua chat.
 3. Trên server: `sudo bash ~/deploy/enable-confluence.sh`. Script:
    - hỏi địa chỉ Confluence (ví dụ `https://docs.ezcloud.vn`), token (màn hình không hiện token khi dán), và **các space bot được ghi** (`CONFLUENCE_SPACE_KEYS`, ví dụ `P2`; khoá space nằm trong link trang, đoạn `/spaces/<khoá>/`);
@@ -653,6 +653,17 @@ Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì rese
 5. Khi phiên **đã đóng**, bot ghi vào **cuối trang** đã gắn một khu vực "🤖 Retro từ Discord: <tên phiên>": bảng 5 cột ẩn danh, mỗi cột trộn riêng, cùng tên sprint đã chốt. Đừng sửa tay trong khu vực này; bot ghi lại sẽ thay nó. Trang ngoài các space được phép thì bot từ chối ghi.
    - Tin của phiên bị xoá: `/retro repost`. Bảng tổng hợp không đăng được: `/retro summary`. Cả hai đều có nút trên web.
 6. Ghi lỗi thì trang chi tiết phiên trên web hiện lỗi, có nút **Ghi lại vào Confluence**, và phần **xuất chữ để dán tay**.
+
+### 7.7. Kênh contribution, duyệt và 👍/👎 (Phase 20, DEC-051)
+
+Từ Phase 20, mọi contribution được đăng ở **một kênh contribution** và phải được **duyệt** trước khi mọi người bấm 👍 Ghi nhận hoặc 👎 Không ghi nhận.
+
+1. Tạo kênh (ví dụ `#contribution`). Thành viên cần **xem được** kênh này (gửi tin thì không bắt buộc, vì bot đăng thẻ thay). Cho phép bot **View Channel, Send Messages, Embed Links** ở kênh đó. Người chọn kênh cũng phải xem và gửi được tin ở đó.
+2. Chọn kênh: web, trang **Cài đặt điểm** (mục Contribution), hoặc `/config contribution kenh:#contribution`. Chưa chọn kênh thì thành viên chưa gửi contribution được.
+3. Role duyệt: web, trang **Quyền** (bảng "Role duyệt contribution"), hoặc `/config contribution role-duyet:@Role`. Admin bot luôn duyệt được. Người duyệt được duyệt cả bài của mình.
+4. Điểm và XP: "Điểm mỗi lượt ghi nhận" là điểm cộng mỗi 👍 và trừ mỗi 👎 (điểm của một bài không âm); "XP cho người bấm ghi nhận" (mặc định 5) và "Giới hạn XP từ contribution mỗi ngày" (mặc định 25, 0 = không giới hạn).
+5. Bot nhắn riêng cho tác giả khi bài được duyệt hoặc bị từ chối (kèm lý do). Thành viên tắt tin nhắn riêng từ server thì không nhận được, vẫn xem trạng thái trên thẻ. Bot không cần quyền hay intent mới.
+6. Contribution có từ trước Phase 20 coi như đã duyệt, thẻ cũ vẫn bấm được.
 
 ## 8. Xử lý sự cố
 
