@@ -48,7 +48,9 @@ import {
 	ContributionAdjustInput,
 	ContributionProfile,
 	ContributionServiceApi,
+	ContributionVoter,
 	ContributionVoteResult,
+	ContributionVoterState,
 } from "../src/modules/contribution/types";
 import { TierRoleService } from "../src/modules/gamification/TierRoleService";
 import { ChannelSettings, DEFAULT_GUILD_SETTINGS, MAX_GRANT_ROLES, NumericSettingKey, SETTING_LIMITS } from "../src/modules/guild-config/types";
@@ -76,6 +78,8 @@ const AUDIT_ACTIONS: Record<AuditAction, true> = {
 	"xp.reset_user": true,
 	"xp.reset_all": true,
 	"contribution.remove": true,
+	"contribution.approve": true,
+	"contribution.reject": true,
 	"contribution.adjust": true,
 	"contribution.reset_user": true,
 	"contribution.reset_all": true,
@@ -143,6 +147,12 @@ function sampleContribution(id: number, posted: boolean): Contribution
 		status: "removed",
 		createdAt: NOW,
 		votes: 3,
+		downvotes: 1,
+		score: 0,
+		reviewState: "approved",
+		reviewedBy: ADMIN,
+		reviewedAt: NOW,
+		reviewReason: null,
 	};
 }
 
@@ -225,7 +235,27 @@ class FakeContributions implements ContributionServiceApi
 		throw unused();
 	}
 
-	toggleVote(): ContributionVoteResult
+	approve(): Contribution
+	{
+		throw unused();
+	}
+
+	reject(): Contribution
+	{
+		throw unused();
+	}
+
+	voterState(): ContributionVoterState
+	{
+		throw unused();
+	}
+
+	vote(): ContributionVoteResult
+	{
+		throw unused();
+	}
+
+	listVoters(): ContributionVoter[]
 	{
 		throw unused();
 	}
@@ -594,6 +624,14 @@ describe("định nghĩa /admin và /config", () =>
 		);
 		assert.deepEqual(names(children(optionAt(configJson.options, "admin-role"))), ["them", "bo", "bo-het"]);
 		assert.deepEqual(
+			names(children(optionAt(configJson.options, "contribution"))),
+			["diem-moi-luot", "xp-nguoi-bam", "gioi-han-xp-ngay", "kenh", "role-duyet", "bo-role-duyet", "xoa-role-duyet"],
+		);
+		assert.deepEqual(
+			["kenh", "role-duyet", "bo-role-duyet", "xoa-role-duyet"].map(name => optionAt(configJson.options, "contribution", name).type),
+			[ApplicationCommandOptionType.Channel, ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Boolean],
+		);
+		assert.deepEqual(
 			["them", "bo", "bo-het"].map(name => optionAt(configJson.options, "admin-role", name).type),
 			[ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Role, ApplicationCommandOptionType.Boolean],
 		);
@@ -644,7 +682,9 @@ describe("định nghĩa /admin và /config", () =>
 		expectRange("xpCooldownSeconds", false, "channel", "set", "cooldown-giay");
 		expectRange("defaultPollXp", false, "poll", "xp-mac-dinh");
 		expectRange("pollXpDailyCap", false, "poll", "gioi-han-xp-ngay");
-		expectRange("contributionVotePoints", true, "contribution", "diem-moi-luot");
+		expectRange("contributionVotePoints", false, "contribution", "diem-moi-luot");
+		expectRange("contributionInteractionXp", false, "contribution", "xp-nguoi-bam");
+		expectRange("contributionInteractionXpDailyCap", false, "contribution", "gioi-han-xp-ngay");
 
 		const expectedTypes = [
 			ChannelType.GuildText,
@@ -879,6 +919,10 @@ describe("views quản trị", () =>
 			"Giới hạn XP từ vote mỗi ngày: **25 XP**",
 			`Role tạo vote: **<@&${ROLE_OTHER}>**`,
 			"Điểm mỗi lượt ghi nhận: **1 điểm**",
+			"Kênh contribution: **chưa chọn (chưa gửi được contribution)**",
+			"XP cho người bấm ghi nhận: **5 XP**",
+			"Giới hạn XP từ contribution mỗi ngày: **25 XP**",
+			"Role duyệt contribution: **chưa đặt (chỉ admin)**",
 			"Role admin bot: **chưa đặt**",
 			`1. <@&${ROLE_BACKEND}>`,
 			`2. <@&${ROLE_FRONTEND}>`,
@@ -939,6 +983,31 @@ describe("views quản trị", () =>
 		assert.match(field.value, /… và \d+ bậc khác\n/);
 		assert.ok(field.value.startsWith(`👩‍💻 ${longName} (Lv 0+): <@&${tierRoles[0].roleId}>`));
 		assert.equal(field.name, "🏅 Danh hiệu: bộ Cây xanh · role đã gán 8/8");
+	});
+
+	test("embed cấu hình cực đoan (mọi danh sách role đủ 25 role ID dài nhất, 25 team, 200 channel, 8 bậc) vẫn ≤ 6.000 ký tự", () =>
+	{
+		const roles = (prefix: number): string[] => Array.from({ length: MAX_GRANT_ROLES }, (_, index) => `${prefix}${String(index).padStart(19, "0")}`);
+		const settings = {
+			...DEFAULT_GUILD_SETTINGS,
+			adminRoleIds: roles(5),
+			pollCreatorRoleIds: roles(6),
+			contributionReviewerRoleIds: roles(7),
+			contributionChannelId: "12345678901234567890",
+			levelUpChannelId: "12345678901234567891",
+		};
+		const channels: ChannelSettings[] = Array.from({ length: 200 }, (_, index) => ({
+			channelId: `4${String(index).padStart(19, "0")}`,
+			xpEnabled: true,
+			xpPerMessage: 1000,
+			xpCooldownSeconds: 86400,
+		}));
+		const tierKeys = ["bac-1", "bac-2", "bac-3", "bac-4", "bac-5", "bac-6", "bac-7", "bac-8"] as const;
+		const tierRoles = tierKeys.map((tierKey, index) => ({ tierKey, roleId: `8${String(index).padStart(19, "0")}`, createdByBot: true }));
+		const embed = buildConfigEmbed(settings, roles(9), channels, { boardChannelId: "12345678901234567892", tierRoles, tierSet: DEFAULT_TIER_SET }).toJSON();
+		const total = [embed.title ?? "", ...(embed.fields ?? []).flatMap(field => [field.name, field.value])].join("").length;
+		assert.ok(total <= 6000, `embed dài ${total} ký tự`);
+		for (const field of embed.fields ?? []) assert.ok(field.value.length <= 1024, `${field.name}: ${field.value.length}`);
 	});
 
 	test("embed cấu hình rất nhiều channel vẫn vừa giới hạn field", () =>

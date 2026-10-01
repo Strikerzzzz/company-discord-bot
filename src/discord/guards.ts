@@ -1,6 +1,6 @@
 import { Channel, ChannelType, GuildMember, Interaction, PermissionFlagsBits, PermissionsBitField } from "discord.js";
 import type DiscordClient from "../classes/DiscordClient";
-import { canCreatePoll, isAdmin, MemberAccess } from "../modules/guild-config/permissions";
+import { canCreatePoll, canReviewContributions, isAdmin, MemberAccess } from "../modules/guild-config/permissions";
 import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
 import { logger } from "../shared/logger";
@@ -38,6 +38,13 @@ export function checkCanCreatePoll(interaction: Interaction, services: AppServic
 {
 	if (!interaction.inGuild()) return false;
 	return canCreatePoll(memberAccess(interaction), services.guildConfig.getSettings(interaction.guildId));
+}
+
+/** Người gọi được duyệt contribution không (admin bot hoặc role duyệt contribution, DEC-051); kiểm tra mỗi lần bấm hay gửi form. */
+export function checkCanReviewContributions(interaction: Interaction, services: AppServices): boolean
+{
+	if (!interaction.inGuild()) return false;
+	return canReviewContributions(memberAccess(interaction), services.guildConfig.getSettings(interaction.guildId));
 }
 
 /**

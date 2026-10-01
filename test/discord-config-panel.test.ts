@@ -58,6 +58,8 @@ const CHANNEL_THREAD = "400000000000000008";
 const CHANNEL_NO_SEND = "400000000000000009";
 const CHANNEL_NO_ATTACH = "400000000000000010";
 const CHANNEL_UNKNOWN = "400000000000000042";
+const CHANNEL_CONTRIB = "400000000000000011";
+const CONTRIB_BOT_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
 const MESSAGE_ID = "600000000000000001";
 const NO_PERMISSION = "Bạn không có quyền dùng lệnh này.";
 const GENERIC_ERROR = "Đã có lỗi xảy ra khi xử lý yêu cầu. Vui lòng thử lại sau.";
@@ -412,11 +414,14 @@ function panelData(harness: Harness, notice: string | null = null): ConfigPanelD
 	const teamIds = teams.list(GUILD);
 	const boardChannelId = harness.liveBoards.get(GUILD)?.channelId ?? null;
 	const missingIds = new Set<string>();
-	for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...teamIds])
+	for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...settings.contributionReviewerRoleIds, ...teamIds])
 	{
 		if (!harness.world.roles.has(roleId)) missingIds.add(roleId);
 	}
-	if (boardChannelId !== null && !harness.world.channels.has(boardChannelId)) missingIds.add(boardChannelId);
+	for (const channelId of [boardChannelId, settings.contributionChannelId])
+	{
+		if (channelId !== null && !harness.world.channels.has(channelId)) missingIds.add(channelId);
+	}
 	return {
 		settings,
 		channels: guildConfig.listChannels(GUILD),
@@ -546,7 +551,7 @@ describe("bảng cấu hình: mở bảng, định tuyến theo namespace, quy�
 			{ kind: "role", id: id({ type: "teams", add: true }), values: [ROLE_A] },
 			button({ type: "announce", enabled: false }),
 			button({ type: "xpForm" }),
-			{ kind: "modal", id: id({ type: "pollSave", drawn: { defaultPollXp: 5, pollXpDailyCap: 25, contributionVotePoints: 1 } }), fields: {} },
+			{ kind: "modal", id: id({ type: "pollSave", drawn: { defaultPollXp: 5, pollXpDailyCap: 25, contributionVotePoints: 1, contributionInteractionXp: 5, contributionInteractionXpDailyCap: 25 } }), fields: {} },
 			{ kind: "role", id: id({ type: "adminRoles", fingerprint: roleListFingerprint([]) }), values: [ROLE_A] },
 			{ kind: "role", id: id({ type: "pollRoles", fingerprint: roleListFingerprint([]) }), values: [ROLE_A] },
 			{ kind: "channel", id: id({ type: "board" }), values: [CHANNEL_BOT] },
@@ -818,23 +823,25 @@ describe("bảng cấu hình: thông báo lên level, form XP và vote", () =>
 	test("lưu form vote và contribution: ghi các ô đã sửa theo thứ tự cố định, vẽ trang vote", async () =>
 	{
 		const harness = createHarness();
-		const drawn = { defaultPollXp: 5, pollXpDailyCap: 25, contributionVotePoints: 1 };
+		const drawn = { defaultPollXp: 5, pollXpDailyCap: 25, contributionVotePoints: 1, contributionInteractionXp: 5, contributionInteractionXpDailyCap: 25 };
 		const calls = await dispatch(harness, {
 			kind: "modal",
 			id: id({ type: "pollSave", drawn }),
-			fields: { defaultPollXp: "5", pollXpDailyCap: "0", contributionVotePoints: "3" },
+			fields: { defaultPollXp: "5", pollXpDailyCap: "0", contributionVotePoints: "3", contributionInteractionXp: "8", contributionInteractionXpDailyCap: "25" },
 		});
 		assert.deepEqual(methods(calls), ["update"]);
-		assertPanel(harness, calls[0], "poll",
-			"Đã cập nhật cấu hình vote và contribution:\n• Giới hạn XP từ vote mỗi ngày: **không giới hạn**\n• Điểm mỗi lượt ghi nhận: **3 điểm**");
-		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ pollXpDailyCap: 0, contributionVotePoints: 3 }]);
+		assertPanel(harness, calls[0], "poll", "Đã cập nhật cấu hình vote và contribution:\n• Giới hạn XP từ vote mỗi ngày: **không giới hạn**"
+			+ "\n• Điểm mỗi lượt ghi nhận: **3 điểm**\n• XP cho người bấm ghi nhận: **8 XP**");
+		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [
+			{ pollXpDailyCap: 0, contributionVotePoints: 3, contributionInteractionXp: 8 },
+		]);
 	});
 });
 
 // ---------- Role tạo vote và role admin (chọn nhiều, DEC-044) ----------
 
 /** Ô chọn nhiều role của bảng vẽ từ danh sách `drawn` (vân tay lúc vẽ), gửi các role đang chọn `values`. */
-function grantsCall(type: "pollRoles" | "adminRoles", drawn: readonly string[], values: string[], caller?: CallerSpec): Call
+function grantsCall(type: "pollRoles" | "reviewRoles" | "adminRoles", drawn: readonly string[], values: string[], caller?: CallerSpec): Call
 {
 	return { kind: "role", id: id({ type, fingerprint: roleListFingerprint(drawn) }), values, caller };
 }
@@ -1095,5 +1102,86 @@ describe("bảng cấu hình: Bảng vàng và bảng danh hiệu", () =>
 		const payload = toJson(calls[0].payload) as { flags?: unknown };
 		assert.equal(payload.flags, MessageFlags.Ephemeral | MessageFlags.IsComponentsV2);
 		assert.deepEqual(payload, toJson(tierPanelReply(tierData(harness))));
+	});
+});
+
+// ---------- Kênh contribution và role duyệt contribution (DEC-051) ----------
+
+describe("bảng cấu hình: kênh contribution và role duyệt contribution (DEC-051)", () =>
+{
+	test("chọn kênh contribution: lưu, vẽ lại trang vote và contribution kèm kết quả, audit; chọn lại đúng kênh thì không ghi", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+		addChannel(harness.world, CHANNEL_CONTRIB, { bot: CONTRIB_BOT_PERMISSIONS });
+
+		const set = await dispatch(harness, { kind: "channel", id: id({ type: "contribChannel" }), values: [CHANNEL_CONTRIB] });
+		assert.deepEqual(methods(set), ["update"]);
+		assert.equal(guildConfig.getSettings(GUILD).contributionChannelId, CHANNEL_CONTRIB);
+		assertPanel(harness, set[0], "poll", `Đã cập nhật cấu hình contribution:\n• Kênh contribution: **<#${CHANNEL_CONTRIB}>**`);
+
+		const again = await dispatch(harness, { kind: "channel", id: id({ type: "contribChannel" }), values: [CHANNEL_CONTRIB] });
+		assertPanel(harness, again[0], "poll", `Không có gì thay đổi:\n• Kênh contribution: **<#${CHANNEL_CONTRIB}>**`);
+		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [{ contributionChannelId: CHANNEL_CONTRIB }]);
+	});
+
+	test("kênh contribution bị từ chối như `/config contribution kenh`: vẽ lại bảng, báo riêng, không ghi", async () =>
+	{
+		const harness = createHarness();
+		const call = (channelId: string): Call => ({ kind: "channel", id: id({ type: "contribChannel" }), values: [channelId] });
+		await refused(harness, call(CHANNEL_GENERAL), `Bot thiếu quyền **Embed Links** ở <#${CHANNEL_GENERAL}>. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
+		await refused(harness, call(CHANNEL_NO_SEND), `Bạn không có quyền **Send Messages** ở <#${CHANNEL_NO_SEND}>, nên không thể chọn kênh đó làm kênh contribution.`);
+		await refused(harness, call(CHANNEL_VOICE), "Kênh contribution phải là kênh văn bản hoặc kênh thông báo của server.");
+		await refused(harness, call(CHANNEL_UNKNOWN), SELECTED_CHANNEL_UNAVAILABLE);
+		assert.equal(harness.context.deps.guildConfig.getSettings(GUILD).contributionChannelId, null);
+		assert.deepEqual(audits(harness.context, "config"), []);
+	});
+
+	test("role duyệt contribution: chọn nhiều role là đặt cả danh sách, bỏ chọn hết là chỉ admin; bảng cũ và role sai bị từ chối", async () =>
+	{
+		const harness = createHarness();
+		const { guildConfig } = harness.context.deps;
+
+		const set = await dispatch(harness, grantsCall("reviewRoles", [], [ROLE_B, ROLE_A]));
+		assert.deepEqual(methods(set), ["update"]);
+		assert.deepEqual(guildConfig.getSettings(GUILD).contributionReviewerRoleIds, [ROLE_A, ROLE_B]);
+		assertPanel(harness, set[0], "poll", `Đã cập nhật cấu hình contribution:\nĐã thêm <@&${ROLE_B}>, <@&${ROLE_A}> vào danh sách role duyệt contribution.\n`
+			+ `• Role duyệt contribution: **<@&${ROLE_A}>, <@&${ROLE_B}>**`);
+
+		const stale = await dispatch(harness, grantsCall("reviewRoles", [ROLE_A], [ROLE_A, ROLE_C]));
+		assert.deepEqual(methods(stale), ["update", "followUp"]);
+		assert.equal(privateText(stale[1]), CONFIG_ROLES_CHANGED);
+
+		await refused(harness, grantsCall("reviewRoles", [ROLE_A, ROLE_B], [ROLE_A, ROLE_B, GUILD]), "Không thể dùng @everyone làm role duyệt contribution.");
+		await refused(
+			harness,
+			grantsCall("reviewRoles", [ROLE_A, ROLE_B], [ROLE_MANAGED]),
+			"Không thể dùng role do bot hoặc integration quản lý làm role duyệt contribution.",
+		);
+
+		const clear = await dispatch(harness, grantsCall("reviewRoles", [ROLE_A, ROLE_B], []));
+		assert.deepEqual(guildConfig.getSettings(GUILD).contributionReviewerRoleIds, []);
+		assertPanel(harness, clear[0], "poll", `Đã cập nhật cấu hình contribution:\nĐã bỏ <@&${ROLE_A}>, <@&${ROLE_B}> khỏi danh sách role duyệt contribution.\n`
+			+ "• Role duyệt contribution: **chưa đặt (chỉ admin)**");
+		assert.deepEqual(audits(harness.context, "config.update").map(entry => entry.details), [
+			{ contributionReviewerRoleIds: [ROLE_A, ROLE_B], addedRoles: [ROLE_B, ROLE_A] },
+			{ contributionReviewerRoleIds: [], removedRoles: [ROLE_A, ROLE_B] },
+		]);
+	});
+
+	test("người không phải admin bot bị dispatcher chặn với kênh contribution và role duyệt trên bảng", async () =>
+	{
+		const harness = createHarness();
+		addChannel(harness.world, CHANNEL_CONTRIB, { bot: CONTRIB_BOT_PERMISSIONS });
+		for (const call of [
+			{ kind: "channel", id: id({ type: "contribChannel" }), values: [CHANNEL_CONTRIB] } satisfies Call,
+			grantsCall("reviewRoles", [], [ROLE_A]),
+		])
+		{
+			const calls = await dispatch(harness, { ...call, caller: { id: USER_A, manageGuild: false } });
+			assert.deepEqual(methods(calls), ["reply"], call.id);
+			assert.equal(privateText(calls[0]), NO_PERMISSION, call.id);
+		}
+		assert.deepEqual(audits(harness.context, "config"), []);
 	});
 });

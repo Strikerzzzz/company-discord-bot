@@ -27,6 +27,7 @@ import {
 	LiveBoardActions,
 	moveLiveBoard,
 	renameInput,
+	resolveContributionChannel,
 	resolveLevelUpChannel,
 	ROLE_GRANT_PURPOSES,
 	roleGrantChanged,
@@ -139,16 +140,24 @@ const ADMIN_ROLE_CLEAR_OPTION = "bo-het";
 const POLL_ROLE_ADD_OPTION = "role-tao-vote";
 const POLL_ROLE_REMOVE_OPTION = "bo-role-tao-vote";
 const POLL_ROLE_CLEAR_OPTION = "xoa-role-tao-vote";
+const CONTRIBUTION_CHANNEL_OPTION = "kenh";
+const REVIEWER_ROLE_ADD_OPTION = "role-duyet";
+const REVIEWER_ROLE_REMOVE_OPTION = "bo-role-duyet";
+const REVIEWER_ROLE_CLEAR_OPTION = "xoa-role-duyet";
 
 export const ADMIN_ROLE_NO_OPTION = "Hãy chọn ít nhất một: `them` để thêm role admin bot, `bo` để bỏ một role, hoặc `bo-het` = True để xoá hết.";
 export const ADMIN_ROLE_CONFLICT = "`bo-het` = True xoá mọi role admin bot, nên không dùng cùng `them` hay `bo`.";
 export const POLL_ROLE_CONFLICT = "`xoa-role-tao-vote` = True xoá mọi role tạo vote, nên không dùng cùng `role-tao-vote` hay `bo-role-tao-vote`.";
+export const REVIEWER_ROLE_CONFLICT = "`xoa-role-duyet` = True xoá mọi role duyệt contribution, nên không dùng cùng `role-duyet` hay `bo-role-duyet`.";
+
+/** Dòng đầu phản hồi khi cấu hình contribution vừa đổi (`/config contribution`, bảng cấu hình). */
+const CONTRIBUTION_UPDATED = "Đã cập nhật cấu hình contribution:";
 
 /** Dòng đầu phản hồi khi một danh sách role được cấp quyền vừa đổi (DEC-044). */
 const ROLE_GRANT_HEADINGS: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.",
 	pollCreatorRoleIds: "Đã cập nhật cấu hình vote:",
-	contributionReviewerRoleIds: "Đã cập nhật cấu hình contribution:",
+	contributionReviewerRoleIds: CONTRIBUTION_UPDATED,
 };
 
 /**
@@ -227,6 +236,17 @@ interface SettingOption
 	key: NumericSettingKey;
 	description: string;
 }
+
+/** Option số của `/config contribution` (DEC-051), map sang mục cấu hình của guild. */
+const CONTRIBUTION_SETTING_OPTIONS: readonly SettingOption[] = [
+	{ name: "diem-moi-luot", key: "contributionVotePoints", description: "Điểm cộng (👍) hoặc trừ (👎) cho tác giả mỗi lượt" },
+	{ name: "xp-nguoi-bam", key: "contributionInteractionXp", description: "Activity XP cho người bấm 👍 hoặc 👎, một lần mỗi contribution" },
+	{
+		name: "gioi-han-xp-ngay",
+		key: "contributionInteractionXpDailyCap",
+		description: "XP tối đa một người nhận từ bấm 👍/👎 trong một ngày (0 = không giới hạn)",
+	},
+];
 
 /** Option số của `/config xp`, map sang mục cấu hình của guild. */
 const XP_SETTING_OPTIONS: readonly SettingOption[] = [
@@ -335,10 +355,22 @@ function adminRoleSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSu
 			.setDescription("True: xoá hết role admin bot (chỉ người có Manage Server là admin)"));
 }
 
+/**
+ * `/config contribution` (DEC-051): mọi option đều không bắt buộc (chọn ít nhất một). Kênh lưu qua resolveContributionChannel như web;
+ * role duyệt như role tạo vote của `/config poll`.
+ */
 function contributionSubcommand(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
 {
-	sub.setName("contribution").setDescription("Cấu hình điểm contribution");
-	return addSettingOption(sub, { name: "diem-moi-luot", key: "contributionVotePoints", description: "Điểm cộng cho tác giả mỗi lượt ghi nhận" }, true);
+	sub.setName("contribution").setDescription("Cấu hình contribution: kênh đăng, điểm mỗi lượt, XP người bấm, role duyệt");
+	for (const option of CONTRIBUTION_SETTING_OPTIONS) addSettingOption(sub, option);
+	return sub
+		.addChannelOption(option => option
+			.setName(CONTRIBUTION_CHANNEL_OPTION)
+			.setDescription("Kênh bot đăng mọi contribution mới (thành viên gửi từ đâu cũng vào kênh này)")
+			.addChannelTypes(...BOARD_CHANNEL_TYPES))
+		.addRoleOption(option => option.setName(REVIEWER_ROLE_ADD_OPTION).setDescription("Thêm một role được duyệt contribution (ngoài admin)"))
+		.addRoleOption(option => option.setName(REVIEWER_ROLE_REMOVE_OPTION).setDescription("Bỏ một role khỏi danh sách role duyệt contribution"))
+		.addBooleanOption(option => option.setName(REVIEWER_ROLE_CLEAR_OPTION).setDescription("True: xoá hết role duyệt (chỉ admin duyệt được contribution)"));
 }
 
 function tierOption(sub: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder
@@ -923,18 +955,50 @@ export default class ConfigCmd extends Command
 		return guildConfig.changeRoleGrants(context.guildId, key, change, context.actorId);
 	}
 
+	/**
+	 * `/config contribution` (DEC-051): số (điểm mỗi lượt, XP người bấm, giới hạn XP mỗi ngày), kênh contribution (người gọi và bot phải
+	 * đủ quyền ở kênh đó, resolveContributionChannel) và danh sách role duyệt (`role-duyet` thêm, `bo-role-duyet` bỏ, `xoa-role-duyet` xoá
+	 * hết; như role tạo vote). Kiểm tra kênh và role trước, đổi role rồi mới lưu số và kênh, để lỗi không để lại thay đổi dở.
+	 */
 	private async updateContribution(context: ConfigContext): Promise<void>
 	{
-		const points = context.interaction.options.getInteger("diem-moi-luot", true);
-		const next = this.updateSettings(context, { contributionVotePoints: points });
-		await context.interaction.reply(ephemeral(
-			`Đã cập nhật cấu hình contribution:\n${settingLine("contributionVotePoints", next.contributionVotePoints)}`,
-		));
+		const { options } = context.interaction;
+		const patch: Partial<GuildSettings> = {};
+		for (const option of CONTRIBUTION_SETTING_OPTIONS)
+		{
+			const value = options.getInteger(option.name);
+			if (value !== null) patch[option.key] = value;
+		}
+		const channelOption = options.getChannel(CONTRIBUTION_CHANNEL_OPTION);
+		const add = options.getRole(REVIEWER_ROLE_ADD_OPTION);
+		const remove = options.getRole(REVIEWER_ROLE_REMOVE_OPTION);
+		const clear = options.getBoolean(REVIEWER_ROLE_CLEAR_OPTION) ?? false;
+		if (clear && (add || remove)) throw new UserError(REVIEWER_ROLE_CONFLICT);
+		if (Object.keys(patch).length === 0 && !channelOption && !add && !remove && !clear) throw new UserError(NO_CHANGE_MESSAGE);
+		if (channelOption)
+		{
+			const interaction = requireCachedGuild(context.interaction);
+			patch.contributionChannelId = resolveContributionChannel(interaction.guild, channelOption.id, interaction.member);
+		}
+		if (add) this.assertUsableRole(context.guildId, add, ROLE_GRANT_PURPOSES.contributionReviewerRoleIds);
+
+		const roles = add || remove || clear
+			? this.changeRoleGrants(context, "contributionReviewerRoleIds", add?.id ?? null, remove?.id ?? null, clear)
+			: null;
+		const hasSettings = Object.keys(patch).length > 0;
+		if (hasSettings) this.updateSettings(context, patch);
+		const changed = hasSettings || (roles !== null && roleGrantChanged(roles));
+		const lines = [
+			changed ? CONTRIBUTION_UPDATED : "Không có gì thay đổi:",
+			...describeSettingsPatch(patch),
+			...(roles === null ? [] : roleGrantChangeLines("contributionReviewerRoleIds", roles)),
+		];
+		await context.interaction.reply(ephemeral(lines.join("\n")));
 	}
 
 	/**
-	 * Role dùng được vào một việc của bot (team, role admin bot, role tạo vote): không phải @everyone hay role do integration
-	 * quản lý, không phải role danh hiệu. Dùng chung cho lệnh gõ và bảng cấu hình.
+	 * Role dùng được vào một việc của bot (team, role admin bot, role tạo vote, role duyệt contribution): không phải @everyone hay
+	 * role do integration quản lý, không phải role danh hiệu. Dùng chung cho lệnh gõ và bảng cấu hình.
 	 */
 	private assertUsableRole(guildId: string, role: { id: string; managed: boolean }, purpose: string): void
 	{
@@ -1239,11 +1303,14 @@ export default class ConfigCmd extends Command
 		const missingIds = new Set<string>();
 		if (guild)
 		{
-			for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...teamIds])
+			for (const roleId of [...settings.adminRoleIds, ...settings.pollCreatorRoleIds, ...settings.contributionReviewerRoleIds, ...teamIds])
 			{
 				if (!guild.roles.cache.has(roleId)) missingIds.add(roleId);
 			}
-			if (boardChannelId !== null && !guild.channels.cache.has(boardChannelId)) missingIds.add(boardChannelId);
+			for (const channelId of [boardChannelId, settings.contributionChannelId])
+			{
+				if (channelId !== null && !guild.channels.cache.has(channelId)) missingIds.add(channelId);
+			}
 		}
 		return {
 			settings,
@@ -1340,6 +1407,8 @@ export default class ConfigCmd extends Command
 		else if (action.type === "board" && interaction.isChannelSelectMenu()) await this.panelSetBoard(interaction, page);
 		else if (action.type === "teams" && interaction.isRoleSelectMenu()) await this.panelTeams(interaction, action.add, page);
 		else if (action.type === "pollRoles" && interaction.isRoleSelectMenu()) await this.panelRoleGrants(interaction, GRANT_ACTION_KEYS.pollRoles, action.fingerprint, page);
+		else if (action.type === "contribChannel" && interaction.isChannelSelectMenu()) await this.panelSetContributionChannel(interaction, page);
+		else if (action.type === "reviewRoles" && interaction.isRoleSelectMenu()) await this.panelRoleGrants(interaction, GRANT_ACTION_KEYS.reviewRoles, action.fingerprint, page);
 		else if (action.type === "adminRoles" && interaction.isRoleSelectMenu()) await this.panelRoleGrants(interaction, GRANT_ACTION_KEYS.adminRoles, action.fingerprint, page);
 		else throw new UserError(INVALID_CONFIG_PANEL);
 	}
@@ -1415,10 +1484,11 @@ export default class ConfigCmd extends Command
 	}
 
 	/**
-	 * Ô chọn nhiều role của danh sách role tạo vote hoặc role admin bot (DEC-044). Danh sách hiện tại phải khớp vân tay lúc vẽ
-	 * bảng (`fingerprint`); không khớp (có người vừa đổi) thì vẽ lại bảng rồi báo riêng, không ghi gì. Khớp thì danh sách = các role
-	 * đang chọn: role mới qua cùng kiểm tra với `/config admin-role them` và `/config poll role-tao-vote`; ghi phần chênh lệch bằng
-	 * changeRoleGrants (một transaction, một audit). Role đã lưu mà không còn trong server không được điền sẵn, nên lưu là bỏ.
+	 * Ô chọn nhiều role của danh sách role tạo vote, role duyệt contribution hoặc role admin bot (DEC-044, DEC-051). Danh sách hiện
+	 * tại phải khớp vân tay lúc vẽ bảng (`fingerprint`); không khớp (có người vừa đổi) thì vẽ lại bảng rồi báo riêng, không ghi gì.
+	 * Khớp thì danh sách = các role đang chọn: role mới qua cùng kiểm tra với `/config admin-role them` và `/config poll role-tao-vote`;
+	 * ghi phần chênh lệch bằng changeRoleGrants (một transaction, một audit). Role đã lưu mà không còn trong server không được điền
+	 * sẵn, nên lưu là bỏ.
 	 */
 	private async panelRoleGrants(interaction: RoleSelectMenuInteraction, key: RoleGrantKey, fingerprint: string, page: ConfigPanelPage): Promise<void>
 	{
@@ -1441,6 +1511,28 @@ export default class ConfigCmd extends Command
 			interaction.user.id,
 		);
 		await this.updateConfigPanel(interaction, page, roleGrantNotice(key, result));
+	}
+
+	/**
+	 * Đặt kênh contribution từ bảng (DEC-051): cùng kiểm tra với `/config contribution kenh` và web (resolveContributionChannel: kênh văn
+	 * bản/thông báo trong cache của server, người gọi và bot đủ quyền). Đã đúng kênh thì không ghi.
+	 */
+	private async panelSetContributionChannel(interaction: ChannelSelectMenuInteraction, page: ConfigPanelPage): Promise<void>
+	{
+		if (!interaction.inCachedGuild()) throw new UserError(GUILD_UNAVAILABLE);
+		const { guild, guildId } = interaction;
+		const selected = interaction.values[0];
+		if (selected === undefined || !guild.channels.cache.has(selected)) throw new UserError(SELECTED_CHANNEL_UNAVAILABLE);
+		const channelId = resolveContributionChannel(guild, selected, interaction.member);
+		const { guildConfig } = this.services;
+		const patch: Partial<GuildSettings> = { contributionChannelId: channelId };
+		if (guildConfig.getSettings(guildId).contributionChannelId === channelId)
+		{
+			await this.updateConfigPanel(interaction, page, `Không có gì thay đổi:\n${describeSettingsPatch(patch).join("\n")}`);
+			return;
+		}
+		guildConfig.updateSettings(guildId, patch, interaction.user.id);
+		await this.updateConfigPanel(interaction, page, `${CONTRIBUTION_UPDATED}\n${describeSettingsPatch(patch).join("\n")}`);
 	}
 
 	/**

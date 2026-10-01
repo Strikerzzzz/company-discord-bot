@@ -63,7 +63,10 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 	"/config team list": { options: [], web: ["/teams"] },
 	"/config admin-role": { options: ["bo", "bo-het", "them"], web: ["/roles"] },
 	"/config poll": { options: ["bo-role-tao-vote", "gioi-han-xp-ngay", "role-tao-vote", "xoa-role-tao-vote", "xp-mac-dinh"], web: ["/settings", "/roles"] },
-	"/config contribution": { options: ["diem-moi-luot"], web: ["/settings"] },
+	"/config contribution": {
+		options: ["bo-role-duyet", "diem-moi-luot", "gioi-han-xp-ngay", "kenh", "role-duyet", "xoa-role-duyet", "xp-nguoi-bam"],
+		web: ["/settings", "/roles"],
+	},
 	"/config tier panel": { options: [], web: ["/tiers"] },
 	"/config tier set-role": { options: ["bac", "role"], web: ["/tiers"] },
 	"/config tier clear-role": { options: ["bac"], web: ["/tiers"] },

@@ -28,9 +28,15 @@ const ACTIONS: readonly ConfigPanelAction[] = [
 	{ type: "xpForm" },
 	{ type: "xpSave", drawn: { xpPerMessage: 10, xpCooldownSeconds: 86400, minMessageLength: 0, duplicateWindowSeconds: 300 } },
 	{ type: "pollForm" },
-	{ type: "pollSave", drawn: { defaultPollXp: 5, pollXpDailyCap: 100000, contributionVotePoints: 1 } },
+	{
+		type: "pollSave",
+		drawn: { defaultPollXp: 5, pollXpDailyCap: 100000, contributionVotePoints: 1, contributionInteractionXp: 100, contributionInteractionXpDailyCap: 100000 },
+	},
 	{ type: "pollRoles", fingerprint: roleListFingerprint([ROLE]) },
 	{ type: "pollRoles", fingerprint: roleListFingerprint([]) },
+	{ type: "contribChannel" },
+	{ type: "reviewRoles", fingerprint: roleListFingerprint([ROLE, ROLE_2]) },
+	{ type: "reviewRoles", fingerprint: roleListFingerprint([]) },
 	{ type: "board" },
 	{ type: "boardOff" },
 	{ type: "adminRoles", fingerprint: roleListFingerprint([ROLE, ROLE_2]) },
@@ -57,7 +63,8 @@ describe("hợp đồng customId của bảng cấu hình (PROP-033)", () =>
 	test("customId sai hoặc của bảng khác bị từ chối bằng UserError", () =>
 	{
 		for (const id of ["cfgui", "cfgui:", "cfgui:mode:khac", "cfgui:xpsave:1.2.3", "cfgui:xpsave:1.2.3.1234567", "cfgui:pollrole:123", "cfgui:pollrole:none",
-			`cfgui:admin:${ROLE}`, "cfgui:admins:ABCDEF12", "cfgui:admins:abc", "cfgui:pollroles:0123456789", "cfgui:pollroles:", "tierui:set", "cfgui:nav:x"])
+			`cfgui:admin:${ROLE}`, "cfgui:admins:ABCDEF12", "cfgui:admins:abc", "cfgui:pollroles:0123456789", "cfgui:pollroles:", "tierui:set", "cfgui:nav:x",
+			"cfgui:pollsave:5.25.1", "cfgui:pollsave:5.25.1.5", "cfgui:reviewers:abc", "cfgui:reviewers:", "cfgui:contribch:1"])
 		{
 			assert.throws(() => parseConfigPanelId(id), (error: unknown) => error instanceof UserError && error.message === INVALID_CONFIG_PANEL, id);
 		}
@@ -72,6 +79,7 @@ describe("hợp đồng customId của bảng cấu hình (PROP-033)", () =>
 		assert.notEqual(roleListFingerprint([]), roleListFingerprint([ROLE]));
 		assert.equal(configPanelId({ type: "adminRoles", fingerprint }), `cfgui:admins:${fingerprint}`);
 		assert.equal(configPanelId({ type: "pollRoles", fingerprint }), `cfgui:pollroles:${fingerprint}`);
+		assert.equal(configPanelId({ type: "reviewRoles", fingerprint }), `cfgui:reviewers:${fingerprint}`);
 	});
 
 	test("trang vẽ lại theo thao tác", () =>
@@ -80,6 +88,8 @@ describe("hợp đồng customId của bảng cấu hình (PROP-033)", () =>
 		assert.equal(pageOfAction({ type: "xpSave", drawn: { xpPerMessage: 1, xpCooldownSeconds: 1, minMessageLength: 1, duplicateWindowSeconds: 1 } }), "xp");
 		assert.equal(pageOfAction({ type: "adminRoles", fingerprint: roleListFingerprint([]) }), "board");
 		assert.equal(pageOfAction({ type: "pollRoles", fingerprint: roleListFingerprint([]) }), "poll");
+		assert.equal(pageOfAction({ type: "reviewRoles", fingerprint: roleListFingerprint([]) }), "poll");
+		assert.equal(pageOfAction({ type: "contribChannel" }), "poll");
 	});
 
 	test("đọc ô số trong form: bỏ khoảng trắng, chỉ nhận chữ số, kiểm tra giới hạn", () =>

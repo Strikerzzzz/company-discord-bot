@@ -62,7 +62,8 @@ export const BOARD_CHANNEL_TYPES = [ChannelType.GuildText, ChannelType.GuildAnno
  * - `channels`: chế độ kênh tính XP (DEC-037), bật/tắt XP cho nhiều kênh, danh sách kênh có cấu hình riêng;
  * - `teams`: thêm/bỏ role team, danh sách team;
  * - `xp`: XP mỗi tin, cooldown, độ dài tối thiểu, chống trùng (form), công tắc thông báo lên level;
- * - `poll`: XP mặc định khi vote, giới hạn XP vote mỗi ngày, điểm mỗi lượt ghi nhận (form), role được tạo vote;
+ * - `poll`: XP mặc định khi vote, giới hạn XP vote mỗi ngày, điểm mỗi lượt ghi nhận, XP người bấm và giới hạn XP mỗi ngày từ
+ *   contribution (form), role được tạo vote, kênh contribution và role duyệt contribution (DEC-051);
  * - `board`: kênh Bảng vàng (và nút tắt), role admin bot, nút mở bảng danh hiệu.
  */
 export type ConfigPanelPage = "home" | "channels" | "teams" | "xp" | "poll" | "board";
@@ -77,12 +78,21 @@ export function isConfigPanelPage(value: unknown): value is ConfigPanelPage
 /** Giá trị form XP lúc mở (mang trong customId của form, để chỉ lưu ô admin thật sự sửa). */
 export type XpFormValues = Pick<GuildSettings, "xpPerMessage" | "xpCooldownSeconds" | "minMessageLength" | "duplicateWindowSeconds">;
 /** Giá trị form vote/contribution lúc mở. */
-export type PollFormValues = Pick<GuildSettings, "defaultPollXp" | "pollXpDailyCap" | "contributionVotePoints">;
+export type PollFormValues = Pick<
+	GuildSettings,
+	"defaultPollXp" | "pollXpDailyCap" | "contributionVotePoints" | "contributionInteractionXp" | "contributionInteractionXpDailyCap"
+>;
 
 /** Thứ tự ô trong form XP; customId của mỗi ô là khoá cấu hình. */
 export const XP_FORM_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds"] as const satisfies readonly NumericSettingKey[];
 /** Thứ tự ô trong form vote/contribution; customId của mỗi ô là khoá cấu hình. */
-export const POLL_FORM_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints"] as const satisfies readonly NumericSettingKey[];
+export const POLL_FORM_KEYS = [
+	"defaultPollXp",
+	"pollXpDailyCap",
+	"contributionVotePoints",
+	"contributionInteractionXp",
+	"contributionInteractionXpDailyCap",
+] as const satisfies readonly NumericSettingKey[];
 
 /**
  * Thao tác mã hoá trong customId (`cfgui:<...>`). Ý nghĩa từng thao tác và trang vẽ lại sau khi làm xong:
@@ -94,10 +104,14 @@ export const POLL_FORM_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionV
  * - `announce` (nút, trang xp): đặt thông báo lên level = `enabled`.
  * - `xpForm` (nút, trang xp): mở form XP; `xpSave` (form): lưu, `drawn` là giá trị lúc mở form: ô nào admin không sửa
  *   (giá trị bằng `drawn`) thì không ghi, để không đè thay đổi của người khác trong lúc form đang mở.
- * - `pollForm` / `pollSave`: như trên cho vote/contribution (trang poll).
+ * - `pollForm` / `pollSave`: như trên cho vote/contribution (trang poll, 5 ô: POLL_FORM_KEYS).
  * - `pollRoles` (RoleSelect nhiều role 0–MAX_GRANT_ROLES, điền sẵn, trang poll): danh sách role tạo vote = các role đang chọn
  *   (DEC-044); bỏ chọn hết = chỉ admin tạo vote. `fingerprint` là roleListFingerprint của danh sách lúc vẽ bảng: danh sách hiện
  *   tại khác đi (có người vừa đổi) thì không ghi, vẽ lại bảng và báo.
+ * - `contribChannel` (ChannelSelect một kênh văn bản/thông báo, trang poll): đặt kênh contribution (DEC-051), cùng kiểm tra quyền như
+ *   `/config contribution kenh` (resolveContributionChannel). Đã đúng kênh thì không ghi.
+ * - `reviewRoles` (RoleSelect nhiều role, trang poll): như `pollRoles` cho danh sách role duyệt contribution (DEC-051); bỏ chọn hết
+ *   = chỉ admin duyệt.
  * - `board` (ChannelSelect một kênh, trang board): đặt kênh Bảng vàng (cùng kiểm tra quyền như `/config board`).
  * - `boardOff` (nút, trang board): tắt Bảng vàng.
  * - `adminRoles` (RoleSelect nhiều role, trang board): như `pollRoles` cho danh sách role admin bot; bỏ chọn hết = chỉ người có
@@ -115,14 +129,17 @@ export type ConfigPanelAction =
 	| { type: "pollForm" }
 	| { type: "pollSave"; drawn: PollFormValues }
 	| { type: "pollRoles"; fingerprint: string }
+	| { type: "contribChannel" }
+	| { type: "reviewRoles"; fingerprint: string }
 	| { type: "board" }
 	| { type: "boardOff" }
 	| { type: "adminRoles"; fingerprint: string }
 	| { type: "tierPanel" };
 
-/** Danh sách role (GuildSettings) mà ô chọn nhiều role của thao tác `pollRoles` / `adminRoles` đặt. */
-export const GRANT_ACTION_KEYS: Readonly<Record<"pollRoles" | "adminRoles", RoleGrantKey>> = {
+/** Danh sách role (GuildSettings) mà ô chọn nhiều role của thao tác `pollRoles` / `reviewRoles` / `adminRoles` đặt. */
+export const GRANT_ACTION_KEYS: Readonly<Record<"pollRoles" | "reviewRoles" | "adminRoles", RoleGrantKey>> = {
 	pollRoles: "pollCreatorRoleIds",
+	reviewRoles: "contributionReviewerRoleIds",
 	adminRoles: "adminRoleIds",
 };
 
@@ -152,7 +169,9 @@ export function pageOfAction(action: ConfigPanelAction): ConfigPanelPage
 	case "xpSave": return "xp";
 	case "pollForm":
 	case "pollSave":
-	case "pollRoles": return "poll";
+	case "pollRoles":
+	case "contribChannel":
+	case "reviewRoles": return "poll";
 	case "board":
 	case "boardOff":
 	case "adminRoles":
@@ -163,10 +182,11 @@ export function pageOfAction(action: ConfigPanelAction): ConfigPanelPage
 const NUMBER = "(\\d{1,6})";
 const FINGERPRINT = `([0-9a-f]{${ROLE_FINGERPRINT_LENGTH}})`;
 const PANEL_ID = new RegExp(
-	`^${CONFIG_PANEL_NAMESPACE}:(?:(nav|xpform|pollform|board|boardoff|tier)`
+	`^${CONFIG_PANEL_NAMESPACE}:(?:(nav|xpform|pollform|contribch|board|boardoff|tier)`
 		+ "|mode:(all|selected)|ch:(on|off)|team:(add|del)|ann:(on|off)"
-		+ `|xpsave:${NUMBER}\\.${NUMBER}\\.${NUMBER}\\.${NUMBER}|pollsave:${NUMBER}\\.${NUMBER}\\.${NUMBER}`
-		+ `|pollroles:${FINGERPRINT}|admins:${FINGERPRINT})$`,
+		+ `|xpsave:${NUMBER}\\.${NUMBER}\\.${NUMBER}\\.${NUMBER}`
+		+ `|pollsave:${NUMBER}\\.${NUMBER}\\.${NUMBER}\\.${NUMBER}\\.${NUMBER}`
+		+ `|pollroles:${FINGERPRINT}|reviewers:${FINGERPRINT}|admins:${FINGERPRINT})$`,
 );
 
 /** customId của một thao tác (luôn ≤ 100 ký tự: số trong form tối đa 6 chữ số, vân tay danh sách role 8 ký tự hex). */
@@ -185,6 +205,8 @@ export function configPanelId(action: ConfigPanelAction): string
 	case "pollForm": return `${ns}:pollform`;
 	case "pollSave": return `${ns}:pollsave:${POLL_FORM_KEYS.map(key => action.drawn[key]).join(".")}`;
 	case "pollRoles": return `${ns}:pollroles:${action.fingerprint}`;
+	case "contribChannel": return `${ns}:contribch`;
+	case "reviewRoles": return `${ns}:reviewers:${action.fingerprint}`;
 	case "board": return `${ns}:board`;
 	case "boardOff": return `${ns}:boardoff`;
 	case "adminRoles": return `${ns}:admins:${action.fingerprint}`;
@@ -194,18 +216,19 @@ export function configPanelId(action: ConfigPanelAction): string
 
 /**
  * Đọc customId của bảng; UserError(INVALID_CONFIG_PANEL) nếu sai định dạng (customId cũ hoặc bị sửa, kể cả `pollrole:`/`admin:`
- * của ô chọn một role trước DEC-044).
+ * của ô chọn một role trước DEC-044, và form vote 3 ô trước DEC-051).
  */
 export function parseConfigPanelId(customId: string): ConfigPanelAction
 {
 	const match = PANEL_ID.exec(customId);
 	if (!match) throw new UserError(INVALID_CONFIG_PANEL);
-	const [, simple, mode, channel, team, announce, x1, x2, x3, x4, p1, p2, p3, pollRoles, adminRoles] = match;
+	const [, simple, mode, channel, team, announce, x1, x2, x3, x4, p1, p2, p3, p4, p5, pollRoles, reviewRoles, adminRoles] = match;
 	switch (simple)
 	{
 	case "nav": return { type: "nav" };
 	case "xpform": return { type: "xpForm" };
 	case "pollform": return { type: "pollForm" };
+	case "contribch": return { type: "contribChannel" };
 	case "board": return { type: "board" };
 	case "boardoff": return { type: "boardOff" };
 	case "tier": return { type: "tierPanel" };
@@ -222,11 +245,21 @@ export function parseConfigPanelId(customId: string): ConfigPanelAction
 			drawn: { xpPerMessage: Number(x1), xpCooldownSeconds: Number(x2), minMessageLength: Number(x3), duplicateWindowSeconds: Number(x4) },
 		};
 	}
-	if (p1 !== undefined && p2 !== undefined && p3 !== undefined)
+	if (p1 !== undefined && p2 !== undefined && p3 !== undefined && p4 !== undefined && p5 !== undefined)
 	{
-		return { type: "pollSave", drawn: { defaultPollXp: Number(p1), pollXpDailyCap: Number(p2), contributionVotePoints: Number(p3) } };
+		return {
+			type: "pollSave",
+			drawn: {
+				defaultPollXp: Number(p1),
+				pollXpDailyCap: Number(p2),
+				contributionVotePoints: Number(p3),
+				contributionInteractionXp: Number(p4),
+				contributionInteractionXpDailyCap: Number(p5),
+			},
+		};
 	}
 	if (pollRoles !== undefined) return { type: "pollRoles", fingerprint: pollRoles };
+	if (reviewRoles !== undefined) return { type: "reviewRoles", fingerprint: reviewRoles };
 	if (adminRoles !== undefined) return { type: "adminRoles", fingerprint: adminRoles };
 	throw new UserError(INVALID_CONFIG_PANEL);
 }
@@ -262,8 +295,9 @@ export interface ConfigPanelData
 	tierSet: TierSet;
 	tierRoleCount: number;
 	/**
-	 * ID role/kênh đang lưu trong cấu hình nhưng không còn trong server (các role admin, các role tạo vote, role team, kênh Bảng
-	 * vàng): không điền sẵn vào menu chọn (Discord có thể từ chối ID không tồn tại) và hiện cảnh báo. Không truyền = coi như còn đủ.
+	 * ID role/kênh đang lưu trong cấu hình nhưng không còn trong server (các role admin, các role tạo vote, các role duyệt contribution,
+	 * role team, kênh Bảng vàng, kênh contribution): không điền sẵn vào menu chọn (Discord có thể từ chối ID không tồn tại) và hiện cảnh
+	 * báo. Không truyền = coi như còn đủ.
 	 */
 	missingIds?: ReadonlySet<string>;
 	/**
@@ -306,12 +340,14 @@ const PAGE_INFO: Readonly<Record<ConfigPanelPage, PageInfo>> = {
 	channels: { emoji: "📺", label: "Kênh tính XP", description: "Chế độ kênh, bật hoặc tắt tính XP cho từng kênh" },
 	teams: { emoji: "👥", label: "Team", description: "Thêm hoặc bỏ role team" },
 	xp: { emoji: "⭐", label: "Activity XP", description: "XP mỗi tin, cooldown, chống spam, thông báo lên level" },
-	poll: { emoji: "🗳️", label: "Vote và contribution", description: "XP khi vote, giới hạn mỗi ngày, điểm ghi nhận, role tạo vote" },
+	poll: { emoji: "🗳️", label: "Vote và contribution", description: "XP khi vote, điểm và XP ghi nhận, kênh contribution, role tạo vote, role duyệt" },
 	board: { emoji: "🏆", label: "Bảng vàng và quyền", description: "Kênh Bảng vàng, role admin bot, bảng danh hiệu" },
 };
 
 const XP_SETTING_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"] as const;
 const POLL_SETTING_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints", "pollCreatorRoleIds"] as const;
+/** Cấu hình contribution trên trang tổng quan (role duyệt chỉ ghi số lượng để trang tổng quan không vượt giới hạn chữ). */
+const HOME_CONTRIBUTION_KEYS = ["contributionChannelId", "contributionInteractionXp", "contributionInteractionXpDailyCap"] as const;
 
 const MODE_BUTTON_LABELS: Readonly<Record<XpChannelMode, string>> = {
 	all: "🌐 Tất cả kênh",
@@ -339,8 +375,15 @@ const XP_NOTE = [
 	"-# Kênh nhận thông báo lên level đặt bằng `/config xp kenh-thong-bao` hoặc trên trang web quản trị (Cài đặt điểm).",
 ].join("\n");
 
-const POLL_NOTE = "-# XP mặc định dùng khi admin không đặt XP riêng lúc tạo vote. Giới hạn XP từ vote tính theo ngày giờ Việt Nam; "
-	+ "0 là không giới hạn. Điểm ghi nhận cộng cho tác giả contribution. Admin luôn tạo được vote.";
+const POLL_NOTE = "-# XP mặc định dùng khi admin không đặt XP riêng lúc tạo vote. Giới hạn XP mỗi ngày tính theo ngày giờ Việt Nam; "
+	+ "0 là không giới hạn. Điểm mỗi lượt cộng (👍) hoặc trừ (👎) cho tác giả contribution; XP người bấm là Activity XP, một lần mỗi "
+	+ "contribution. Admin luôn tạo được vote.";
+
+const CONTRIBUTION_NOTE = "-# Thành viên gửi contribution từ đâu cũng được, bot đăng thẻ ở kênh contribution; thẻ chờ người duyệt bấm ✅ rồi "
+	+ "mới mở 👍/👎. Admin luôn duyệt được. Bot cần View Channel, Send Messages, Embed Links ở kênh đó.";
+
+/** Trần độ dài một danh sách role trên trang vote và contribution (UTF-16), để cả trang vừa giới hạn chữ của Discord. */
+const GRANT_TEXT_MAX = 300;
 
 const ADMIN_NOTE = "-# Người có quyền Manage Server luôn là admin; có một trong các role admin bot cũng là admin. Role admin muốn "
 	+ "dùng lệnh thì cần được cho phép trong **Server Settings → Integrations**.";
@@ -440,7 +483,12 @@ function homeText(data: ConfigPanelData): string
 	const sections = [
 		channelLines,
 		["**⭐ Activity XP**", ...settingLines(settings, XP_SETTING_KEYS)],
-		["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS)],
+		[
+			"**🗳️ Vote và 🤝 contribution**",
+			...settingLines(settings, POLL_SETTING_KEYS),
+			...settingLines(settings, HOME_CONTRIBUTION_KEYS),
+			reviewerCountLine(settings.contributionReviewerRoleIds),
+		],
 		[
 			"**👥 Team, 🏆 Bảng vàng và 🔐 quyền**",
 			`• Team: **${formatNumber(teams.length)}/${formatNumber(MAX_TEAMS)}**`,
@@ -606,25 +654,93 @@ function grantRolesSelect(action: keyof typeof GRANT_ACTION_KEYS, data: ConfigPa
 	return prefill.length === 0 ? select : select.setDefaultRoles(...prefill);
 }
 
-/** Cảnh báo các role trong danh sách không còn trong server (lưu lựa chọn ở ô chọn sẽ bỏ chúng); null nếu không có. */
-function missingGrantNote(data: ConfigPanelData, roleIds: readonly string[]): string | null
+/** Danh sách role dạng mention, gọn trong `max` ký tự; phần bị cắt gộp thành "… và N role khác". */
+function mentionsWithin(roleIds: readonly string[], max: number): string
+{
+	return fitLines(roleIds.map(roleMention), max, hidden => `… và ${formatNumber(hidden)} role khác`, { separator: ", " });
+}
+
+/**
+ * Cảnh báo các role trong danh sách không còn trong server (lưu lựa chọn ở ô chọn sẽ bỏ chúng); null nếu không có. `max` giới hạn độ
+ * dài phần liệt kê role (bỏ trống = liệt kê hết).
+ */
+function missingGrantNote(data: ConfigPanelData, roleIds: readonly string[], max?: number): string | null
 {
 	const missing = roleIds.filter(roleId => isMissing(data, roleId));
 	if (missing.length === 0) return null;
-	return `⚠️ Role đã lưu không còn trong server: ${missing.map(roleMention).join(", ")}. Lưu lựa chọn ở ô bên dưới sẽ bỏ các role này `
+	const list = max === undefined ? missing.map(roleMention).join(", ") : mentionsWithin(missing, max);
+	return `⚠️ Role đã lưu không còn trong server: ${list}. Lưu lựa chọn ở ô bên dưới sẽ bỏ các role này `
 		+ "khỏi danh sách (hoặc gỡ trên trang web quản trị, mục Quyền).";
 }
 
+/** Như settingLine của một danh sách role, nhưng cắt gọn trong `max` ký tự (giữ nguyên khi đủ chỗ). */
+function grantLine(key: RoleGrantKey, roleIds: readonly string[], max: number): string
+{
+	const full = settingLine(key, [...roleIds]);
+	if (full.length <= max) return full;
+	for (let kept = roleIds.length - 1; kept >= 1; kept--)
+	{
+		const line = `${settingLine(key, roleIds.slice(0, kept))} … và ${formatNumber(roleIds.length - kept)} role khác`;
+		if (line.length <= max) return line;
+	}
+	return truncate(full, max);
+}
+
+/** Số role duyệt contribution trên trang tổng quan (danh sách đầy đủ ở trang vote và contribution). */
+function reviewerCountLine(roleIds: readonly string[]): string
+{
+	return roleIds.length === 0
+		? settingLine("contributionReviewerRoleIds", [])
+		: `• Role duyệt contribution: **${formatNumber(roleIds.length)} role** (xem trang Vote và contribution)`;
+}
+
+/** Ô chọn kênh contribution (DEC-051): một kênh văn bản hoặc thông báo; điền sẵn kênh đang đặt nếu còn trong server. */
+function contributionChannelSelect(data: ConfigPanelData): ChannelSelectMenuBuilder
+{
+	const channelId = data.settings.contributionChannelId;
+	const select = new ChannelSelectMenuBuilder()
+		.setCustomId(configPanelId({ type: "contribChannel" }))
+		.setPlaceholder(channelId === null ? "Chọn kênh contribution…" : "Chuyển kênh contribution sang kênh khác…")
+		.setChannelTypes(...BOARD_CHANNEL_TYPES)
+		.setMinValues(1)
+		.setMaxValues(1);
+	return channelId === null || isMissing(data, channelId) ? select : select.setDefaultChannels(channelId);
+}
+
+/**
+ * Trang vote và contribution: các số (form 5 ô), role tạo vote, rồi kênh contribution và role duyệt contribution (DEC-051). Danh sách
+ * role cắt gọn trong GRANT_TEXT_MAX để cả trang ≤ 4.000 ký tự kể cả khi mỗi danh sách đủ 25 role; ô chọn role vẫn điền sẵn đủ.
+ */
 function addPollPage(container: ContainerBuilder, data: ConfigPanelData): void
 {
 	const { settings } = data;
-	const lines = ["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_SETTING_KEYS)];
-	const missing = missingGrantNote(data, settings.pollCreatorRoleIds);
-	if (missing !== null) lines.push(missing);
+	const pollLines = ["**🗳️ Role tạo vote**", grantLine("pollCreatorRoleIds", settings.pollCreatorRoleIds, GRANT_TEXT_MAX)];
+	const pollMissing = missingGrantNote(data, settings.pollCreatorRoleIds, GRANT_TEXT_MAX);
+	if (pollMissing !== null) pollLines.push(pollMissing);
+
+	const channelId = settings.contributionChannelId;
+	const contributionLines = [
+		"**🤝 Kênh và người duyệt contribution**",
+		settingLine("contributionChannelId", channelId),
+		grantLine("contributionReviewerRoleIds", settings.contributionReviewerRoleIds, GRANT_TEXT_MAX),
+	];
+	if (isMissing(data, channelId))
+	{
+		contributionLines.push("⚠️ Bot không còn thấy kênh contribution (đã bị xoá hoặc bot mất quyền xem). Chọn kênh khác bên dưới.");
+	}
+	const reviewerMissing = missingGrantNote(data, settings.contributionReviewerRoleIds, GRANT_TEXT_MAX);
+	if (reviewerMissing !== null) contributionLines.push(reviewerMissing);
+
 	container
-		.addTextDisplayComponents(textDisplay([...lines, POLL_NOTE].join("\n")))
+		.addTextDisplayComponents(textDisplay(["**🗳️ Vote và 🤝 contribution**", ...settingLines(settings, POLL_FORM_KEYS), POLL_NOTE].join("\n")))
 		.addActionRowComponents(row(button({ type: "pollForm" }, "✏️ Sửa số", ButtonStyle.Primary)))
-		.addActionRowComponents(row(grantRolesSelect("pollRoles", data, "Role được tạo vote (chọn nhiều; bỏ chọn hết = chỉ admin)")));
+		.addSeparatorComponents(separator())
+		.addTextDisplayComponents(textDisplay(pollLines.join("\n")))
+		.addActionRowComponents(row(grantRolesSelect("pollRoles", data, "Role được tạo vote (chọn nhiều; bỏ chọn hết = chỉ admin)")))
+		.addSeparatorComponents(separator())
+		.addTextDisplayComponents(textDisplay([...contributionLines, CONTRIBUTION_NOTE].join("\n")))
+		.addActionRowComponents(row(contributionChannelSelect(data)))
+		.addActionRowComponents(row(grantRolesSelect("reviewRoles", data, "Role duyệt contribution (chọn nhiều; bỏ chọn hết = chỉ admin)")));
 }
 
 // ---------- Trang Bảng vàng và quyền ----------
@@ -666,8 +782,8 @@ function addBoardPage(container: ContainerBuilder, data: ConfigPanelData): void
 /**
  * Bảng cấu hình của một trang (Components V2, màu nhấn COLORS.primary): tiêu đề kèm tên trang, `notice` nguyên văn nếu có
  * (dài quá CONFIG_PANEL_NOTICE_MAX thì cắt), menu chọn trang (`nav`, placeholder ghi trang đang xem), rồi nội dung trang.
- * Trang nhiều nhất (board) có 19 component tính cả lồng nhau, dưới giới hạn 40; danh sách kênh và team cắt bằng fitLines để
- * tổng chữ của mọi TextDisplay ≤ 4.000. Mọi customId từ configPanelId.
+ * Trang nhiều nhất (vote và contribution, Bảng vàng) có 19 component tính cả lồng nhau, dưới giới hạn 40; danh sách kênh, team và
+ * role cắt bằng fitLines để tổng chữ của mọi TextDisplay ≤ 4.000. Mọi customId từ configPanelId.
  */
 export function buildConfigPanel(page: ConfigPanelPage, data: ConfigPanelData): ContainerBuilder
 {
@@ -758,13 +874,15 @@ export function buildXpSettingsModal(settings: GuildSettings): ModalBuilder
 	return modal;
 }
 
-/** Form vote/contribution: 3 ô số điền sẵn; customId là configPanelId({ type: "pollSave", drawn }). */
+/** Form vote/contribution: 5 ô số điền sẵn (tối đa của một form); customId là configPanelId({ type: "pollSave", drawn }). */
 export function buildPollSettingsModal(settings: GuildSettings): ModalBuilder
 {
 	const drawn: PollFormValues = {
 		defaultPollXp: settings.defaultPollXp,
 		pollXpDailyCap: settings.pollXpDailyCap,
 		contributionVotePoints: settings.contributionVotePoints,
+		contributionInteractionXp: settings.contributionInteractionXp,
+		contributionInteractionXpDailyCap: settings.contributionInteractionXpDailyCap,
 	};
 	const modal = new ModalBuilder().setCustomId(configPanelId({ type: "pollSave", drawn })).setTitle("🗳️ Vote và contribution");
 	for (const key of POLL_FORM_KEYS) modal.addLabelComponents(numberInput(key, drawn[key]));
