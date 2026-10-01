@@ -12,6 +12,8 @@ import { WebResponse } from "../http";
 import { guildUrl, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
 import { xpChannelsOf } from "./channels";
+import { pendingContributionCount, PENDING_LIST_PATH } from "./contributions";
+import { NO_CONTRIBUTION_CHANNEL } from "./settings";
 
 /** Số thao tác gần đây hiện ở trang tổng quan. */
 const RECENT_AUDIT_LIMIT = 5;
@@ -29,8 +31,9 @@ const VN_TIME = new Intl.DateTimeFormat("vi-VN", {
 });
 
 const XP_KEYS = ["xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"] as const;
-const POLL_KEYS = ["defaultPollXp", "pollXpDailyCap", "contributionVotePoints"] as const;
-const ROLE_KEYS = ["adminRoleIds", "pollCreatorRoleIds"] as const;
+const POLL_KEYS = ["defaultPollXp", "pollXpDailyCap"] as const;
+const CONTRIBUTION_KEYS = ["contributionChannelId", "contributionVotePoints", "contributionInteractionXp", "contributionInteractionXpDailyCap"] as const;
+const ROLE_KEYS = ["adminRoleIds", "pollCreatorRoleIds", "contributionReviewerRoleIds"] as const;
 
 /** Danh sách dòng kiểu Discord ("• Nhãn: **giá trị**", mention) thành <ul>; bỏ dấu "• " đầu dòng. */
 function lines(ctx: GuildPageContext, texts: readonly string[]): RawHtml
@@ -67,6 +70,18 @@ function channelCard(ctx: GuildPageContext, settings: GuildSettings): RawHtml
 	if (custom > 0) texts.push(`Kênh có XP hoặc cooldown riêng: **${formatNumber(custom)}**`);
 	const warning = mode === "selected" && enabled === 0 ? html`<div class="warn-box">${NO_XP_CHANNEL_WARNING}</div>` : "";
 	return card(ctx, "📺 Kênh tính XP", "/channels", "Sửa kênh", html`${lines(ctx, texts)}${warning}`);
+}
+
+/**
+ * Thẻ Contribution (DEC-051): kênh contribution, điểm mỗi lượt, XP người bấm, và lối vào danh sách chờ duyệt. Chưa chọn kênh thì
+ * cảnh báo vì thành viên chưa gửi được contribution.
+ */
+function contributionCard(ctx: GuildPageContext, settings: GuildSettings): RawHtml
+{
+	const pending = pendingContributionCount(ctx.deps.services.contributions, ctx.guild.id);
+	const warning = settings.contributionChannelId === null ? html`<div class="warn-box">${NO_CONTRIBUTION_CHANNEL}</div>` : "";
+	const queue = html`<p class="ov-pending"><a href="${guildUrl(ctx, PENDING_LIST_PATH)}">⏳ Chờ duyệt: <strong>${formatNumber(pending)}</strong> contribution</a></p>`;
+	return card(ctx, "🤝 Contribution", "/settings", "Sửa cài đặt điểm", html`${lines(ctx, settingTexts(settings, CONTRIBUTION_KEYS))}${warning}${queue}`);
 }
 
 function teamCard(ctx: GuildPageContext): RawHtml
@@ -140,7 +155,8 @@ function renderOverview(ctx: GuildPageContext): WebResponse
 <div class="grid ov-grid">
 ${channelCard(ctx, settings)}
 ${card(ctx, "⭐ Activity XP", "/settings", "Sửa cài đặt điểm", lines(ctx, settingTexts(settings, XP_KEYS)))}
-${card(ctx, "🗳️ Vote và 🤝 contribution", "/settings", "Sửa cài đặt điểm", lines(ctx, settingTexts(settings, POLL_KEYS)))}
+${card(ctx, "🗳️ Vote", "/settings", "Sửa cài đặt điểm", lines(ctx, settingTexts(settings, POLL_KEYS)))}
+${contributionCard(ctx, settings)}
 ${teamCard(ctx)}
 ${boardCard(ctx)}
 ${card(ctx, "🔐 Quyền", "/roles", "Sửa quyền", lines(ctx, [...settingTexts(settings, ROLE_KEYS), "Người có quyền Manage Server luôn là admin."]))}
@@ -162,6 +178,7 @@ export const overviewPage: PageModule = {
 .ov-list { list-style: none; padding: 0; margin: 0 0 10px; }
 .ov-list li { padding: 2px 0; }
 .ov-more { margin-top: auto; font-weight: 600; font-size: 14px; }
+.ov-pending { margin: 0 0 10px; }
 .ov-scroll { overflow-x: auto; margin-bottom: 10px; }
 .ov-time { white-space: nowrap; color: var(--muted); }
 `,

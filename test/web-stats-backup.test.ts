@@ -20,6 +20,7 @@ import {
 	CHANNEL_CHAT,
 	CHANNEL_WORK,
 	createWebHarness,
+	ensureContributionChannel,
 	login,
 	LoggedIn,
 	PLAIN_USER,
@@ -111,6 +112,7 @@ describe("web: trang Thống kê (DEC-041)", () =>
 		users.forEach((userId, index) => awardMessage(harness, userId, channels[index] ?? CHANNEL_CHAT));
 		services.activity.adjustXp({ guildId: GUILD, userId: PLAIN_USER, delta: 1234, actorId: ADMIN_USER, reason: null, roleIds: [] });
 		services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
+		ensureContributionChannel(harness);
 		services.contributions.submit({
 			guildId: GUILD, authorId: PLAIN_USER, submittedBy: PLAIN_USER, title: "Viết tài liệu", description: "Mô tả", category: "y-tuong", link: null, authorRoleIds: [],
 		});
