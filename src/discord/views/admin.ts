@@ -242,7 +242,16 @@ export function buildConfigEmbed(
 				value: settingLines(settings, ["xpChannelMode", "xpPerMessage", "xpCooldownSeconds", "minMessageLength", "duplicateWindowSeconds", "levelUpAnnouncements", "levelUpChannelId"]),
 			},
 			{ name: "🗳️ Vote", value: settingLines(settings, ["defaultPollXp", "pollXpDailyCap", "pollCreatorRoleIds"]) },
-			{ name: "🤝 Contribution", value: settingLines(settings, ["contributionVotePoints"]) },
+			{
+				name: "🤝 Contribution",
+				value: settingLines(settings, [
+					"contributionChannelId",
+					"contributionVotePoints",
+					"contributionInteractionXp",
+					"contributionInteractionXpDailyCap",
+					"contributionReviewerRoleIds",
+				]),
+			},
 			{ name: "🔐 Quyền admin", value: `${settingLines(settings, ["adminRoleIds"])}\nNgười có quyền Manage Server luôn là admin.` },
 			{ name: `👥 Team (${teams.length}/${MAX_TEAMS})`, value: teamText },
 			{ name: `📺 Channel có cấu hình riêng (${channels.length})`, value: channelText },

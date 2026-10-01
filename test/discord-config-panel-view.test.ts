@@ -37,7 +37,9 @@ import { CHANNEL_BOT, CHANNEL_GENERAL, ROLE_BACKEND, ROLE_FRONTEND } from "./hel
 const ROLE_ADMIN = "600000000000000001";
 const ROLE_POLL = "600000000000000002";
 const ROLE_ADMIN_2 = "600000000000000003";
+const ROLE_REVIEWER = "600000000000000004";
 const CHANNEL_BOARD = "700000000000000001";
+const CHANNEL_CONTRIB = "700000000000000002";
 const CHANNEL_MUTED = "400000000000000003";
 const NOTICE = "Đã bật XP cho 3 kênh: <#400000000000000001>, <#400000000000000002>, <#400000000000000003>.";
 
@@ -73,8 +75,12 @@ function fullData(mode: XpChannelMode): ConfigPanelData
 			defaultPollXp: 8,
 			pollXpDailyCap: 0,
 			contributionVotePoints: 2,
+			contributionInteractionXp: 7,
+			contributionInteractionXpDailyCap: 0,
+			contributionChannelId: CHANNEL_CONTRIB,
 			adminRoleIds: [ROLE_ADMIN, ROLE_ADMIN_2],
 			pollCreatorRoleIds: [ROLE_POLL],
+			contributionReviewerRoleIds: [ROLE_REVIEWER],
 		}),
 		channels: [
 			OWN_XP_CHANNEL,
@@ -93,6 +99,8 @@ const EXTREME_CHANNELS = 200;
 /** Đủ MAX_GRANT_ROLES role admin và role tạo vote, ID dài nhất, đều không còn trong server (thêm dòng cảnh báo liệt kê từng role). */
 const EXTREME_ADMIN_ROLES = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => longId(6, index));
 const EXTREME_POLL_ROLES = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => longId(8, index));
+const EXTREME_REVIEWER_ROLES = Array.from({ length: MAX_GRANT_ROLES }, (_, index) => longId(9, index));
+const EXTREME_CONTRIB_CHANNEL = longId(7, 2);
 
 /**
  * 200 kênh đều có XP và cooldown riêng (một nửa bật, một nửa tắt), 25 team, 25 role admin và 25 role tạo vote (không còn trong
@@ -115,15 +123,19 @@ function extremeData(mode: XpChannelMode): ConfigPanelData
 			defaultPollXp: SETTING_LIMITS.defaultPollXp.max,
 			pollXpDailyCap: SETTING_LIMITS.pollXpDailyCap.max,
 			contributionVotePoints: SETTING_LIMITS.contributionVotePoints.max,
+			contributionInteractionXp: SETTING_LIMITS.contributionInteractionXp.max,
+			contributionInteractionXpDailyCap: SETTING_LIMITS.contributionInteractionXpDailyCap.max,
+			contributionChannelId: EXTREME_CONTRIB_CHANNEL,
 			adminRoleIds: EXTREME_ADMIN_ROLES,
 			pollCreatorRoleIds: EXTREME_POLL_ROLES,
+			contributionReviewerRoleIds: EXTREME_REVIEWER_ROLES,
 		}),
 		channels,
 		teams: Array.from({ length: MAX_TEAMS }, (_, index) => longId(5, index)),
 		boardChannelId: longId(7, 1),
 		tierSet: TIER_SETS["kiem-hiep"],
 		tierRoleCount: 8,
-		missingIds: new Set([...EXTREME_ADMIN_ROLES, ...EXTREME_POLL_ROLES]),
+		missingIds: new Set([...EXTREME_ADMIN_ROLES, ...EXTREME_POLL_ROLES, ...EXTREME_REVIEWER_ROLES, EXTREME_CONTRIB_CHANNEL]),
 		notice: "Đã cập nhật <#12345678901234567890>. ".repeat(100).slice(0, CONFIG_PANEL_NOTICE_MAX),
 	};
 }
@@ -341,6 +353,10 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 			"• Giới hạn XP từ vote mỗi ngày: **không giới hạn**",
 			`• Role tạo vote: **<@&${ROLE_POLL}>**`,
 			"• Điểm mỗi lượt ghi nhận: **2 điểm**",
+			`• Kênh contribution: **<#${CHANNEL_CONTRIB}>**`,
+			"• XP cho người bấm ghi nhận: **7 XP**",
+			"• Giới hạn XP từ contribution mỗi ngày: **không giới hạn**",
+			"• Role duyệt contribution: **1 role** (xem trang Vote và contribution)",
 			`• Team: **2/${MAX_TEAMS}**`,
 			`• Bảng vàng: <#${CHANNEL_BOARD}>`,
 			`• Role admin bot: **<@&${ROLE_ADMIN}>, <@&${ROLE_ADMIN_2}>**`,
@@ -491,7 +507,16 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 	{
 		const panel = panelOf("poll", fullData("all"));
 		const text = panelText(panel);
-		for (const expected of ["• XP mặc định khi vote: **8 XP**", "• Giới hạn XP từ vote mỗi ngày: **không giới hạn**", "• Điểm mỗi lượt ghi nhận: **2 điểm**", `• Role tạo vote: **<@&${ROLE_POLL}>**`])
+		for (const expected of [
+			"• XP mặc định khi vote: **8 XP**",
+			"• Giới hạn XP từ vote mỗi ngày: **không giới hạn**",
+			"• Điểm mỗi lượt ghi nhận: **2 điểm**",
+			"• XP cho người bấm ghi nhận: **7 XP**",
+			"• Giới hạn XP từ contribution mỗi ngày: **không giới hạn**",
+			`• Role tạo vote: **<@&${ROLE_POLL}>**`,
+			`• Kênh contribution: **<#${CHANNEL_CONTRIB}>**`,
+			`• Role duyệt contribution: **<@&${ROLE_REVIEWER}>**`,
+		])
 		{
 			assert.ok(text.includes(expected), expected);
 		}
@@ -508,6 +533,43 @@ describe("bảng cấu hình: nội dung từng trang (hàm thuần)", () =>
 		const empty = nodeById(emptyPanel, configPanelId({ type: "pollRoles", fingerprint: roleListFingerprint([]) }));
 		assert.equal(empty.default_values, undefined);
 		assert.ok(panelText(emptyPanel).includes("• Role tạo vote: **chưa đặt (chỉ admin)**"));
+	});
+
+	test("vote và contribution: ChannelSelect kênh contribution và RoleSelect role duyệt (DEC-051), điền sẵn khi đã đặt", () =>
+	{
+		const panel = panelOf("poll", fullData("all"));
+		const channel = nodeById(panel, configPanelId({ type: "contribChannel" }));
+		assert.equal(channel.type, ComponentType.ChannelSelect);
+		assert.deepEqual(channel.channel_types, [...BOARD_CHANNEL_TYPES]);
+		assert.equal(channel.min_values, 1);
+		assert.equal(channel.max_values, 1);
+		assert.deepEqual(channel.default_values, [{ id: CHANNEL_CONTRIB, type: "channel" }]);
+
+		const reviewers = nodeById(panel, configPanelId({ type: "reviewRoles", fingerprint: roleListFingerprint([ROLE_REVIEWER]) }));
+		assert.equal(reviewers.type, ComponentType.RoleSelect);
+		assert.equal(reviewers.min_values, 0);
+		assert.equal(reviewers.max_values, MAX_GRANT_ROLES);
+		assert.deepEqual(reviewers.default_values, [{ id: ROLE_REVIEWER, type: "role" }]);
+		assert.equal(reviewers.placeholder, "Role duyệt contribution (chọn nhiều; bỏ chọn hết = chỉ admin)");
+
+		const emptyPanel = panelOf("poll", emptyData("all"));
+		assert.equal(nodeById(emptyPanel, configPanelId({ type: "contribChannel" })).default_values, undefined);
+		assert.equal(nodeById(emptyPanel, configPanelId({ type: "reviewRoles", fingerprint: roleListFingerprint([]) })).default_values, undefined);
+		const text = panelText(emptyPanel);
+		assert.ok(text.includes("• Kênh contribution: **chưa chọn (chưa gửi được contribution)**"), text);
+		assert.ok(text.includes("• Role duyệt contribution: **chưa đặt (chỉ admin)**"), text);
+	});
+
+	test("vote và contribution cực đoan: danh sách role dài bị gộp \"… và N role khác\", ô chọn không điền ID không còn trong server", () =>
+	{
+		const panel = panelOf("poll", extremeData("all"));
+		const text = panelText(panel);
+		assert.match(text, /• Role tạo vote: \*\*<@&8\d+>.*\*\* … và \d+ role khác/);
+		assert.match(text, /• Role duyệt contribution: \*\*<@&9\d+>.*\*\* … và \d+ role khác/);
+		assert.ok(text.includes("Bot không còn thấy kênh contribution"), text);
+		assert.equal(nodeById(panel, configPanelId({ type: "contribChannel" })).default_values, undefined);
+		const reviewers = nodeById(panel, configPanelId({ type: "reviewRoles", fingerprint: roleListFingerprint(EXTREME_REVIEWER_ROLES) }));
+		assert.equal(reviewers.default_values, undefined);
 	});
 
 	test("Bảng vàng và quyền: kênh điền sẵn, nút tắt, role admin điền sẵn, nút mở bảng danh hiệu", () =>
@@ -603,17 +665,25 @@ describe("bảng cấu hình: form sửa số (hàm thuần)", () =>
 		assert.ok(description.includes("Thời gian chờ giữa hai lần") && description.includes("86.400"), description);
 	});
 
-	test("form vote/contribution: customId parse ra đúng giá trị lúc mở, 3 ô điền sẵn và bắt buộc; ghi rõ 0 = không giới hạn", () =>
+	test("form vote/contribution: customId parse ra đúng giá trị lúc mở, 5 ô điền sẵn và bắt buộc; ghi rõ 0 = không giới hạn", () =>
 	{
 		for (const data of [emptyData("all"), fullData("all"), extremeData("selected")])
 		{
 			const { settings } = data;
 			const modal = toJson(buildPollSettingsModal(settings));
-			const drawn = { defaultPollXp: settings.defaultPollXp, pollXpDailyCap: settings.pollXpDailyCap, contributionVotePoints: settings.contributionVotePoints };
+			const drawn = {
+				defaultPollXp: settings.defaultPollXp,
+				pollXpDailyCap: settings.pollXpDailyCap,
+				contributionVotePoints: settings.contributionVotePoints,
+				contributionInteractionXp: settings.contributionInteractionXp,
+				contributionInteractionXpDailyCap: settings.contributionInteractionXpDailyCap,
+			};
 			assert.deepEqual(parseConfigPanelId(modal.custom_id ?? ""), { type: "pollSave", drawn });
 			assertForm(modal, POLL_FORM_KEYS, drawn);
 		}
 		const cap = toJson(buildPollSettingsModal(DEFAULT_GUILD_SETTINGS)).components?.[1].description ?? "";
 		assert.ok(cap.includes("0 = không giới hạn"), cap);
+		const contributionCap = toJson(buildPollSettingsModal(DEFAULT_GUILD_SETTINGS)).components?.[4].description ?? "";
+		assert.ok(contributionCap.includes("0 = không giới hạn") && contributionCap.includes("👍/👎"), contributionCap);
 	});
 });

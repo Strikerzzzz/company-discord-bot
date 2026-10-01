@@ -1,18 +1,23 @@
 import { ApplicationCommandType,
+	ChannelType,
 	ContextMenuCommandBuilder,
 	messageLink,
 	MessageContextMenuCommandInteraction,
+	MessageFlags,
+	PermissionFlagsBits,
 	UserContextMenuCommandInteraction } from "discord.js";
 import ContextMenu from "../../classes/ContextMenu";
-import { assertCanSendMessages, requireGuildId } from "../../discord/guards";
+import { requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
-import { contributionMessage, MESSAGE_CONTRIBUTION_DESCRIPTION, messageContributionTitle } from "../../discord/views/contribution";
+import { postContributionCard, requireContributionCardChannel } from "../../discord/messages";
+import { contributionSubmittedText, MESSAGE_CONTRIBUTION_DESCRIPTION, messageContributionTitle } from "../../discord/views/contribution";
 import { UserError } from "../../shared/errors";
 import { logger } from "../../shared/logger";
 
 /**
- * Chuột phải vào tin nhắn → "Ghi nhận đóng góp": điểm thuộc về tác giả tin nhắn (DEC-025).
- * Không chép nội dung tin nhắn vào database hay log: contribution chỉ giữ tên kênh và link tới tin nhắn gốc.
+ * Chuột phải vào tin nhắn → "Ghi nhận đóng góp": điểm thuộc về tác giả tin nhắn (DEC-025). Gọi ở kênh nào cũng được; bot đăng thẻ
+ * chờ duyệt ở kênh contribution admin đã chọn và trả lời riêng kèm link (DEC-051), nên người gọi chỉ cần xem được kênh contribution.
+ * Không chép nội dung tin nhắn vào database hay log: contribution chỉ giữ tên kênh (khi kênh công khai) và link tới tin nhắn gốc.
  */
 export default class RecognizeContribution extends ContextMenu
 {
@@ -29,19 +34,18 @@ export default class RecognizeContribution extends ContextMenu
 		if (target.author.bot) throw new UserError("Không thể ghi nhận tin nhắn của bot.");
 		// Tin nhắn hệ thống (ví dụ "X đã vào server", tin ghim) không phải đóng góp của ai.
 		if (target.system) throw new UserError("Không thể ghi nhận tin nhắn hệ thống.");
-		// Bot đăng thay người dùng, nên người không được gửi tin ở kênh này cũng không được đăng qua bot.
-		assertCanSendMessages(interaction);
 
-		// Lấy role của tác giả qua REST có thể vượt hạn 3 giây: defer (công khai) trước.
-		await interaction.deferReply();
+		// Trả lời riêng (thẻ nằm ở kênh contribution); kiểm tra kênh và lấy role tác giả qua REST có thể vượt hạn 3 giây: defer trước.
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+		const channel = await requireContributionCardChannel(this.client, interaction);
 		const authorRoleIds = await fetchRoleIds(interaction, target.author.id);
 
-		const { contributions } = this.client.services;
-		const contribution = contributions.submit({
+		const { services } = this.client;
+		const contribution = services.contributions.submit({
 			guildId,
 			authorId: target.author.id,
 			submittedBy: interaction.user.id,
-			title: messageContributionTitle(channelName(interaction)),
+			title: messageContributionTitle(publicChannelName(interaction)),
 			description: MESSAGE_CONTRIBUTION_DESCRIPTION,
 			category: "khac",
 			// Tự dựng link: message.url bị thành "@me" khi channel không có trong cache.
@@ -49,17 +53,24 @@ export default class RecognizeContribution extends ContextMenu
 			authorRoleIds,
 			sourceMessageId: target.id,
 		});
-
-		const message = await interaction.editReply(contributionMessage(contribution));
-		contributions.attachMessage(guildId, contribution.id, message.channelId, message.id);
+		const posted = await postContributionCard(services, channel, contribution);
+		await interaction.editReply({
+			content: contributionSubmittedText(posted ?? contribution, channel.id, posted !== null),
+			allowedMentions: { parse: [] },
+		});
 	}
 }
 
-/** Tên kênh chứa tin nhắn (dùng cho tiêu đề); null nếu kênh không có trong cache. */
-function channelName(interaction: MessageContextMenuCommandInteraction): string | null
+/**
+ * Tên kênh chứa tin nhắn, dùng cho tiêu đề, chỉ khi @everyone xem được kênh đó: thẻ nằm ở kênh contribution công khai, nên không để lộ
+ * tên kênh riêng tư (DEC-051). Thread riêng tư, kênh không có trong cache hay không tính được quyền: null (tiêu đề chung). Link tới tin
+ * gốc vẫn giữ; người không xem được kênh mở link sẽ không thấy nội dung.
+ */
+function publicChannelName(interaction: MessageContextMenuCommandInteraction): string | null
 {
-	const channel = interaction.channel;
-	return channel && !channel.isDMBased() ? channel.name : null;
+	const { channel, guild } = interaction;
+	if (!channel || channel.isDMBased() || !guild || channel.type === ChannelType.PrivateThread) return null;
+	return channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel) === true ? channel.name : null;
 }
 
 /**

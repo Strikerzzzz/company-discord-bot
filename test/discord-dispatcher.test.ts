@@ -4,6 +4,7 @@ import { Collection, Interaction, MessageFlags, PermissionFlagsBits, Permissions
 import type Command from "../src/classes/Command";
 import type ContextMenu from "../src/classes/ContextMenu";
 import type DiscordClient from "../src/classes/DiscordClient";
+import { NO_CONTRIBUTION_CHANNEL } from "../src/discord/messages";
 import InteractionCreate, { GUILD_NOT_SERVED, UNKNOWN_INTERACTION } from "../src/events/interactionCreate";
 import RecognizeContribution from "../src/interactions/contextMenus/RecognizeContribution";
 import { Contribution } from "../src/modules/contribution/types";
@@ -387,12 +388,12 @@ describe("dispatcher interactionCreate: error boundary", () =>
 		assert.equal(logged.mock.callCount(), 1);
 	});
 
-	test("context menu Ghi nhận đóng góp: service từ chối sau khi defer thì người bấm nhận lỗi riêng", async () =>
+	test("context menu Ghi nhận đóng góp: lỗi sau khi defer riêng (chưa chọn kênh contribution) hiện ngay trong phản hồi riêng", async () =>
 	{
 		const contributions = {
 			submit: (): Contribution =>
 			{
-				throw new UserError("Tin nhắn này đã được ghi nhận.");
+				throw new Error("không được gọi khi chưa chọn kênh contribution");
 			},
 		};
 		const registry: Registry = { services: { contributions } as unknown as Partial<AppServices> };
@@ -403,8 +404,8 @@ describe("dispatcher interactionCreate: error boundary", () =>
 
 		await event.execute(interaction);
 
-		assert.deepEqual(methods(calls), ["deferReply", "deleteReply", "followUp"]);
-		assert.equal(calls[0].payload, undefined, "defer công khai");
-		assert.deepEqual(calls[2].payload, { content: "Tin nhắn này đã được ghi nhận.", flags: MessageFlags.Ephemeral });
+		assert.deepEqual(methods(calls), ["deferReply", "editReply"]);
+		assert.deepEqual(calls[0].payload, { flags: MessageFlags.Ephemeral }, "defer riêng: thẻ đăng ở kênh contribution");
+		assert.deepEqual(calls[1].payload, { content: NO_CONTRIBUTION_CHANNEL, embeds: [], components: [] });
 	});
 });
