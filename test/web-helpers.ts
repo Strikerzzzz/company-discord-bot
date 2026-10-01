@@ -321,6 +321,11 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		},
 	};
 	const adminActions: AdminActions = {
+		sendDirectMessage: (_client, userId) =>
+		{
+			adminCalls.push(`sendDirectMessage:${userId}`);
+			return Promise.resolve(true);
+		},
 		refreshContribution: (_client, contribution) =>
 		{
 			adminCalls.push(`refreshContribution:${contribution.id}`);

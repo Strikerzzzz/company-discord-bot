@@ -1,6 +1,7 @@
 import { Db } from "../../db/connection";
 import { UserError } from "../../shared/errors";
 import { ListPage, pageWindow } from "../../shared/paging";
+import { startOfVnDay } from "../../shared/time";
 import { ServiceDeps } from "../deps";
 import { ContributionRepository, ContributionRow } from "./ContributionRepository";
 import {
@@ -12,7 +13,11 @@ import {
 	ContributionListQuery,
 	ContributionProfile,
 	ContributionServiceApi,
+	ContributionVoteInput,
+	ContributionVoteKind,
+	ContributionVoter,
 	ContributionVoteResult,
+	ContributionVoterState,
 	SubmitContributionInput,
 } from "./types";
 
@@ -21,8 +26,14 @@ const MAX_LIST_LIMIT = 50;
 
 const NOT_FOUND = "Không tìm thấy contribution này.";
 const ALREADY_REMOVED = "Contribution này đã bị gỡ.";
-const VOTE_LOCKED = "Lượt ghi nhận của bạn cho đóng góp này đã bị huỷ (do admin reset, hoặc bạn đã rút ghi nhận khi tác giả đang bị trừ điểm) nên không thể ghi nhận lại.";
+const VOTE_LOCKED = "Lượt của bạn cho đóng góp này đã bị khoá (do admin reset, hoặc vì lần bạn rút hay đổi lượt đã phải bù điểm cho tác giả đang bị trừ điểm) nên không đổi hay rút được nữa.";
+const NOT_APPROVED = "Đóng góp này đang chờ duyệt, chưa ghi nhận được.";
+const REJECTED = "Đóng góp này không được duyệt nên không ghi nhận được.";
+const SELF_VOTE = "Bạn không thể tự ghi nhận hay không ghi nhận đóng góp của chính mình.";
+const NO_CHANNEL = "Admin chưa chọn kênh contribution nên chưa gửi được đóng góp. Hãy báo admin chọn kênh trên trang web quản trị hoặc bằng `/config contribution`.";
 const COMPENSATION_REASON = "Tự động bù để điểm không âm (PROP-024)";
+const FLOOR_REASON = "Tự động: điểm của contribution không âm khi 👎 nhiều hơn 👍 (DEC-051)";
+const VOTE_ACTIONS = new Set(["up", "down", "withdraw"]);
 
 function isContributionCategory(value: string): value is ContributionCategory
 {
@@ -91,6 +102,15 @@ function validateSubmission(input: SubmitContributionInput): ValidatedSubmission
 	return { title, description, category: input.category, link: normalizeLink(input.link) };
 }
 
+/** Lý do (từ chối, 👎) đã bỏ khoảng trắng hai đầu; UserError nếu ngoài khoảng [min, max] code point. */
+function validateReason(raw: string | null | undefined, min: number, max: number, label: string): string
+{
+	const reason = raw?.trim() ?? "";
+	const length = codePointLength(reason);
+	if (length < min || length > max) throw new UserError(`${label} phải từ ${min} đến ${max} ký tự.`);
+	return reason;
+}
+
 function toContribution(row: ContributionRow): Contribution
 {
 	return {
@@ -108,16 +128,26 @@ function toContribution(row: ContributionRow): Contribution
 		status: row.status,
 		createdAt: row.created_at,
 		votes: row.votes,
+		downvotes: row.downvotes,
+		score: row.score,
+		reviewState: row.review_state,
+		reviewedBy: row.reviewed_by,
+		reviewedAt: row.reviewed_at,
+		reviewReason: row.review_reason,
 	};
 }
 
 /**
- * Contribution Score (DEC-025): ai cũng gửi được, người khác ghi nhận để cộng điểm cho tác giả.
- * Chỉ dùng contributionLedger, không bao giờ đụng tới Activity XP (DEC-004).
- * Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
- * Lượt ghi nhận có điểm đã bị admin reset vẫn tính là đã dùng: người đó không ghi nhận lại được contribution ấy.
- * Điểm không bao giờ âm (DEC-028, PROP-024): rút ghi nhận hoặc gỡ contribution làm tổng âm thì tự ghi event bù trong cùng transaction.
- * Rút ghi nhận mà phải bù (tác giả đang bị trừ điểm) thì người rút không ghi nhận lại được, để hình phạt không bị xoá (DEC-032, PROP-031).
+ * Contribution Score (DEC-025, DEC-051): ai cũng gửi được; contribution chờ người duyệt rồi mới mở cho người khác bấm 👍 Ghi nhận
+ * hoặc 👎 Không ghi nhận (một trong hai, đổi hoặc rút được).
+ * - Điểm của một contribution = max(0, tổng 👍 − tổng 👎): mỗi lượt một event trong contributionLedger (👍 dương, 👎 âm, actor là
+ *   người bấm), cộng một event sàn (nguồn 'vote', không actor) khi tổng các lượt âm.
+ * - Người bấm được Activity XP một lần mỗi contribution (xpLedger, nguồn 'admin', actor là bot, như XP retro), có hạn mức ngày;
+ *   đây là XP hoạt động như tham gia vote, điểm contribution vẫn tách khỏi XP (DEC-004).
+ * - Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
+ * - Lượt có điểm đã bị admin reset vẫn tính là đã dùng: người đó không đổi hay rút được lượt ấy.
+ * - Tổng của tác giả không bao giờ âm (DEC-028, PROP-024): thao tác làm tổng âm thì tự ghi event bù trong cùng transaction. Thao tác
+ *   làm giảm điểm (rút 👍, thêm hoặc đổi sang 👎) mà phải bù thì lượt đó bị khoá, để hình phạt không bị xoá (DEC-032, PROP-031).
  */
 export class ContributionService implements ContributionServiceApi
 {
@@ -131,6 +161,7 @@ export class ContributionService implements ContributionServiceApi
 	submit(input: SubmitContributionInput): Contribution
 	{
 		const valid = validateSubmission(input);
+		if (this.deps.guildConfig.getSettings(input.guildId).contributionChannelId === null) throw new UserError(NO_CHANNEL);
 		const sourceMessageId = input.sourceMessageId ?? null;
 		return this.db.transaction((): Contribution =>
 		{
@@ -179,46 +210,142 @@ export class ContributionService implements ContributionServiceApi
 
 	listPage(guildId: string, query: ContributionListQuery): ListPage<Contribution>
 	{
-		const filter = { guild: guildId, author: query.authorId ?? null, status: query.status };
+		const review = query.review === undefined || query.review === "all" ? null : query.review;
+		const filter = { guild: guildId, author: query.authorId ?? null, status: query.status, review };
 		const total = this.repo.countFiltered(filter);
 		const window = pageWindow(total, query.page, query.pageSize);
 		const items = this.repo.listFiltered(filter, window.pageSize, window.offset).map(toContribution);
 		return { items, page: window.page, totalPages: window.totalPages, total, pageSize: window.pageSize };
 	}
 
-	toggleVote(input: { guildId: string; contributionId: number; voterId: string }): ContributionVoteResult
+	approve(guildId: string, contributionId: number, actorId: string): Contribution
 	{
-		const { guildId, contributionId, voterId } = input;
+		return this.db.transaction((): Contribution =>
+		{
+			const contribution = this.requirePending(guildId, contributionId);
+			this.repo.setReview(guildId, contributionId, "approved", actorId, this.deps.clock.now(), null);
+			this.deps.audit.record(guildId, actorId, "contribution.approve", contribution.authorId, { contributionId, title: contribution.title });
+			return this.require(guildId, contributionId);
+		})();
+	}
+
+	reject(guildId: string, contributionId: number, actorId: string, reason: string): Contribution
+	{
+		const text = validateReason(reason, CONTRIBUTION_LIMITS.rejectReasonMin, CONTRIBUTION_LIMITS.rejectReasonMax, "Lý do từ chối");
+		return this.db.transaction((): Contribution =>
+		{
+			const contribution = this.requirePending(guildId, contributionId);
+			this.repo.setReview(guildId, contributionId, "rejected", actorId, this.deps.clock.now(), text);
+			this.deps.audit.record(guildId, actorId, "contribution.reject", contribution.authorId, {
+				contributionId,
+				title: contribution.title,
+				reason: text,
+			});
+			return this.require(guildId, contributionId);
+		})();
+	}
+
+	voterState(guildId: string, contributionId: number, voterId: string): ContributionVoterState
+	{
+		if (this.get(guildId, contributionId) === null) return { current: null, locked: false };
+		const up = this.repo.findVote(contributionId, voterId);
+		const down = this.repo.findDownvote(contributionId, voterId);
+		const current: ContributionVoteKind | null = up !== null && !up.voided ? "up" : down !== null && !down.voided ? "down" : null;
+		const locked = (up !== null && up.voided) || (down !== null && (down.voided || down.locked));
+		return { current, locked };
+	}
+
+	vote(input: ContributionVoteInput): ContributionVoteResult
+	{
+		const { guildId, contributionId, voterId, action } = input;
+		if (!VOTE_ACTIONS.has(action)) throw new UserError("Thao tác không hợp lệ.");
 		return this.db.transaction((): ContributionVoteResult =>
 		{
 			const contribution = this.requireActive(guildId, contributionId);
-			if (voterId === contribution.authorId) throw new UserError("Bạn không thể tự ghi nhận đóng góp của chính mình.");
+			if (contribution.reviewState === "pending") throw new UserError(NOT_APPROVED);
+			if (contribution.reviewState === "rejected") throw new UserError(REJECTED);
+			if (voterId === contribution.authorId) throw new UserError(SELF_VOTE);
 
-			const existing = this.repo.findVote(contributionId, voterId);
-			if (existing !== null)
+			const state = this.voterState(guildId, contributionId, voterId);
+			const target: ContributionVoteKind | null = action === "withdraw" ? null : action;
+			const unchanged = (): ContributionVoteResult => (
+				{ current: state.current, change: "unchanged", locked: false, xpAwarded: 0, xpCapped: false, xpRevoked: 0, contribution }
+			);
+			if (target === state.current && !state.locked) return unchanged();
+			if (state.locked) throw new UserError(VOTE_LOCKED);
+			const reason = target === "down"
+				? validateReason(input.reason, CONTRIBUTION_LIMITS.downvoteReasonMin, CONTRIBUTION_LIMITS.downvoteReasonMax, "Lý do không ghi nhận")
+				: null;
+
+			const ledger = this.deps.contributionLedger;
+			const now = this.deps.clock.now();
+			const points = this.deps.guildConfig.getSettings(guildId).contributionVotePoints;
+			const teamRoleIds = this.repo.teamRoleIds(contributionId);
+			const up = this.repo.findVote(contributionId, voterId);
+			const down = this.repo.findDownvote(contributionId, voterId);
+
+			// Bỏ lượt đang có. Lượt 👍 chỉ xoá dòng sau khi biết có bị khoá hay không (PROP-031).
+			if (state.current === "up" && up !== null) ledger.voidEvent(up.eventId);
+			if (state.current === "down" && down !== null)
 			{
-				// Lượt có event đã bị huỷ (admin reset, hoặc rút khi đang bị phạt) vẫn tính là đã dùng: bấm lại không lấy lại điểm.
-				if (existing.voided) throw new UserError(VOTE_LOCKED);
-				this.deps.contributionLedger.voidEvent(existing.eventId);
-				// PROP-031: lần rút làm phát sinh điểm bù thì giữ dòng vote (event đã huỷ) để người này không ghi nhận lại được,
-				// nếu không thì rút rồi ghi nhận lại sẽ xoá dần hình phạt của admin.
-				const locked = this.compensateNegative(guildId, contribution.authorId, contributionId) > 0;
-				if (!locked) this.repo.deleteVote(contributionId, voterId);
-				return { voted: false, locked, contribution: this.require(guildId, contributionId) };
+				ledger.voidEvent(down.eventId);
+				this.repo.deleteDownvote(contributionId, voterId);
 			}
 
-			const event = this.deps.contributionLedger.record({
-				guildId,
-				userId: contribution.authorId,
-				amount: this.deps.guildConfig.getSettings(guildId).contributionVotePoints,
-				source: "vote",
-				referenceId: String(contributionId),
-				actorId: voterId,
-				teamRoleIds: this.repo.teamRoleIds(contributionId),
-			});
-			this.repo.insertVote(contributionId, voterId, event.id, this.deps.clock.now());
-			return { voted: true, locked: false, contribution: this.require(guildId, contributionId) };
+			let eventId: number | null = null;
+			if (target !== null)
+			{
+				eventId = ledger.record({
+					guildId,
+					userId: contribution.authorId,
+					amount: target === "up" ? points : -points,
+					source: "vote",
+					referenceId: String(contributionId),
+					actorId: voterId,
+					teamRoleIds,
+				}).id;
+				if (target === "down" && reason !== null)
+				{
+					this.repo.insertDownvote(contributionId, guildId, voterId, eventId, reason, now);
+				}
+			}
+
+			this.recomputeFloor(guildId, contribution.authorId, contributionId, teamRoleIds);
+			const reduced = state.current === "up" || target === "down";
+			const locked = reduced && this.compensateNegative(guildId, contribution.authorId, contributionId) > 0;
+
+			if (state.current === "up" && !(locked && target === null)) this.repo.deleteVote(contributionId, voterId);
+			if (target === "up" && eventId !== null) this.repo.insertVote(contributionId, voterId, eventId, now);
+			if (target === "down" && locked) this.repo.lockDownvote(contributionId, voterId, now);
+
+			let xp = { awarded: 0, capped: false };
+			let xpRevoked = 0;
+			if (state.current === null && target !== null) xp = this.awardInteractionXp(input, now);
+			if (target === null) xpRevoked = this.revokeInteractionXp(contributionId, voterId);
+
+			return {
+				current: target,
+				change: state.current === null ? "added" : target === null ? "withdrawn" : "switched",
+				locked,
+				xpAwarded: xp.awarded,
+				xpCapped: xp.capped,
+				xpRevoked,
+				contribution: this.require(guildId, contributionId),
+			};
 		})();
+	}
+
+	listVoters(guildId: string, contributionId: number): ContributionVoter[]
+	{
+		if (this.get(guildId, contributionId) === null) return [];
+		return this.repo.listVoters(contributionId).map(row => ({
+			userId: row.user_id,
+			kind: row.kind,
+			reason: row.reason,
+			active: row.voided_at === null,
+			locked: row.voided_at !== null || row.locked_at !== null,
+			createdAt: row.created_at,
+		}));
 	}
 
 	remove(guildId: string, contributionId: number, actorId: string): Contribution
@@ -303,6 +430,86 @@ export class ContributionService implements ContributionServiceApi
 	}
 
 	/**
+	 * Đưa event sàn của contribution về đúng: tổng các lượt 👍/👎 chưa huỷ âm thì có đúng một event sàn còn hiệu lực bằng phần âm
+	 * đó (nguồn 'vote', không actor, reference là contribution, nên gỡ contribution hay reset huỷ luôn), không âm thì không có.
+	 * Event sàn cũ bị huỷ (không xoá) khi giá trị cần đổi. Gọi trong transaction của thao tác lượt, trước compensateNegative.
+	 */
+	private recomputeFloor(guildId: string, authorId: string, contributionId: number, teamRoleIds: readonly string[]): void
+	{
+		const ledger = this.deps.contributionLedger;
+		const raw = this.repo.rawVoteSum(guildId, contributionId);
+		const wanted = raw < 0 ? -raw : 0;
+		const floorEventId = this.repo.findById(guildId, contributionId)?.floor_event_id ?? null;
+		const current = floorEventId === null ? null : ledger.getEvent(floorEventId);
+		const currentAmount = current !== null && current.voidedAt === null ? current.amount : 0;
+		if (wanted === currentAmount) return;
+
+		if (current !== null && current.voidedAt === null) ledger.voidEvent(current.id);
+		if (wanted === 0)
+		{
+			this.repo.setFloorEvent(guildId, contributionId, null);
+			return;
+		}
+		const event = ledger.record({
+			guildId,
+			userId: authorId,
+			amount: wanted,
+			source: "vote",
+			referenceId: String(contributionId),
+			actorId: null,
+			reason: FLOOR_REASON,
+			teamRoleIds,
+		});
+		this.repo.setFloorEvent(guildId, contributionId, event.id);
+	}
+
+	/**
+	 * XP người bấm (DEC-051) cho lượt đầu tiên của một người trên contribution: chưa có dòng XP thì cộng
+	 * min(cấu hình, hạn mức ngày còn lại) rồi ghi dòng (kể cả khi được 0 XP); đã có dòng (đã nhận, hoặc event bị admin reset) thì
+	 * không cộng thêm.
+	 */
+	private awardInteractionXp(input: ContributionVoteInput, now: number): { awarded: number; capped: boolean }
+	{
+		const { guildId, contributionId, voterId } = input;
+		if (this.repo.findInteractionXp(contributionId, voterId) !== null) return { awarded: 0, capped: false };
+
+		const settings = this.deps.guildConfig.getSettings(guildId);
+		const reward = settings.contributionInteractionXp;
+		const cap = settings.contributionInteractionXpDailyCap;
+		const remaining = cap <= 0 ? reward : Math.max(0, cap - this.repo.interactionXpSince(guildId, voterId, startOfVnDay(now)));
+		const awarded = Math.min(reward, remaining);
+		let xpEventId: number | null = null;
+		if (awarded > 0)
+		{
+			xpEventId = this.deps.xpLedger.record({
+				guildId,
+				userId: voterId,
+				amount: awarded,
+				source: "admin",
+				referenceId: `contribution:${contributionId}`,
+				actorId: input.systemActorId,
+				reason: `Contribution #${contributionId}: ghi nhận hoặc không ghi nhận`,
+				teamRoleIds: this.deps.teams.resolveTeams(guildId, input.voterRoleIds),
+			}).id;
+		}
+		this.repo.insertInteractionXp(contributionId, guildId, voterId, xpEventId, now);
+		return { awarded, capped: reward > 0 && awarded < reward };
+	}
+
+	/** Rút hẳn lượt: huỷ event XP người bấm (nếu còn hiệu lực) và xoá dòng XP; trả về số XP vừa thu lại. */
+	private revokeInteractionXp(contributionId: number, voterId: string): number
+	{
+		const record = this.repo.findInteractionXp(contributionId, voterId);
+		if (record === null) return 0;
+		this.repo.deleteInteractionXp(contributionId, voterId);
+		if (record.xpEventId === null) return 0;
+		const event = this.deps.xpLedger.getEvent(record.xpEventId);
+		if (event === null || event.voidedAt !== null) return 0;
+		this.deps.xpLedger.voidEvent(event.id);
+		return event.amount;
+	}
+
+	/**
 	 * PROP-024: gọi ngay sau khi huỷ điểm của một contribution, trong cùng transaction. Tổng của tác giả âm thì ghi một
 	 * event bù (nguồn admin, không có actor) để tổng về đúng 0; trả về số điểm đã bù (0 nếu không cần bù).
 	 * reference_id để null để lần gỡ hay rút ghi nhận sau (void theo reference) không huỷ nhầm event bù.
@@ -340,6 +547,14 @@ export class ContributionService implements ContributionServiceApi
 		const contribution = this.get(guildId, contributionId);
 		if (!contribution) throw new UserError(NOT_FOUND);
 		if (contribution.status === "removed") throw new UserError(ALREADY_REMOVED);
+		return contribution;
+	}
+
+	private requirePending(guildId: string, contributionId: number): Contribution
+	{
+		const contribution = this.requireActive(guildId, contributionId);
+		if (contribution.reviewState === "approved") throw new UserError(`Đóng góp #${contributionId} đã được duyệt.`);
+		if (contribution.reviewState === "rejected") throw new UserError(`Đóng góp #${contributionId} đã bị từ chối.`);
 		return contribution;
 	}
 }

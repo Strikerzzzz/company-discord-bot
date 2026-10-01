@@ -460,6 +460,75 @@ export const MIGRATIONS: readonly Migration[] = [
 			);
 		`,
 	},
+	{
+		version: 10,
+		name: "contribution_review",
+		sql: `
+			-- Duyệt contribution (DEC-051). review_state: 'pending' = chờ duyệt (chưa bấm 👍/👎 được); 'approved' = đã duyệt, cũng là
+			-- giá trị của contribution có từ trước migration này; 'rejected' = bị từ chối (không tính điểm). reviewed_by/reviewed_at:
+			-- người và lúc duyệt hoặc từ chối (NULL với contribution cũ). review_reason: lý do từ chối (không hiện công khai).
+			-- floor_event_id: event "sàn" gần nhất của contribution (nguồn 'vote', actor NULL, reference_id = id) đưa tổng điểm của
+			-- contribution về 0 khi 👎 nhiều hơn 👍; NULL = chưa từng cần. Event sàn cũ bị huỷ khi tính lại, không xoá.
+			ALTER TABLE contributions ADD COLUMN review_state TEXT NOT NULL DEFAULT 'approved' CHECK (review_state IN ('pending', 'approved', 'rejected'));
+			ALTER TABLE contributions ADD COLUMN reviewed_by TEXT;
+			ALTER TABLE contributions ADD COLUMN reviewed_at INTEGER;
+			ALTER TABLE contributions ADD COLUMN review_reason TEXT;
+			ALTER TABLE contributions ADD COLUMN floor_event_id INTEGER REFERENCES contribution_events (id);
+
+			-- Contribution bị từ chối không chặn việc gửi lại cùng tin nhắn nguồn.
+			DROP INDEX idx_contributions_source_message;
+			CREATE UNIQUE INDEX idx_contributions_source_message ON contributions (guild_id, source_message_id)
+				WHERE source_message_id IS NOT NULL AND status = 'active' AND review_state <> 'rejected';
+			CREATE INDEX idx_contributions_review ON contributions (guild_id, review_state, created_at);
+
+			-- Lượt 👎 Không ghi nhận (DEC-051): event_id là event âm trong contribution_events; reason bắt buộc (chỉ admin và người
+			-- duyệt xem). locked_at: lượt bị khoá vì lần thêm/đổi sang 👎 phải bù điểm cho tác giả đang bị trừ (PROP-031), không
+			-- đổi hay rút được nữa. Rút 👎 thì xoá dòng (event vẫn còn, đã huỷ), giống contribution_votes.
+			CREATE TABLE contribution_downvotes (
+				contribution_id INTEGER NOT NULL REFERENCES contributions (id),
+				guild_id TEXT NOT NULL,
+				voter_id TEXT NOT NULL,
+				event_id INTEGER NOT NULL REFERENCES contribution_events (id),
+				reason TEXT NOT NULL,
+				locked_at INTEGER,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (contribution_id, voter_id)
+			);
+			CREATE INDEX idx_contribution_downvotes_voter ON contribution_downvotes (guild_id, voter_id);
+
+			-- XP cho người bấm 👍/👎 (DEC-051): một dòng mỗi người mỗi contribution, giữ khi đổi 👍↔👎. xp_event_id NULL = không được
+			-- XP (cấu hình 0 hoặc hết hạn mức ngày). Rút hẳn thì huỷ event XP và xoá dòng (event vẫn còn, đã huỷ).
+			CREATE TABLE contribution_interaction_xp (
+				contribution_id INTEGER NOT NULL REFERENCES contributions (id),
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				xp_event_id INTEGER REFERENCES xp_events (id),
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (contribution_id, user_id)
+			);
+			CREATE INDEX idx_contribution_interaction_xp_user ON contribution_interaction_xp (guild_id, user_id, created_at);
+
+			-- Cấu hình (DEC-051): kênh đăng thẻ contribution (NULL = chưa chọn, chưa gửi được), XP cho người bấm và hạn mức ngày (0 =
+			-- không giới hạn).
+			ALTER TABLE guild_settings ADD COLUMN contribution_channel_id TEXT;
+			ALTER TABLE guild_settings ADD COLUMN contribution_interaction_xp INTEGER NOT NULL DEFAULT 5;
+			ALTER TABLE guild_settings ADD COLUMN contribution_interaction_xp_daily_cap INTEGER NOT NULL DEFAULT 25;
+
+			-- Thêm loại 'contribution_reviewer' (role duyệt contribution, ngoài admin) cho guild_role_grants: CHECK không sửa được
+			-- nên dựng lại bảng, chép nguyên dữ liệu (bảng không có index phụ, không bảng nào tham chiếu tới).
+			CREATE TABLE guild_role_grants_v10 (
+				guild_id TEXT NOT NULL,
+				kind TEXT NOT NULL CHECK (kind IN ('admin', 'poll_creator', 'contribution_reviewer')),
+				role_id TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, kind, role_id)
+			);
+			INSERT INTO guild_role_grants_v10 (guild_id, kind, role_id, created_at)
+				SELECT guild_id, kind, role_id, created_at FROM guild_role_grants;
+			DROP TABLE guild_role_grants;
+			ALTER TABLE guild_role_grants_v10 RENAME TO guild_role_grants;
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number

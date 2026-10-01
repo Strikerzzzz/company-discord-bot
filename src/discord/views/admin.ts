@@ -97,6 +97,13 @@ const SETTING_DISPLAY: SettingDisplayMap = {
 	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP` },
 	pollCreatorRoleIds: { label: "Role tạo vote", format: value => roleListOr(value, "chưa đặt (chỉ admin)") },
 	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", format: value => `${formatNumber(value)} điểm` },
+	contributionChannelId: { label: "Kênh contribution", format: value => value === null ? "chưa chọn (chưa gửi được contribution)" : channelMention(value) },
+	contributionInteractionXp: { label: "XP cho người bấm ghi nhận", format: value => `${formatNumber(value)} XP` },
+	contributionInteractionXpDailyCap: {
+		label: "Giới hạn XP từ contribution mỗi ngày",
+		format: value => value === 0 ? "không giới hạn" : `${formatNumber(value)} XP`,
+	},
+	contributionReviewerRoleIds: { label: "Role duyệt contribution", format: value => roleListOr(value, "chưa đặt (chỉ admin)") },
 	adminRoleIds: { label: "Role admin bot", format: value => roleListOr(value, "chưa đặt") },
 };
 
@@ -112,6 +119,10 @@ const SETTING_ORDER: readonly (keyof GuildSettings)[] = [
 	"pollXpDailyCap",
 	"pollCreatorRoleIds",
 	"contributionVotePoints",
+	"contributionChannelId",
+	"contributionInteractionXp",
+	"contributionInteractionXpDailyCap",
+	"contributionReviewerRoleIds",
 	"adminRoleIds",
 ];
 
@@ -429,6 +440,8 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"xp.reset_user": "Reset XP thành viên",
 	"xp.reset_all": "Reset XP toàn server",
 	"contribution.remove": "Gỡ contribution",
+	"contribution.approve": "Duyệt contribution",
+	"contribution.reject": "Từ chối contribution",
 	"contribution.adjust": "Điều chỉnh điểm contribution",
 	"contribution.reset_user": "Reset contribution thành viên",
 	"contribution.reset_all": "Reset contribution toàn server",
@@ -474,6 +487,8 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"xp.reset_user": "user",
 	"xp.reset_all": "none",
 	"contribution.remove": "user",
+	"contribution.approve": "user",
+	"contribution.reject": "user",
 	"contribution.adjust": "user",
 	"contribution.reset_user": "user",
 	"contribution.reset_all": "none",

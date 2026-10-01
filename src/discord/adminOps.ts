@@ -11,6 +11,7 @@ import { TierRoleServiceApi } from "../modules/gamification/types";
 import { Poll } from "../modules/poll/types";
 import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
+import { logger } from "../shared/logger";
 import { formatNumber, relativeTime, userMention } from "./format";
 import { isNotFoundError } from "./guards";
 import { MemberDisplay } from "./memberDirectory";
@@ -69,6 +70,11 @@ export interface AdminActions
 	 * Discord lỗi thì ném UserError(USER_LOOKUP_UNAVAILABLE).
 	 */
 	fetchUser(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>;
+	/**
+	 * Nhắn riêng (DM) cho một người, không cho phép mention (DEC-051: báo kết quả duyệt contribution). Không ném lỗi; false nếu
+	 * không gửi được (người đó tắt tin nhắn riêng, đã chặn bot, tài khoản không còn, Discord lỗi).
+	 */
+	sendDirectMessage(client: DiscordClient, userId: string, content: string): Promise<boolean>;
 }
 
 async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>
@@ -85,6 +91,21 @@ async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{
 	}
 }
 
+async function sendDirectMessage(client: DiscordClient, userId: string, content: string): Promise<boolean>
+{
+	try
+	{
+		const user = await client.users.fetch(userId);
+		await user.send({ content, allowedMentions: { parse: [] } });
+		return true;
+	}
+	catch (error)
+	{
+		logger.debug(`Không nhắn riêng được cho ${userId}:`, error);
+		return false;
+	}
+}
+
 export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
 	refreshContribution: refreshContributionMessage,
 	refreshPoll: afterPollClosed,
@@ -92,6 +113,7 @@ export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
 	searchMembers: async (guild, query, limit) => [...(await guild.members.search({ query, limit, cache: false })).values()],
 	displays: (client, guild, userIds) => client.members.resolve(guild, userIds),
 	fetchUser: fetchUserOrNull,
+	sendDirectMessage,
 };
 
 /**

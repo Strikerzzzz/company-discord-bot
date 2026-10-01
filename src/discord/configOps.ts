@@ -35,6 +35,13 @@ const LEVEL_UP_PERMISSIONS: PermissionList = [
 	[PermissionFlagsBits.SendMessages, "Send Messages"],
 ];
 
+/** Quyền bot cần ở kênh contribution để đăng thẻ embed kèm nút và sửa thẻ về sau (DEC-051). */
+const CONTRIBUTION_PERMISSIONS: PermissionList = [
+	[PermissionFlagsBits.ViewChannel, "View Channel"],
+	[PermissionFlagsBits.SendMessages, "Send Messages"],
+	[PermissionFlagsBits.EmbedLinks, "Embed Links"],
+];
+
 /** Thao tác với message Bảng vàng (src/discord/liveBoard.ts); test thay bằng hàm giả. */
 export interface LiveBoardActions
 {
@@ -113,6 +120,43 @@ export function resolveLevelUpChannel(guild: Guild, channelId: string, caller: G
 	return channel.id;
 }
 
+/** Tên quyền bot còn thiếu ở kênh contribution (rỗng = đủ quyền đăng và sửa thẻ, DEC-051). Dùng cả khi admin chọn kênh và khi gửi. */
+export function missingContributionBotPermissions(channel: PermissionChannel, bot: GuildMember): string[]
+{
+	return missingPermissions(channel.permissionsFor(bot), CONTRIBUTION_PERMISSIONS);
+}
+
+/**
+ * Kiểm tra trước khi chọn kênh contribution (DEC-051; lệnh gõ, web): người gọi phải tự xem và gửi được tin ở kênh đó (không mượn
+ * bot đăng vào kênh mình không được gửi, LL-013), bot phải đăng được thẻ (View Channel, Send Messages, Embed Links).
+ */
+export function assertContributionChannelAccess(channel: PermissionChannel, caller: GuildMember, bot: GuildMember): void
+{
+	const callerMissing = missingPermissions(channel.permissionsFor(caller), BOARD_CALLER_PERMISSIONS);
+	if (callerMissing.length > 0)
+	{
+		throw new UserError(`Bạn không có quyền ${callerMissing.join(", ")} ở ${channelMention(channel.id)}, nên không thể chọn kênh đó làm kênh contribution.`);
+	}
+	const missing = missingContributionBotPermissions(channel, bot);
+	if (missing.length > 0)
+	{
+		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
+	}
+}
+
+/**
+ * ID kênh contribution hợp lệ để lưu (DEC-051): kênh văn bản hoặc kênh thông báo có trong server, người gọi và bot đủ quyền
+ * (assertContributionChannelAccess). Dùng chung cho `/config contribution` và web; lưu bằng guildConfig.updateSettings
+ * ({ contributionChannelId }).
+ */
+export function resolveContributionChannel(guild: Guild, channelId: string, caller: GuildMember): string
+{
+	const channel = guild.channels.cache.get(channelId);
+	if (!channel || !isBoardChannel(channel)) throw new UserError("Kênh contribution phải là kênh văn bản hoặc kênh thông báo của server.");
+	assertContributionChannelAccess(channel, caller, botMemberOf(guild));
+	return channel.id;
+}
+
 export type BoardChannel = Extract<GuildBasedChannel, { type: (typeof BOARD_CHANNEL_TYPES)[number] }>;
 
 export function isBoardChannel(channel: GuildBasedChannel): channel is BoardChannel
@@ -159,12 +203,14 @@ export function assertUsableRole(
 export const ROLE_GRANT_PURPOSES: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "làm role admin bot",
 	pollCreatorRoleIds: "làm role tạo vote",
+	contributionReviewerRoleIds: "làm role duyệt contribution",
 };
 
 /** Tên danh sách trong thông báo kết quả. */
 const ROLE_GRANT_NAMES: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "role admin bot",
 	pollCreatorRoleIds: "role tạo vote",
+	contributionReviewerRoleIds: "role duyệt contribution",
 };
 
 /** changeRoleGrants có thêm hoặc bỏ role nào không (không có thì không ghi gì, không audit). */

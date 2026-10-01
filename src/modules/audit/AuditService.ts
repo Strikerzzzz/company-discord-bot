@@ -12,6 +12,8 @@ export type AuditAction =
 	| "xp.reset_user"
 	| "xp.reset_all"
 	| "contribution.remove"
+	| "contribution.approve"
+	| "contribution.reject"
 	| "contribution.adjust"
 	| "contribution.reset_user"
 	| "contribution.reset_all"

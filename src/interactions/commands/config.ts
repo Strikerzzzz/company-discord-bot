@@ -148,6 +148,7 @@ export const POLL_ROLE_CONFLICT = "`xoa-role-tao-vote` = True xoá mọi role t�
 const ROLE_GRANT_HEADINGS: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "Đã cập nhật role admin bot. Người có quyền Manage Server vẫn luôn là admin.",
 	pollCreatorRoleIds: "Đã cập nhật cấu hình vote:",
+	contributionReviewerRoleIds: "Đã cập nhật cấu hình contribution:",
 };
 
 /**

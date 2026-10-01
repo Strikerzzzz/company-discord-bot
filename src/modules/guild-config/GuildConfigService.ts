@@ -56,12 +56,14 @@ export interface RoleGrantResult
 const GRANT_KINDS: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "admin",
 	pollCreatorRoleIds: "poll_creator",
+	contributionReviewerRoleIds: "contribution_reviewer",
 };
 
 /** Tên danh sách trong thông báo lỗi. */
 const GRANT_LABELS: Readonly<Record<RoleGrantKey, string>> = {
 	adminRoleIds: "role admin bot",
 	pollCreatorRoleIds: "role được tạo vote",
+	contributionReviewerRoleIds: "role duyệt contribution",
 };
 
 interface GrantRow
@@ -82,6 +84,9 @@ interface GuildRow
 	default_poll_xp: number;
 	poll_xp_daily_cap: number;
 	contribution_vote_points: number;
+	contribution_channel_id: string | null;
+	contribution_interaction_xp: number;
+	contribution_interaction_xp_daily_cap: number;
 }
 
 interface ChannelRow
@@ -148,13 +153,16 @@ export class GuildConfigService
 			defaultPollXp: row.default_poll_xp,
 			pollXpDailyCap: row.poll_xp_daily_cap,
 			contributionVotePoints: row.contribution_vote_points,
+			contributionChannelId: row.contribution_channel_id,
+			contributionInteractionXp: row.contribution_interaction_xp,
+			contributionInteractionXpDailyCap: row.contribution_interaction_xp_daily_cap,
 			...grants,
 		};
 	}
 
 	/**
 	 * Lưu các mục cấu hình trong `patch` (mục không có giữ nguyên) trong một transaction, kèm một dòng audit `config.update` có
-	 * đúng các mục đó. Danh sách role (`adminRoleIds`, `pollCreatorRoleIds`) được THAY TOÀN BỘ bằng mảng mới (bỏ trùng, tối đa
+	 * đúng các mục đó. Danh sách role (`adminRoleIds`, `pollCreatorRoleIds`, `contributionReviewerRoleIds`) được THAY TOÀN BỘ bằng mảng mới (bỏ trùng, tối đa
 	 * MAX_GRANT_ROLES); role vẫn còn trong danh sách giữ thứ tự cũ. Thêm hoặc bỏ một phần thì dùng changeRoleGrants.
 	 */
 	updateSettings(guildId: string, patch: Partial<GuildSettings>, actorId: string): GuildSettings
@@ -178,8 +186,8 @@ export class GuildConfigService
 			this.db.prepare(`
 				INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
 					level_up_announcements, level_up_channel_id, xp_channel_mode, default_poll_xp, poll_xp_daily_cap, contribution_vote_points,
-					updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					contribution_channel_id, contribution_interaction_xp, contribution_interaction_xp_daily_cap, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (guild_id) DO UPDATE SET
 					xp_per_message = excluded.xp_per_message,
 					xp_cooldown_seconds = excluded.xp_cooldown_seconds,
@@ -191,11 +199,14 @@ export class GuildConfigService
 					default_poll_xp = excluded.default_poll_xp,
 					poll_xp_daily_cap = excluded.poll_xp_daily_cap,
 					contribution_vote_points = excluded.contribution_vote_points,
+					contribution_channel_id = excluded.contribution_channel_id,
+					contribution_interaction_xp = excluded.contribution_interaction_xp,
+					contribution_interaction_xp_daily_cap = excluded.contribution_interaction_xp_daily_cap,
 					updated_at = excluded.updated_at`,
 			).run(
 				guildId, next.xpPerMessage, next.xpCooldownSeconds, next.minMessageLength, next.duplicateWindowSeconds,
 				next.levelUpAnnouncements ? 1 : 0, next.levelUpChannelId, next.xpChannelMode, next.defaultPollXp, next.pollXpDailyCap, next.contributionVotePoints,
-				this.clock.now(),
+				next.contributionChannelId, next.contributionInteractionXp, next.contributionInteractionXpDailyCap, this.clock.now(),
 			);
 			for (const key of ROLE_GRANT_KEYS)
 			{
@@ -250,16 +261,16 @@ export class GuildConfigService
 		})();
 	}
 
-	/** Hai danh sách role được cấp quyền của guild (bảng guild_role_grants), theo created_at rồi role_id. */
+	/** Các danh sách role được cấp quyền của guild (bảng guild_role_grants), theo created_at rồi role_id. */
 	private roleGrants(guildId: string): Pick<GuildSettings, RoleGrantKey>
 	{
-		const grants: Pick<GuildSettings, RoleGrantKey> = { adminRoleIds: [], pollCreatorRoleIds: [] };
+		const grants: Pick<GuildSettings, RoleGrantKey> = { adminRoleIds: [], pollCreatorRoleIds: [], contributionReviewerRoleIds: [] };
 		const rows = this.db.prepare<[string], GrantRow>("SELECT kind, role_id FROM guild_role_grants WHERE guild_id = ? ORDER BY created_at, role_id")
 			.all(guildId);
 		for (const row of rows)
 		{
-			if (row.kind === GRANT_KINDS.adminRoleIds) grants.adminRoleIds.push(row.role_id);
-			else if (row.kind === GRANT_KINDS.pollCreatorRoleIds) grants.pollCreatorRoleIds.push(row.role_id);
+			const key = ROLE_GRANT_KEYS.find(candidate => GRANT_KINDS[candidate] === row.kind);
+			if (key !== undefined) grants[key].push(row.role_id);
 		}
 		return grants;
 	}

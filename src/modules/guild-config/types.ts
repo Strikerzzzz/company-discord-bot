@@ -30,8 +30,17 @@ export interface GuildSettings
 	defaultPollXp: number;
 	/** XP tối đa một người nhận từ vote trong một ngày giờ Việt Nam; 0 = không giới hạn (DEC-028). */
 	pollXpDailyCap: number;
-	/** Điểm cộng cho tác giả mỗi lượt ghi nhận contribution (DEC-025). */
+	/** Điểm cộng cho tác giả mỗi lượt 👍 ghi nhận contribution, cũng là điểm trừ mỗi lượt 👎 (DEC-025, DEC-051). */
 	contributionVotePoints: number;
+	/**
+	 * Kênh bot đăng thẻ contribution (DEC-051): mọi contribution mới được đăng ở đây, dù gửi từ đâu. null = chưa chọn, thành viên
+	 * chưa gửi contribution được.
+	 */
+	contributionChannelId: string | null;
+	/** Activity XP cho người bấm 👍/👎 một contribution, một lần mỗi contribution (DEC-051). */
+	contributionInteractionXp: number;
+	/** XP tối đa một người nhận từ bấm 👍/👎 contribution trong một ngày giờ Việt Nam; 0 = không giới hạn (DEC-051). */
+	contributionInteractionXpDailyCap: number;
 	/**
 	 * Các role có quyền admin bot, ngoài những người có quyền Manage Server (DEC-044): có một role trong danh sách là admin.
 	 * Tối đa MAX_GRANT_ROLES role, theo thứ tự được thêm (rồi theo ID). Rỗng = chỉ người có Manage Server.
@@ -39,17 +48,28 @@ export interface GuildSettings
 	adminRoleIds: string[];
 	/** Các role được phép tạo vote, ngoài admin (DEC-026, DEC-044). Tối đa MAX_GRANT_ROLES role; rỗng = chỉ admin. */
 	pollCreatorRoleIds: string[];
+	/** Các role được duyệt contribution, ngoài admin (DEC-051). Tối đa MAX_GRANT_ROLES role; rỗng = chỉ admin. */
+	contributionReviewerRoleIds: string[];
 }
 
-/** Danh sách role được cấp quyền trong cấu hình (DEC-044): role admin bot, role được tạo vote. */
-export type RoleGrantKey = "adminRoleIds" | "pollCreatorRoleIds";
+/** Danh sách role được cấp quyền trong cấu hình (DEC-044, DEC-051): role admin bot, role được tạo vote, role duyệt contribution. */
+export type RoleGrantKey = "adminRoleIds" | "pollCreatorRoleIds" | "contributionReviewerRoleIds";
 
-export const ROLE_GRANT_KEYS: readonly RoleGrantKey[] = ["adminRoleIds", "pollCreatorRoleIds"];
+export const ROLE_GRANT_KEYS: readonly RoleGrantKey[] = ["adminRoleIds", "pollCreatorRoleIds", "contributionReviewerRoleIds"];
 
 /** Số role tối đa của mỗi danh sách role được cấp quyền (bằng số lựa chọn tối đa của một menu chọn role của Discord). */
 export const MAX_GRANT_ROLES = 25;
 
-export type NumericSettingKey = "xpPerMessage" | "xpCooldownSeconds" | "minMessageLength" | "duplicateWindowSeconds" | "defaultPollXp" | "pollXpDailyCap" | "contributionVotePoints";
+export type NumericSettingKey =
+	| "xpPerMessage"
+	| "xpCooldownSeconds"
+	| "minMessageLength"
+	| "duplicateWindowSeconds"
+	| "defaultPollXp"
+	| "pollXpDailyCap"
+	| "contributionVotePoints"
+	| "contributionInteractionXp"
+	| "contributionInteractionXpDailyCap";
 
 export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	xpPerMessage: 10,
@@ -62,8 +82,12 @@ export const DEFAULT_GUILD_SETTINGS: Readonly<GuildSettings> = {
 	defaultPollXp: 5,
 	pollXpDailyCap: 25,
 	contributionVotePoints: 1,
+	contributionChannelId: null,
+	contributionInteractionXp: 5,
+	contributionInteractionXpDailyCap: 25,
 	adminRoleIds: [],
 	pollCreatorRoleIds: [],
+	contributionReviewerRoleIds: [],
 };
 
 /** Giới hạn hợp lệ và nhãn tiếng Việt để báo lỗi. */
@@ -75,6 +99,8 @@ export const SETTING_LIMITS: Readonly<Record<NumericSettingKey, { min: number; m
 	defaultPollXp: { min: 0, max: 1000, label: "XP mặc định khi vote" },
 	pollXpDailyCap: { min: 0, max: 100000, label: "Giới hạn XP từ vote mỗi ngày" },
 	contributionVotePoints: { min: 0, max: 100, label: "Điểm mỗi lượt ghi nhận" },
+	contributionInteractionXp: { min: 0, max: 100, label: "XP cho người bấm ghi nhận" },
+	contributionInteractionXpDailyCap: { min: 0, max: 100000, label: "Giới hạn XP từ contribution mỗi ngày" },
 };
 
 export interface ChannelSettings

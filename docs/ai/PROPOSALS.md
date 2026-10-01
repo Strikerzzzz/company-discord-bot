@@ -49,6 +49,7 @@
 | PROP-037 | Trang web quản trị cho admin (nhúng trong process bot, mạng nội bộ) | HIGH | IMPLEMENTED |
 | PROP-038 | Nhật ký quản trị giấu tiêu đề contribution và câu hỏi vote ở kênh người xem không xem được | LOW | PROPOSED |
 | PROP-039 | Retro sprint theo team trong Discord, tự ghi vào Confluence nội bộ | HIGH | APPROVED (DEC-049) |
+| PROP-040 | Contribution: kênh riêng, duyệt trước khi mở ghi nhận, nút "Không ghi nhận" | HIGH | APPROVED (DEC-051) |
 
 ---
 
@@ -1539,3 +1540,71 @@ HIGH
 ### Trạng thái
 
 APPROVED (2026-09-30, DEC-049); triển khai ở Phase 19.
+
+## PROP-040 — Contribution: kênh riêng, duyệt trước khi mở ghi nhận, nút "Không ghi nhận"
+
+### Vấn đề
+
+Người phụ trách yêu cầu (2026-10-01): contribution phải có kênh được chỉ định (PM đã tạo kênh), phải được duyệt rồi mới mở cho mọi người ghi nhận, và phải có nút "Không ghi nhận" để hệ thống công bằng.
+
+Hiện tại (DEC-025):
+- ai cũng gửi được bằng `/contribution submit` hoặc chuột phải tin nhắn → "Ghi nhận đóng góp";
+- bot đăng công khai ngay tại kênh đang gõ lệnh, kèm nút 👍;
+- không có bước duyệt;
+- mỗi lượt 👍 cộng cho tác giả số điểm admin đặt (mặc định 1);
+- không có cách bày tỏ không đồng ý.
+
+Đây là thay đổi business rule (luật protected số 5), cần người phụ trách chốt.
+
+### Đề xuất
+
+1. **Kênh Contribution:** admin chọn trên web (và `/config`). Thành viên vẫn gửi từ bất kỳ đâu, nhưng thẻ contribution luôn được đăng ở kênh này. Người gửi nhận trả lời riêng "đã gửi, chờ duyệt". Chưa chọn kênh thì không gửi được, bot báo cần admin chọn kênh. Bot cần View Channel, Send Messages, Embed Links ở kênh này. Admin chọn kênh mà bot thiếu quyền thì báo lỗi ngay, như Bảng vàng.
+2. **Duyệt:**
+   - Contribution mới ở trạng thái "chờ duyệt".
+   - Phương án đề xuất: **kênh duyệt riêng tư**. Bot đăng thẻ chờ duyệt kèm nút ✅ Duyệt / ❌ Từ chối. Duyệt xong bot mới đăng thẻ công khai có nút ghi nhận ở kênh Contribution.
+   - Phương án khác: chỉ một kênh. Thẻ hiện công khai ngay với nhãn "⏳ Chờ duyệt", duyệt xong mới hiện nút ghi nhận.
+   - Web có danh sách "Chờ duyệt" với cùng hai nút (DEC-041).
+3. **Người duyệt:**
+   - admin bot, và các role "duyệt contribution" do admin chọn trên trang Quyền (nhiều role);
+   - không ai tự duyệt contribution mà mình là tác giả hoặc người gửi;
+   - kiểm tra quyền trong code mỗi lần bấm.
+4. **Từ chối:**
+   - bắt buộc ghi lý do ngắn;
+   - contribution không lên kênh công khai, không tính điểm, admin vẫn xem được trên web;
+   - tác giả được báo qua tin nhắn riêng của bot, mất DM thì xem bằng `/contribution view`;
+   - gửi lại được dưới dạng contribution mới.
+5. **Nút "👎 Không ghi nhận":**
+   - mỗi người chọn **một** trong 👍 hoặc 👎 cho mỗi contribution, đổi hoặc rút được;
+   - không tự bấm cho contribution của mình;
+   - điểm của một contribution = (số 👍 − số 👎) × điểm mỗi lượt, **thấp nhất 0**: 👎 không trừ sang điểm của contribution khác;
+   - bấm 👎 phải ghi lý do ngắn;
+   - công khai chỉ hiện số lượng; danh sách người bấm và lý do chỉ admin và người duyệt xem (trên web), để phát hiện bấm theo nhóm.
+   - Phương án khác: 👎 không trừ điểm, chỉ khi 👎 nhiều hơn 👍 (từ 3 lượt) thì contribution bị đóng băng điểm và chuyển lại cho người duyệt.
+6. **Contribution cũ:** giữ nguyên ở kênh cũ, coi như đã duyệt.
+7. **XP:** contribution vẫn không cho Activity XP (DEC-004, hai hệ thống độc lập).
+
+### Tác động
+
+- **Database:** migration 10, gồm:
+  - trạng thái duyệt (người duyệt, thời điểm, lý do);
+  - lượt 👎 kèm lý do;
+  - kênh Contribution và kênh duyệt trong cấu hình;
+  - role duyệt.
+  
+  Các bảng có CHECK (`contributions.status`, `guild_role_grants.kind`) thì thêm bảng mới, không dựng lại bảng cũ. Backup cũ khôi phục vào code mới thì tự migrate.
+- **Điểm:** vẫn đi qua `contributionLedger`. Điểm của từng contribution tính lại theo công thức trên và ghi một event chênh lệch, giữ quy tắc PROP-024 (không âm) và PROP-031 (không xoá hình phạt của admin).
+- **Web (DEC-041):**
+  - trang Contribution: lọc "Chờ duyệt", duyệt, từ chối, xem lượt 👍/👎;
+  - trang Cài đặt điểm: chọn kênh Contribution và kênh duyệt;
+  - trang Quyền: role duyệt.
+  
+  Cập nhật `test/web-parity.test.ts`.
+- **Quyền Discord:** không cần intent mới. DM người dùng không cần quyền mới.
+
+### Độ ưu tiên
+
+HIGH (người phụ trách yêu cầu)
+
+### Trạng thái
+
+APPROVED (2026-10-01, DEC-051): phương án 2B (một kênh), 5a; người duyệt được duyệt bài của mình; người bấm 👍/👎 được Activity XP. Triển khai ở Phase 20.

@@ -89,7 +89,16 @@ export default class ContributionCmd extends Command
 	{
 		const contributionId = parseContributionButtonId(interaction.customId);
 		const guildId = requireGuildId(interaction);
-		const result = this.client.services.contributions.toggleVote({ guildId, contributionId, voterId: interaction.user.id });
+		const { contributions } = this.client.services;
+		const state = contributions.voterState(guildId, contributionId, interaction.user.id);
+		const result = contributions.vote({
+			guildId,
+			contributionId,
+			voterId: interaction.user.id,
+			action: state.current === "up" ? "withdraw" : "up",
+			voterRoleIds: roleIdsOf(interaction.member),
+			systemActorId: this.client.user?.id ?? interaction.applicationId,
+		});
 
 		await interaction.update(contributionMessage(result.contribution));
 		await interaction.followUp({ content: voteFeedback(result), flags: MessageFlags.Ephemeral });

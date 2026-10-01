@@ -27,3 +27,9 @@ export function canCreatePoll(access: MemberAccess, settings: Pick<GuildSettings
 {
 	return isAdmin(access, settings) || hasAnyRole(access, settings.pollCreatorRoleIds);
 }
+
+/** Admin, hoặc người có ít nhất một role trong danh sách role duyệt contribution (DEC-051). */
+export function canReviewContributions(access: MemberAccess, settings: Pick<GuildSettings, "adminRoleIds" | "contributionReviewerRoleIds">): boolean
+{
+	return isAdmin(access, settings) || hasAnyRole(access, settings.contributionReviewerRoleIds);
+}

@@ -719,7 +719,12 @@ const FORM_FIELDS: Readonly<Record<NumericSettingKey, FormField>> = {
 	duplicateWindowSeconds: { label: "Khoảng chống trùng (giây)", hint: "Tin trùng tin trước đó của cùng người trong khoảng này không được XP" },
 	defaultPollXp: { label: "XP mặc định khi vote", hint: "XP cho mỗi người tham gia, khi admin không đặt riêng lúc tạo vote" },
 	pollXpDailyCap: { label: "Giới hạn XP từ vote mỗi ngày", hint: "XP tối đa một người nhận từ vote mỗi ngày; 0 = không giới hạn" },
-	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", hint: "Điểm cộng cho tác giả contribution mỗi lượt ghi nhận" },
+	contributionVotePoints: { label: "Điểm mỗi lượt ghi nhận", hint: "Điểm cộng cho tác giả mỗi lượt 👍, trừ mỗi lượt 👎" },
+	contributionInteractionXp: { label: "XP cho người bấm ghi nhận", hint: "XP cho người bấm 👍 hoặc 👎, một lần mỗi contribution" },
+	contributionInteractionXpDailyCap: {
+		label: "Giới hạn XP từ contribution/ngày",
+		hint: "XP tối đa một người nhận từ bấm 👍/👎 mỗi ngày; 0 = không giới hạn",
+	},
 };
 
 /** Ô số bắt buộc, customId là khoá cấu hình, điền sẵn giá trị hiện tại; mô tả ghi ý nghĩa và khoảng hợp lệ. */

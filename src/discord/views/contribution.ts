@@ -117,9 +117,10 @@ export function contributionDetailMessage(contribution: Contribution): Contribut
 	return { embeds: [contributionEmbed(contribution)], components };
 }
 
-export function voteFeedback(result: Pick<ContributionVoteResult, "voted" | "locked">): string
+export function voteFeedback(result: Pick<ContributionVoteResult, "current" | "change" | "locked">): string
 {
-	if (result.voted) return "✅ Bạn đã ghi nhận đóng góp này.";
+	if (result.current === "up") return "✅ Bạn đã ghi nhận đóng góp này.";
+	if (result.current === "down") return "👎 Bạn đã chọn không ghi nhận đóng góp này.";
 	if (result.locked) return "↩️ Bạn đã rút ghi nhận. Vì tác giả đang bị admin trừ điểm, bạn sẽ không ghi nhận lại được đóng góp này.";
 	return "↩️ Bạn đã rút ghi nhận.";
 }

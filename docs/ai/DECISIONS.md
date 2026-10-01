@@ -594,6 +594,45 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - Merge `phase-19/retro` vào `main` và cài lên server (migration 9: sao lưu trước).
   - Confluence: server chưa vào được `docs.ezcloud.vn` (thiếu route 10.19.193.0/24 qua VPN). Người phụ trách xin IT; trong lúc chờ, dùng phần xuất chữ trên web.
 
+### DEC-051 — Contribution: kênh riêng, duyệt trước khi mở ghi nhận, nút "Không ghi nhận", XP cho người bấm (duyệt PROP-040)
+
+- **Ngày:** 2026-10-01 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách (yêu cầu "Contribution phải được ghi nhận và phải có kênh được chỉ định… phải được duyệt thì mới được mở cho mọi người vote", "có nút không ghi nhận… hệ thống công bằng"; trả lời PROP-040 "1 oke, 2 B, 3 được (người có quyền vẫn duyệt được bài của chính mình), 4 oke, 5 a, 6 oke, 7 người tương tác cũng được điểm"; chọn cả 4 phương án đề xuất ở câu hỏi bổ sung)
+- **Nội dung** (thay DEC-025 ở những điểm dưới đây):
+  - **Kênh Contribution:**
+    - admin chọn trên web (trang Cài đặt điểm) hoặc bằng `/config contribution`;
+    - thành viên gửi từ bất kỳ đâu (`/contribution submit`, chuột phải "Ghi nhận đóng góp"), nhưng thẻ luôn được đăng ở kênh này; người gửi nhận trả lời riêng kèm link;
+    - chưa chọn kênh thì không gửi được, bot báo cần admin chọn kênh;
+    - người gửi phải xem được kênh Contribution; bot cần View Channel, Send Messages, Embed Links ở kênh đó (kiểm tra khi admin chọn kênh và khi gửi).
+  - **Duyệt, phương án B (một kênh):**
+    - contribution mới ở trạng thái **chờ duyệt**: thẻ công khai ghi "⏳ Chờ duyệt", kèm nút ✅ Duyệt và ❌ Từ chối;
+    - chỉ người duyệt bấm được (kiểm tra quyền trong code mỗi lần bấm); duyệt xong thẻ mới mở nút 👍/👎;
+    - web có danh sách "Chờ duyệt", duyệt và từ chối được (DEC-041).
+  - **Người duyệt:**
+    - admin bot, và các role "duyệt contribution" (nhiều role, tối đa 25) do admin chọn trên trang Quyền hoặc bằng `/config contribution`;
+    - người duyệt **được duyệt cả bài của chính mình** (người phụ trách chọn); audit ghi người duyệt.
+  - **Từ chối:**
+    - bắt buộc ghi lý do (tối đa 300 ký tự);
+    - thẻ đổi thành "❌ Không được duyệt", **lý do không hiện công khai**, chỉ gửi cho tác giả và hiện cho admin trên web;
+    - contribution bị từ chối không tính điểm; gửi lại được dưới dạng contribution mới (kể cả từ cùng tin nhắn nguồn).
+  - **👍 Ghi nhận / 👎 Không ghi nhận** (phương án a):
+    - mỗi người chọn **một** trong hai cho mỗi contribution, đổi hoặc rút được; không bấm cho contribution mà mình là tác giả;
+    - 👎 bắt buộc ghi lý do (tối đa 200 ký tự);
+    - công khai chỉ hiện số lượng; danh sách người bấm và lý do chỉ admin (web) và người duyệt (`/contribution view`) xem được;
+    - **điểm của một contribution = max(0, tổng 👍 − tổng 👎)**, mỗi lượt có giá trị bằng "Điểm mỗi lượt ghi nhận" (`contributionVotePoints`) lúc bấm; 👎 không trừ sang điểm của contribution khác. Cách ghi: mỗi lượt một event (👍 dương, 👎 âm) và một event "sàn" (nguồn `vote`, không có actor, `reference_id` = contribution) đưa tổng của contribution về 0 khi âm;
+    - giữ PROP-024 (tổng của tác giả không âm) và PROP-031: thao tác làm giảm điểm (rút 👍, thêm hoặc đổi sang 👎) mà phải bù vì tác giả đang bị trừ điểm thì lượt đó bị **khoá**, không đổi hay rút được nữa. Lượt có event đã bị admin reset cũng bị khoá như trước.
+  - **XP cho người bấm** (người phụ trách: "kích thích mọi người tương tác"):
+    - mỗi người được **+5 Activity XP** (`contributionInteractionXp`, 0–100) một lần cho mỗi contribution, bấm 👍 hay 👎 như nhau;
+    - đổi 👍↔👎 giữ XP; rút hẳn thì thu lại XP;
+    - tối đa **25 XP mỗi ngày** giờ Việt Nam từ contribution (`contributionInteractionXpDailyCap`, 0 = không giới hạn); phần bị cắt không được cộng bù;
+    - XP ghi vào `xpLedger` nguồn `admin`, actor là bot, `reference_id` = `contribution:<id>`, như XP retro (DEC-049); không đổi CHECK của `xp_events`;
+    - điểm contribution vẫn tách khỏi XP (DEC-004): XP người bấm là Activity XP như tham gia vote, không phải điểm contribution.
+  - **Điểm cho tác giả mỗi lượt:** vẫn là `contributionVotePoints` (mặc định 1). Người phụ trách nêu ví dụ 2 điểm: chỉnh trên web, không đổi mặc định trong code.
+  - **Thông báo:** bot chỉ nhắn riêng (DM) cho tác giả, và người gửi nếu khác tác giả, khi contribution **được duyệt** và khi **bị từ chối** (kèm lý do). Không nhắn theo từng lượt 👍/👎. Người tắt DM thì bỏ qua, không báo lỗi.
+  - **Contribution cũ** (trước migration 10): coi như đã duyệt, giữ ở kênh cũ, ghi nhận được như trước.
+  - Contribution chờ duyệt hoặc bị từ chối không bấm 👍/👎 được; admin vẫn gỡ được.
+  - Contribution từ chuột phải "Ghi nhận đóng góp": tiêu đề không nêu tên kênh nguồn nếu `@everyone` không xem được kênh đó (thẻ nằm ở kênh Contribution công khai).
+  - Schema: migration 10 (cột duyệt của `contributions`, bảng `contribution_downvotes`, bảng `contribution_interaction_xp`, ba cột cấu hình mới, thêm loại `contribution_reviewer` cho `guild_role_grants`). Triển khai ở Phase 20, branch `phase-20/contribution-review`.
+
 ---
 
 ## Đang chờ quyết định
