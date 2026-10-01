@@ -14,6 +14,7 @@ import MessageCreate from "../src/events/messageCreate";
 import { tierUp } from "../src/modules/activity/tiers";
 import { createServices } from "../src/services";
 import { MS_PER_DAY } from "../src/shared/time";
+import { enableContributions, submitApproved, voteUp, withdrawVote } from "./contribution-helpers";
 import { ADMIN, CHANNEL_GENERAL, FakeClock, GUILD, ROLE_BACKEND, ROLE_FRONTEND, USER_A, USER_B, USER_C } from "./helpers";
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -103,15 +104,16 @@ describe("tích hợp: gamification và ảnh thẻ (Phase 12)", () =>
 			clock.advance(MS_PER_DAY);
 			assert.equal(vote(poll().id).xpAwarded, 20);
 
-			// Điểm contribution không âm: 2 ghi nhận → admin trừ 2 → một người rút → bot bù về 0, điểm team không âm.
-			const contribution = s.contributions.submit({
+			// Điểm contribution không âm: 2 ghi nhận → admin trừ 2 → một người rút → bot bù về 0 và khoá lượt rút, điểm team không âm.
+			enableContributions(s.guildConfig);
+			const contribution = submitApproved(s.contributions, {
 				guildId: GUILD, authorId: USER_B, submittedBy: USER_B, title: "Tài liệu onboarding frontend",
 				description: "Hướng dẫn setup môi trường.", category: "tai-lieu", link: null, authorRoleIds: [ROLE_FRONTEND],
 			});
-			s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_A });
-			s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_C });
+			voteUp(s.contributions, contribution.id, USER_A, { voterRoleIds: [ROLE_BACKEND] });
+			voteUp(s.contributions, contribution.id, USER_C, { voterRoleIds: [ROLE_FRONTEND] });
 			s.contributions.adjust({ guildId: GUILD, userId: USER_B, delta: -2, actorId: ADMIN, reason: "Trùng nội dung", roleIds: [ROLE_FRONTEND] });
-			s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_C });
+			assert.equal(withdrawVote(s.contributions, contribution.id, USER_C).locked, true);
 			assert.equal(s.contributions.getProfile(GUILD, USER_B).score, 0);
 			const negativeTeams = db.prepare("SELECT COUNT(*) AS n FROM contribution_team_totals WHERE total < 0").get() as { n: number };
 			assert.equal(negativeTeams.n, 0);

@@ -11,10 +11,11 @@ export interface GuildStatistics
 		topChannelsLast7Days: { channelId: string; awards: number }[];
 	};
 	contribution: {
-		/** Contribution còn hiệu lực. */
+		/** Contribution còn hiệu lực và đã được duyệt (DEC-051). */
 		total: number;
+		/** Như total, chỉ contribution gửi trong 7 ngày. */
 		last7Days: number;
-		/** Lượt ghi nhận hiện có. */
+		/** Lượt 👍 ghi nhận hiện có (không tính lượt 👎). */
 		votes: number;
 		totalScore: number;
 	};

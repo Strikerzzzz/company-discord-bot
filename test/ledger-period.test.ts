@@ -5,6 +5,7 @@ import { ContributionService } from "../src/modules/contribution/ContributionSer
 import { LeaderboardPeriod, LeaderboardService } from "../src/modules/leaderboard/LeaderboardService";
 import { Ledger } from "../src/modules/ledger/Ledger";
 import { startOfVnMonth, startOfVnWeek, vnDayNumber } from "../src/shared/time";
+import { castVote, enableContributions } from "./contribution-helpers";
 import {
 	ADMIN,
 	createTestContext,
@@ -289,13 +290,14 @@ describe("Ledger: bảng theo kỳ chỉ tính điểm kiếm được (bỏ eve
 		const context = createTestContext();
 		context.deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
 		context.deps.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		enableContributions(context.deps.guildConfig);
 		return { ...context, contributions: new ContributionService(context.db, context.deps), board: new LeaderboardService(context.deps) };
 	}
 
 	function submitAt(s: Scenario, at: number, authorId: string, roleIds: string[]): number
 	{
 		s.clock.current = at;
-		return s.contributions.submit({
+		const created = s.contributions.submit({
 			guildId: GUILD,
 			authorId,
 			submittedBy: authorId,
@@ -304,20 +306,21 @@ describe("Ledger: bảng theo kỳ chỉ tính điểm kiếm được (bỏ eve
 			category: "cai-tien",
 			link: null,
 			authorRoleIds: roleIds,
-		}).id;
+		});
+		return s.contributions.approve(GUILD, created.id, ADMIN).id;
 	}
 
-	function toggleAt(s: Scenario, at: number, contributionId: number, voterId: string): void
+	function voteAt(s: Scenario, at: number, contributionId: number, voterId: string, action: "up" | "withdraw"): void
 	{
 		s.clock.current = at;
-		s.contributions.toggleVote({ guildId: GUILD, contributionId, voterId });
+		castVote(s.contributions, contributionId, voterId, action);
 	}
 
 	/** Tháng 8: contribution của USER_A (team Backend) có 3 ghi nhận, rồi admin trừ 3 điểm, tổng về 0. */
 	function augustOfUserA(s: Scenario): number
 	{
 		const id = submitAt(s, AUG_15, USER_A, [ROLE_BACKEND]);
-		for (const voter of [USER_B, USER_C, USER_D]) toggleAt(s, AUG_15, id, voter);
+		for (const voter of [USER_B, USER_C, USER_D]) voteAt(s, AUG_15, id, voter, "up");
 		s.clock.current = AUG_20;
 		s.contributions.adjust({ guildId: GUILD, userId: USER_A, delta: -3, actorId: ADMIN, reason: "Trùng nội dung", roleIds: [ROLE_BACKEND] });
 		assert.equal(s.deps.contributionLedger.total(GUILD, USER_A), 0);
@@ -328,7 +331,7 @@ describe("Ledger: bảng theo kỳ chỉ tính điểm kiếm được (bỏ eve
 	function septemberOfUserB(s: Scenario, votes: number): void
 	{
 		const id = submitAt(s, SEP_08, USER_B, [ROLE_FRONTEND]);
-		for (const voter of [USER_A, USER_C, USER_D].slice(0, votes)) toggleAt(s, SEP_08, id, voter);
+		for (const voter of [USER_A, USER_C, USER_D].slice(0, votes)) voteAt(s, SEP_08, id, voter, "up");
 	}
 
 	function compensations(s: Scenario, userId: string): { amount: number; createdAt: number }[]
@@ -371,7 +374,7 @@ describe("Ledger: bảng theo kỳ chỉ tính điểm kiếm được (bỏ eve
 		const s = scenario();
 		const contributionId = augustOfUserA(s);
 		septemberOfUserB(s, 2);
-		for (const voter of [USER_B, USER_C, USER_D]) toggleAt(s, SEP_10, contributionId, voter);
+		for (const voter of [USER_B, USER_C, USER_D]) voteAt(s, SEP_10, contributionId, voter, "withdraw");
 
 		s.clock.current = SEP_12;
 		assert.equal(s.deps.contributionLedger.total(GUILD, USER_A), 0);

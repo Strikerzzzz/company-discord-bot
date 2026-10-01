@@ -84,11 +84,13 @@ export class StatisticsService implements StatisticsServiceApi
 			ORDER BY awards DESC, channelId ASC
 			LIMIT @limit`);
 
+		// Chỉ contribution đã được duyệt (DEC-051): bài chờ duyệt hay bị từ chối chưa phải là đóng góp được công nhận. Lượt ghi nhận
+		// chỉ đếm 👍 (contribution_votes); lượt 👎 nằm ở contribution_downvotes nên không bị tính.
 		this.contributionTotals = db.prepare<WindowParams, ContributionRow>(`
 			SELECT
-				(SELECT COUNT(*) FROM contributions WHERE guild_id = @guildId AND status = 'active') AS total,
+				(SELECT COUNT(*) FROM contributions WHERE guild_id = @guildId AND status = 'active' AND review_state = 'approved') AS total,
 				(SELECT COUNT(*) FROM contributions
-					WHERE guild_id = @guildId AND status = 'active' AND created_at >= @since) AS last7Days,
+					WHERE guild_id = @guildId AND status = 'active' AND review_state = 'approved' AND created_at >= @since) AS last7Days,
 				(SELECT COUNT(*) FROM contribution_votes v
 					JOIN contributions c ON c.id = v.contribution_id
 					JOIN contribution_events e ON e.id = v.event_id

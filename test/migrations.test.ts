@@ -6,6 +6,7 @@ import { join } from "path";
 import { openDatabase } from "../src/db/connection";
 import { currentSchemaVersion, MIGRATIONS, runMigrations } from "../src/db/migrations";
 import { AuditService } from "../src/modules/audit/AuditService";
+import { ContributionService } from "../src/modules/contribution/ContributionService";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
 import { TierSetService } from "../src/modules/gamification/TierSetService";
 import { Ledger } from "../src/modules/ledger/Ledger";
@@ -256,7 +257,7 @@ describe("migrations", () =>
 		const xpColumns = (): string[] => db.prepare<[], { name: string }>("PRAGMA table_info(xp_events)").all().map(column => column.name);
 		const before = xpColumns();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 9)), 1);
 		assert.equal(currentSchemaVersion(db), 9);
 		assert.deepEqual(xpColumns(), before, "bảng xp_events không đổi");
 		assert.equal(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM xp_events").get()?.n, 1);
@@ -278,6 +279,8 @@ describe("migrations", () =>
 		db.prepare("INSERT INTO retro_manager_roles (guild_id, role_id, created_at) VALUES ('g1', 'r1', 0)").run();
 		assert.throws(() => db.prepare("INSERT INTO retro_manager_roles (guild_id, role_id, created_at) VALUES ('g1', 'r1', 1)").run(), /UNIQUE|PRIMARY/);
 
+		// Service dùng schema mới nhất (cấu hình guild đọc cả các cột của migration sau).
+		runMigrations(db);
 		const clock = new FakeClock();
 		const audit = new AuditService(db, clock);
 		const deps = {
@@ -295,6 +298,104 @@ describe("migrations", () =>
 		assert.equal(retro.get("g2", session.id)?.participants, 1);
 		assert.equal(retro.getConfig("g1").fillXp, 20);
 		assert.deepEqual(retro.getConfig("g1").managerRoleIds, ["r1"]);
+	});
+
+	test("DB đang ở version 9 có dữ liệu: migration 10 coi contribution cũ là đã duyệt, thêm cấu hình mặc định và loại role duyệt contribution (DEC-051)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 9));
+		const insertContribution = db.prepare<[string, string | null, string]>(`
+			INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, source_message_id, status, created_at)
+			VALUES ('g1', ?, 'a', 'Cũ', 'Mô tả', 'khac', ?, ?, 0)`);
+		insertContribution.run("a", "m1", "active");
+		insertContribution.run("b", null, "removed");
+		db.prepare(`
+			INSERT INTO guild_settings (guild_id, xp_per_message, xp_cooldown_seconds, min_message_length, duplicate_window_seconds,
+				level_up_announcements, default_poll_xp, contribution_vote_points, admin_role_id, poll_creator_role_id, updated_at)
+			VALUES ('g1', 10, 60, 5, 300, 1, 5, 2, NULL, NULL, 0)`).run();
+		const insertGrant = db.prepare<[string, string, number]>("INSERT INTO guild_role_grants (guild_id, kind, role_id, created_at) VALUES ('g1', ?, ?, ?)");
+		insertGrant.run("admin", "r1", 1000);
+		insertGrant.run("poll_creator", "r2", 2000);
+		assert.throws(() => insertGrant.run("contribution_reviewer", "r3", 0), /CHECK/, "trước migration 10 chưa có loại role duyệt");
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 10);
+		const contributions = db.prepare<[], { review_state: string; reviewed_by: string | null; reviewed_at: number | null; review_reason: string | null; floor_event_id: number | null }>(
+			"SELECT review_state, reviewed_by, reviewed_at, review_reason, floor_event_id FROM contributions ORDER BY id").all();
+		assert.deepEqual(contributions, [
+			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null, floor_event_id: null },
+			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null, floor_event_id: null },
+		], "contribution cũ coi như đã duyệt");
+		assert.deepEqual(
+			db.prepare("SELECT contribution_channel_id, contribution_interaction_xp, contribution_interaction_xp_daily_cap, contribution_vote_points FROM guild_settings").get(),
+			{ contribution_channel_id: null, contribution_interaction_xp: 5, contribution_interaction_xp_daily_cap: 25, contribution_vote_points: 2 },
+		);
+		const grants = db.prepare<[], { kind: string; role_id: string; created_at: number }>("SELECT kind, role_id, created_at FROM guild_role_grants ORDER BY kind").all();
+		assert.deepEqual(grants.map(row => [row.kind, row.role_id, row.created_at]), [["admin", "r1", 1000], ["poll_creator", "r2", 2000]], "chép nguyên role được cấp quyền");
+		insertGrant.run("contribution_reviewer", "r3", 3000);
+		assert.throws(() => insertGrant.run("khac", "r4", 0), /CHECK/);
+		assert.throws(() => insertGrant.run("contribution_reviewer", "r3", 0), /UNIQUE|PRIMARY/);
+		assert.throws(() => db.prepare("UPDATE contributions SET review_state = 'cho' WHERE id = 1").run(), /CHECK/);
+
+		const insertSourced = db.prepare<[string]>(`
+			INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, source_message_id, status, created_at, review_state)
+			VALUES ('g1', 'c', 'c', 'Mới', 'Mô tả', 'khac', 'm1', 'active', 0, ?)`);
+		assert.throws(() => insertSourced.run("pending"), /UNIQUE/, "tin nhắn nguồn đang là contribution đã duyệt");
+		insertSourced.run("rejected");
+		db.prepare("UPDATE contributions SET review_state = 'rejected' WHERE id = 1").run();
+		insertSourced.run("pending");
+		assert.throws(() => insertSourced.run("approved"), /UNIQUE/, "chỉ contribution bị từ chối không chặn");
+
+		const insertDownvote = db.prepare<[number, string]>(
+			"INSERT INTO contribution_downvotes (contribution_id, guild_id, voter_id, event_id, reason, created_at) VALUES (?, 'g1', ?, 1, 'Lý do', 0)");
+		db.prepare("INSERT INTO contribution_events (guild_id, user_id, amount, source, reference_id, actor_id, created_at) VALUES ('g1', 'a', -1, 'vote', '1', 'u1', 0)").run();
+		insertDownvote.run(1, "u1");
+		assert.throws(() => insertDownvote.run(1, "u1"), /UNIQUE|PRIMARY/);
+		assert.throws(() => insertDownvote.run(99, "u2"), /FOREIGN KEY/);
+		const insertInteraction = db.prepare<[number, string, number | null]>(
+			"INSERT INTO contribution_interaction_xp (contribution_id, guild_id, user_id, xp_event_id, created_at) VALUES (?, 'g1', ?, ?, 0)");
+		insertInteraction.run(1, "u1", null);
+		assert.throws(() => insertInteraction.run(1, "u1", null), /UNIQUE|PRIMARY/);
+		assert.throws(() => insertInteraction.run(1, "u2", 999), /FOREIGN KEY/);
+
+		const clock = new FakeClock();
+		const config = new GuildConfigService(db, clock, new AuditService(db, clock));
+		const settings = config.getSettings("g1");
+		assert.deepEqual(
+			[settings.contributionChannelId, settings.contributionInteractionXp, settings.contributionInteractionXpDailyCap, settings.contributionVotePoints],
+			[null, 5, 25, 2],
+		);
+		assert.deepEqual(settings.contributionReviewerRoleIds, ["r3"]);
+		assert.deepEqual(settings.adminRoleIds, ["r1"]);
+		assert.deepEqual(settings.pollCreatorRoleIds, ["r2"]);
+	});
+
+	test("contribution có từ trước migration 10 vẫn ghi nhận được như trước, không cần chọn kênh (DEC-051)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 9));
+		db.prepare(`
+			INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, status, created_at)
+			VALUES ('g1', 'a', 'a', 'Cũ', 'Mô tả', 'khac', 'active', 0)`).run();
+		runMigrations(db);
+
+		const clock = new FakeClock();
+		const audit = new AuditService(db, clock);
+		const deps = {
+			clock,
+			audit,
+			guildConfig: new GuildConfigService(db, clock, audit),
+			teams: new TeamService(db, clock, audit),
+			xpLedger: new Ledger(db, "xp", clock),
+			contributionLedger: new Ledger(db, "contribution", clock),
+			tierSets: new TierSetService(db, clock, audit),
+		};
+		const contributions = new ContributionService(db, deps);
+		assert.equal(contributions.get("g1", 1)?.reviewState, "approved");
+		const result = contributions.vote({ guildId: "g1", contributionId: 1, voterId: "u1", action: "up", voterRoleIds: [], systemActorId: "bot" });
+		assert.deepEqual([result.current, result.contribution.votes, result.contribution.score], ["up", 1, 1]);
+		assert.equal(deps.contributionLedger.total("g1", "a"), 1);
+		assert.equal(contributions.getProfile("g1", "a").contributions, 1);
 	});
 
 	test("từ chối database mới hơn code", () =>

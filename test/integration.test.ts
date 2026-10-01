@@ -8,6 +8,7 @@ import { runMigrations } from "../src/db/migrations";
 import { SubmitContributionInput } from "../src/modules/contribution/types";
 import { createServices } from "../src/services";
 import { UserError } from "../src/shared/errors";
+import { enableContributions, submitApproved, voteUp, withdrawVote } from "./contribution-helpers";
 import { ADMIN, CHANNEL_BOT, CHANNEL_GENERAL, FakeClock, GUILD, ROLE_BACKEND, ROLE_FRONTEND, USER_A, USER_B, USER_C } from "./helpers";
 
 // Luồng end-to-end qua toàn bộ service thật (như khi bot chạy), chỉ thay Discord bằng lời gọi trực tiếp.
@@ -52,15 +53,19 @@ describe("tích hợp: một ngày làm việc của bot", () =>
 			assert.equal(levelUps, 1);
 			assert.equal(profileA.rank, 1);
 
-			// Contribution: B gửi, A và C ghi nhận; B không tự ghi nhận được.
-			const contribution = s.contributions.submit({
+			// Contribution: admin chọn kênh; B gửi, admin duyệt; A và C ghi nhận (mỗi người được XP người bấm); B không tự ghi nhận được.
+			enableContributions(s.guildConfig);
+			const contribution = submitApproved(s.contributions, {
 				guildId: GUILD, authorId: USER_B, submittedBy: USER_B, title: "Tài liệu onboarding frontend",
 				description: "Hướng dẫn setup môi trường và quy ước code.", category: "tai-lieu", link: "https://wiki.example/onboarding",
 				authorRoleIds: [ROLE_FRONTEND],
 			});
-			assert.equal(s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_A }).voted, true);
-			assert.equal(s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_C }).voted, true);
-			assert.throws(() => s.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: USER_B }));
+			const xpBeforeRecognition = s.activity.getProfile(GUILD, USER_A).level.totalXp;
+			const recognitionByA = voteUp(s.contributions, contribution.id, USER_A, { voterRoleIds: [ROLE_BACKEND] });
+			assert.deepEqual([recognitionByA.current, recognitionByA.xpAwarded], ["up", 5]);
+			assert.equal(s.activity.getProfile(GUILD, USER_A).level.totalXp, xpBeforeRecognition + 5);
+			assert.equal(voteUp(s.contributions, contribution.id, USER_C).current, "up");
+			assert.throws(() => voteUp(s.contributions, contribution.id, USER_B));
 			assert.equal(s.contributions.getProfile(GUILD, USER_B).score, 2);
 
 			// Vote: admin tạo, người tham gia được XP một lần.
@@ -102,9 +107,9 @@ describe("tích hợp: một ngày làm việc của bot", () =>
 				description: "Mình vừa deploy xong bản sửa lỗi đăng nhập", category: "khac", link: null,
 				authorRoleIds: [ROLE_BACKEND], sourceMessageId: "700000000000000001",
 			};
-			const recognized = s.contributions.submit(recognition);
+			const recognized = submitApproved(s.contributions, recognition);
 			assert.throws(() => s.contributions.submit({ ...recognition, submittedBy: USER_B }), UserError);
-			s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B });
+			voteUp(s.contributions, recognized.id, USER_B, { voterRoleIds: [ROLE_FRONTEND] });
 			assert.deepEqual(s.leaderboard.teams(GUILD, "contribution", 1).entries, [
 				{ rank: 1, id: ROLE_FRONTEND, value: 2 },
 				{ rank: 2, id: ROLE_BACKEND, value: 1 },
@@ -112,8 +117,8 @@ describe("tích hợp: một ngày làm việc của bot", () =>
 
 			// Admin reset contribution của A: người đã ghi nhận không bấm lại để lấy lại điểm được.
 			s.contributions.resetUser(GUILD, USER_A, ADMIN);
-			assert.throws(() => s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B }), UserError);
-			assert.throws(() => s.contributions.toggleVote({ guildId: GUILD, contributionId: recognized.id, voterId: USER_B }), UserError);
+			assert.throws(() => voteUp(s.contributions, recognized.id, USER_B), UserError);
+			assert.throws(() => withdrawVote(s.contributions, recognized.id, USER_B), UserError);
 			assert.equal(s.contributions.getProfile(GUILD, USER_A).score, 0);
 			assert.equal(s.contributions.get(GUILD, recognized.id)?.votes, 0);
 			assert.equal(s.statistics.summary(GUILD).contribution.votes, 2);

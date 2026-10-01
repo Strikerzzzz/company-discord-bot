@@ -23,7 +23,7 @@ export class GamificationService implements GamificationServiceApi
 
 	profile(guildId: string, userId: string): GamificationProfile
 	{
-		const { xpLedger, contributionLedger, clock } = this.deps;
+		const { xpLedger, clock } = this.deps;
 		const now = clock.now();
 
 		const level = levelInfo(xpLedger.total(guildId, userId));
@@ -33,7 +33,7 @@ export class GamificationService implements GamificationServiceApi
 		const stats: AchievementStats = {
 			messages: xpLedger.countEvents(guildId, userId, "message"),
 			bestStreak: streak.best,
-			recognitionsReceived: contributionLedger.countEvents(guildId, userId, "vote"),
+			recognitionsReceived: this.repo.recognitionsReceived(guildId, userId),
 			recognitionsGiven: this.repo.recognitionsGiven(guildId, userId),
 			pollsJoined: this.repo.pollsJoined(guildId, userId),
 			contributions: this.repo.activeContributions(guildId, userId),
