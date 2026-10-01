@@ -31,6 +31,7 @@ import {
 	call,
 	CHANNEL_CHAT,
 	createWebHarness,
+	ensureContributionChannel,
 	login,
 	PLAIN_USER,
 	STRANGER,
@@ -81,7 +82,9 @@ describe("nền móng Phase 17: phân trang", () =>
 
 	test("ContributionService.listPage lọc theo tác giả và trạng thái (kể cả đã gỡ)", () =>
 	{
-		const { services, clock } = createWebHarness();
+		const harness = createWebHarness();
+		const { services, clock } = harness;
+		ensureContributionChannel(harness);
 		const submit = (authorId: string, title: string): number =>
 		{
 			const contribution = services.contributions.submit({

@@ -1,5 +1,6 @@
 // Test trang "Contribution" của web quản trị (Phase 17, DEC-041): danh sách có bộ lọc và phân trang, chi tiết, gỡ contribution,
-// riêng tư theo kênh. Service thật trên SQLite :memory: và server Discord giả (test/web-helpers.ts).
+// riêng tư theo kênh. Service thật trên SQLite :memory: và server Discord giả (test/web-helpers.ts). Duyệt, từ chối và lượt 👍/👎
+// (DEC-051) nằm ở test/web-contribution-review.test.ts.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { ChannelType } from "discord.js";
@@ -14,9 +15,11 @@ import { GUILD } from "./helpers";
 import {
 	addChannel,
 	ADMIN_USER,
+	BOT_ID,
 	call,
 	CHANNEL_CHAT,
 	createWebHarness,
+	ensureContributionChannel,
 	login,
 	LoggedIn,
 	PLAIN_USER,
@@ -42,8 +45,10 @@ async function getPage(harness: WebHarness, auth: LoggedIn, path: string): Promi
 	return response.body;
 }
 
+/** Gửi contribution (chờ duyệt, DEC-051) qua service thật; chọn kênh contribution trước nếu chưa có. */
 function submit(harness: WebHarness, overrides: Partial<SubmitContributionInput> = {}): Contribution
 {
+	ensureContributionChannel(harness);
 	const contribution = harness.services.contributions.submit({
 		guildId: GUILD,
 		authorId: PLAIN_USER,
@@ -57,6 +62,14 @@ function submit(harness: WebHarness, overrides: Partial<SubmitContributionInput>
 	});
 	harness.clock.advance(1000);
 	return contribution;
+}
+
+/** Duyệt rồi để `voterId` bấm 👍 (DEC-051: contribution chờ duyệt chưa bấm được). */
+function approveAndUpvote(harness: WebHarness, contributionId: number, voterId: string): void
+{
+	const { contributions } = harness.services;
+	contributions.approve(GUILD, contributionId, ADMIN_USER);
+	contributions.vote({ guildId: GUILD, contributionId, voterId, action: "up", voterRoleIds: [], systemActorId: BOT_ID });
 }
 
 function removeContribution(harness: WebHarness, auth: LoggedIn, form: Record<string, string>): Promise<WebResponse>
@@ -111,7 +124,7 @@ describe("web: trang Contribution — danh sách", () =>
 		assert.ok(list.includes("Ý tưởng") && list.includes("Giải pháp"), "nhãn loại");
 		assert.ok(list.includes(`href="${pageUrl(`/members/view?u=${PLAIN_USER}`)}"`) && list.includes("Thường"), "tác giả có link hồ sơ");
 		assert.ok(list.includes("Admin &lt;b&gt;") && !list.includes("Admin <b>"), "tên tác giả được escape");
-		assert.ok(list.includes("badge ok\">Còn hiệu lực"));
+		assert.ok(list.includes("badge warn\">⏳ Chờ duyệt"), "contribution mới đang chờ duyệt (DEC-051)");
 		assert.ok(list.includes("2 contribution"));
 
 		const removed = await getPage(harness, auth, "/contributions?tt=removed");
@@ -172,7 +185,7 @@ describe("web: trang Contribution — chi tiết", () =>
 			link: "https://example.com/a?b=1&c=\"><script>",
 		});
 		services.contributions.attachMessage(GUILD, contribution.id, CHANNEL_CHAT, MESSAGE_ID);
-		services.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: ADMIN_USER });
+		approveAndUpvote(harness, contribution.id, ADMIN_USER);
 		const auth = await login(harness, ADMIN_USER);
 
 		const page = await getPage(harness, auth, `/contributions/view?id=${contribution.id}`);
@@ -183,7 +196,8 @@ describe("web: trang Contribution — chi tiết", () =>
 		assert.ok(page.includes(`href="https://discord.com/channels/${GUILD}/${CHANNEL_CHAT}/${MESSAGE_ID}"`));
 		assert.ok(page.includes("Tài liệu") && page.includes("#chung"));
 		assert.ok(page.includes("Người ghi nhận") && page.includes("Admin &lt;b&gt;"), "người ghi nhận khác tác giả");
-		assert.match(page, /<dt>Lượt ghi nhận<\/dt><dd>1<\/dd>/u);
+		assert.match(page, /<dt>👍 Lượt ghi nhận<\/dt><dd>1<\/dd>/u);
+		assert.match(page, /<dt>Điểm của contribution<\/dt><dd>1<\/dd>/u);
 		assert.ok(page.includes(`action="${pageUrl("/contributions/remove")}"`) && page.includes(`name="id" value="${contribution.id}"`));
 		assert.ok(page.includes("name=\"xac-nhan\"") && page.includes("btn btn-danger"));
 		assert.ok(!page.includes(" style="), "không có style inline (CSP)");
@@ -259,7 +273,7 @@ describe("web: trang Contribution — gỡ", () =>
 		const { services } = harness;
 		const contribution = submit(harness, { title: "Sửa lỗi đăng nhập" });
 		services.contributions.attachMessage(GUILD, contribution.id, CHANNEL_CHAT, MESSAGE_ID);
-		services.contributions.toggleVote({ guildId: GUILD, contributionId: contribution.id, voterId: ADMIN_USER });
+		approveAndUpvote(harness, contribution.id, ADMIN_USER);
 		assert.ok(services.contributions.getProfile(GUILD, PLAIN_USER).score > 0);
 		const auth = await login(harness, ADMIN_USER);
 		const detailUrl = pageUrl(`/contributions/view?id=${contribution.id}`);

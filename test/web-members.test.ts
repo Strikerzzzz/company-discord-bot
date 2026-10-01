@@ -26,6 +26,7 @@ import {
 	call,
 	CHANNEL_CHAT,
 	createWebHarness,
+	ensureContributionChannel,
 	login,
 	LoggedIn,
 	PLAIN_USER,
@@ -251,6 +252,7 @@ describe("web thành viên: hồ sơ", () =>
 		const { harness, auth } = await setup();
 		const { contributions } = harness.services;
 		addChannel(harness.world, { id: CHANNEL_SECRET, name: "luong-thuong", type: ChannelType.GuildText, permissionsByMember: { [ADMIN_USER]: [] } });
+		ensureContributionChannel(harness);
 		const submit = (title: string): number =>
 		{
 			const created = contributions.submit({ guildId: GUILD, authorId: PLAIN_USER, submittedBy: PLAIN_USER, title, description: "Mô tả", category: "y-tuong", link: null, authorRoleIds: [] });
@@ -263,15 +265,20 @@ describe("web thành viên: hồ sơ", () =>
 		contributions.attachMessage(GUILD, visible, CHANNEL_CHAT, "610000000000000001");
 		contributions.attachMessage(GUILD, secret, CHANNEL_SECRET, "610000000000000002");
 		contributions.remove(GUILD, removed, ADMIN_USER);
-		givePoints(harness, PLAIN_USER, 9);
+		contributions.approve(GUILD, visible, ADMIN_USER);
+		contributions.vote({ guildId: GUILD, contributionId: visible, voterId: ADMIN_USER, action: "up", voterRoleIds: [], systemActorId: BOT_ID });
+		givePoints(harness, PLAIN_USER, 8);
 
 		const body = await getPage(harness, auth, `/members/view?u=${PLAIN_USER}`);
 		assert.ok(body.includes(`href="${pageUrl(`/contributions/view?id=${visible}`)}"`));
 		assert.ok(body.includes("Tài liệu &lt;onboarding&gt;"));
 		assert.ok(!body.includes("Bảng lương quý"));
 		assert.ok(body.includes("(ở kênh bạn không xem được)"));
-		assert.ok(body.includes("<span class=\"badge off\">đã gỡ</span>"));
-		assert.ok(body.includes("<div class=\"label\">Contribution còn hiệu lực</div><div class=\"value\">2</div>"));
+		assert.ok(body.includes("<span class=\"badge off\">Đã gỡ</span>"));
+		assert.ok(body.includes("<span class=\"badge ok\">✅ Đã duyệt</span>") && body.includes("<span class=\"badge warn\">⏳ Chờ duyệt</span>"), "trạng thái duyệt (DEC-051)");
+		assert.match(body, /✅ Đã duyệt<\/span><\/td><td class="num">1<\/td>\s*<td class="num">0<\/td><td class="num">1<\/td>/u, "cột 👍, 👎, điểm");
+		assert.ok(body.includes("<div class=\"label\">Contribution đã duyệt</div><div class=\"value\">1</div>"), "chỉ đếm contribution còn hiệu lực đã duyệt");
+		assert.ok(body.includes("<div class=\"label\">Chờ duyệt</div><div class=\"value\">1</div>"));
 		assert.ok(body.includes("<div class=\"label\">Điểm</div><div class=\"value\">9</div>"));
 	});
 

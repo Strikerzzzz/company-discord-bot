@@ -1,7 +1,8 @@
-// Trang "Quyền" của web quản trị (DEC-039, DEC-044): danh sách role admin bot và danh sách role được tạo vote, mỗi danh sách là
-// một bảng ô tick mọi role của server (như trang Team). Cùng quy tắc với `/config admin-role`, `/config poll` và ô chọn nhiều role
-// của `/config panel`: role thêm phải dùng được (assertUsableRole), tối đa MAX_GRANT_ROLES role mỗi danh sách. Lưu chỉ ghi phần
-// khác với lúc vẽ trang (changeRoleGrants), nên hai admin hay hai tab không đè nhau; kiểm tra cả hai bảng rồi mới ghi.
+// Trang "Quyền" của web quản trị (DEC-039, DEC-044, DEC-051): danh sách role admin bot, role được tạo vote và role duyệt
+// contribution, mỗi danh sách là một bảng ô tick mọi role của server (như trang Team). Cùng quy tắc với `/config admin-role`,
+// `/config poll`, `/config contribution` và ô chọn nhiều role của `/config panel`: role thêm phải dùng được (assertUsableRole),
+// tối đa MAX_GRANT_ROLES role mỗi danh sách. Lưu chỉ ghi phần khác với lúc vẽ trang (changeRoleGrants), nên hai admin hay hai
+// tab không đè nhau; kiểm tra mọi bảng rồi mới ghi.
 import { Guild, PermissionFlagsBits, Role } from "discord.js";
 import { assertUsableRole, ROLE_GRANT_PURPOSES, roleGrantChanged, roleGrantChangeLines } from "../../discord/configOps";
 import { roleMention } from "../../discord/format";
@@ -74,6 +75,18 @@ const GRANT_TABLES: readonly GrantTable[] = [
 		selectParam: "chon-vote",
 		hint: "Người có ít nhất một role trong danh sách tạo được vote. Admin luôn tạo được vote.",
 		empty: "Chưa đặt role nào: chỉ admin tạo được vote.",
+	},
+	{
+		key: "contributionReviewerRoleIds",
+		title: "✅ Role duyệt contribution",
+		name: "role duyệt contribution",
+		column: "Được duyệt contribution",
+		field: "duyet",
+		drawnPrefix: "r:",
+		selectParam: "chon-duyet",
+		hint: "Người có ít nhất một role trong danh sách duyệt hoặc từ chối được contribution mới (nút ✅ Duyệt / ❌ Từ chối trên thẻ), và xem được ai đã 👍/👎 kèm lý do bằng /contribution view. "
+			+ "Admin bot luôn duyệt được; người duyệt được duyệt cả contribution của chính mình.",
+		empty: "Chưa đặt role nào: chỉ admin bot duyệt được contribution.",
 	},
 ];
 
@@ -175,7 +188,7 @@ ${GRANT_TABLES.map(table => grantSection(ctx, table, settings[table.key], tierRo
 	return renderPage(ctx, {
 		nav: "roles",
 		title: "Quyền",
-		lead: "Ai quản trị được bot và ai được tạo vote. Mọi thay đổi được ghi vào nhật ký quản trị.",
+		lead: "Ai quản trị được bot, ai được tạo vote và ai được duyệt contribution. Mọi thay đổi được ghi vào nhật ký quản trị.",
 		body,
 	});
 }
@@ -219,7 +232,7 @@ function readChange(ctx: GuildPageContext, form: URLSearchParams, table: GrantTa
 	return { table, add, remove };
 }
 
-/** Danh sách sau khi lưu không được quá MAX_GRANT_ROLES role (kiểm tra cả hai bảng trước khi ghi bảng nào, như changeRoleGrants). */
+/** Danh sách sau khi lưu không được quá MAX_GRANT_ROLES role (kiểm tra mọi bảng trước khi ghi bảng nào, như changeRoleGrants). */
 function assertWithinLimit(current: readonly string[], change: GrantChange): void
 {
 	const granted = new Set(current);

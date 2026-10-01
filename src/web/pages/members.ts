@@ -37,6 +37,7 @@ import { redirect, WebResponse } from "../http";
 import { csrfField, guildUrl, redirectWithFlash, renderPage } from "../layout";
 import { GuildPageContext, PageModule } from "../types";
 import { formatDateTime, memberLink, memberUrl, pager, parseUserId, queryPage, requireUserId, userCell } from "../widgets";
+import { contributionBadges } from "./contributions";
 
 const PATH = "/members";
 const VIEW_PATH = "/members/view";
@@ -227,23 +228,25 @@ function contributionRow(ctx: GuildPageContext, contribution: Contribution, hidd
 	const title = contribution.channelId !== null && hidden.has(contribution.channelId)
 		? html`<span class="muted">(ở kênh bạn không xem được)</span>`
 		: html`${contribution.title}`;
-	const status = contribution.status === "active" ? html`<span class="badge ok">còn hiệu lực</span>` : html`<span class="badge off">đã gỡ</span>`;
 	return html`<tr><td><a href="${guildUrl(ctx, `/contributions/view?id=${contribution.id}`)}">#${contribution.id}</a></td>
-<td class="mb-title">${title}</td><td>${status}</td><td class="num">${formatNumber(contribution.votes)}</td>
+<td class="mb-title">${title}</td><td class="mb-state">${contributionBadges(contribution)}</td><td class="num">${formatNumber(contribution.votes)}</td>
+<td class="num">${formatNumber(contribution.downvotes)}</td><td class="num">${formatNumber(contribution.score)}</td>
 <td class="mb-time">${formatDateTime(contribution.createdAt)}</td></tr>`;
 }
 
-function contributionCard(ctx: GuildPageContext, profile: ContributionProfile, recent: readonly Contribution[], hidden: ReadonlySet<string>): RawHtml
+/** Thẻ contribution của hồ sơ: điểm, hạng, số contribution đã duyệt và đang chờ duyệt (DEC-051), các contribution gần nhất. */
+function contributionCard(ctx: GuildPageContext, profile: ContributionProfile, pending: number, recent: readonly Contribution[], hidden: ReadonlySet<string>): RawHtml
 {
 	const list = recent.length === 0
 		? html`<p class="muted">Chưa có contribution nào.</p>`
-		: html`<div class="mb-scroll"><table class="table"><thead><tr><th>Mã</th><th>Tiêu đề</th><th>Trạng thái</th><th class="num">Lượt ghi nhận</th><th>Ngày tạo</th></tr></thead>
+		: html`<div class="mb-scroll"><table class="table"><thead><tr><th>Mã</th><th>Tiêu đề</th><th>Trạng thái</th><th class="num" title="Lượt ghi nhận">👍</th><th class="num" title="Lượt không ghi nhận">👎</th><th class="num">Điểm</th><th>Ngày tạo</th></tr></thead>
 <tbody>${recent.map(contribution => contributionRow(ctx, contribution, hidden))}</tbody></table></div>`;
 	return html`<section class="card"><h2>🤝 Contribution</h2>
 <div class="grid">
 ${stat("Điểm", formatNumber(profile.score))}
 ${stat("Xếp hạng", rankText(profile.rank, profile.totalRanked))}
-${stat("Contribution còn hiệu lực", formatNumber(profile.contributions))}
+${stat("Contribution đã duyệt", formatNumber(profile.contributions))}
+${stat("Chờ duyệt", formatNumber(pending))}
 </div>
 <h3>${RECENT_CONTRIBUTIONS} contribution gần nhất</h3>
 ${list}
@@ -364,6 +367,7 @@ async function renderMemberView(ctx: GuildPageContext): Promise<WebResponse>
 	const events = services.activity.recentEvents(guild.id, userId, RECENT_XP_EVENTS);
 	const contribution = services.contributions.getProfile(guild.id, userId);
 	const recent = services.contributions.listPage(guild.id, { authorId: userId, status: "all", page: 1, pageSize: RECENT_CONTRIBUTIONS }).items;
+	const pending = services.contributions.listPage(guild.id, { authorId: userId, status: "active", review: "pending", page: 1, pageSize: 1 }).total;
 	const actorIds = events.map(event => event.actorId).filter((id): id is string => id !== null);
 	const [displays, hidden] = await Promise.all([
 		deps.adminActions.displays(deps.client, guild, [...new Set([userId, ...actorIds])]),
@@ -383,7 +387,7 @@ async function renderMemberView(ctx: GuildPageContext): Promise<WebResponse>
 		body: html`${headerCard(ctx, userId, display, member === null ? html`<div class="warn-box">${MEMBER_LEFT_NOTE}</div>` : null)}
 ${xpCard(ctx, profile, events, displays)}
 ${tierStyleCard(ctx, userId)}
-${contributionCard(ctx, contribution, recent, hidden)}
+${contributionCard(ctx, contribution, pending, recent, hidden)}
 ${adjustCard(ctx, userId, member)}
 ${resetCard(ctx, userId)}`,
 	});
@@ -537,7 +541,7 @@ export const membersPage: PageModule = {
 .mb-progress-row label { font-weight: 600; }
 .mb-progress { width: 100%; max-width: 320px; height: 14px; accent-color: var(--brand); }
 .mb-scroll { overflow-x: auto; }
-.mb-time { white-space: nowrap; }
+.mb-time, .mb-state { white-space: nowrap; }
 .mb-amount { white-space: nowrap; font-weight: 600; }
 .mb-reason, .mb-title { overflow-wrap: anywhere; }
 .mb-voided td:not(:last-child) { text-decoration: line-through; color: var(--muted); }

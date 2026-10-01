@@ -229,7 +229,7 @@ export interface WebHarness
 	boardCalls: string[];
 	/**
 	 * Các lần gọi AdminActions giả: "refreshContribution:<id>", "refreshPoll:<id>", "syncTierRoles:<userId>:<level>",
-	 * "search:<query>:<limit>".
+	 * "search:<query>:<limit>", "sendDirectMessage:<userId>".
 	 */
 	adminCalls: string[];
 	/**
@@ -402,6 +402,16 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		retroPosts,
 		retroDoc,
 	};
+}
+
+/**
+ * Chọn kênh contribution nếu guild chưa có (DEC-051: chưa chọn thì không gửi được contribution); mặc định CHANNEL_CHAT. Ghi một
+ * dòng audit `config.update` như admin chọn kênh.
+ */
+export function ensureContributionChannel(harness: WebHarness, channelId = CHANNEL_CHAT): void
+{
+	const { guildConfig } = harness.services;
+	if (guildConfig.getSettings(GUILD).contributionChannelId === null) guildConfig.updateSettings(GUILD, { contributionChannelId: channelId }, ADMIN_USER);
 }
 
 function jsonResponse(status: number, body: unknown): Response
