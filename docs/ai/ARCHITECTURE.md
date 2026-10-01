@@ -329,6 +329,7 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
 | Cấu hình | `channels`, `teams`, `settings`, `roles`, `board`, `tiers` | `/config …` |
 | Hệ thống | `reset` `/reset`; POST `/reset/xp`, `/reset/contribution` | `/admin xp reset-all`, `/admin contribution reset-all` |
 | | `backup` `/backup`; POST `/backup` | `/admin backup` (không có đường tải file) |
+| Dữ liệu | `retro` `/retro`, `/retro/new`, `/retro/view?id=`, `/retro/settings` (Phase 19) | `/retro …` |
 | | `audit` `/audit` | `/admin audit` |
 
 Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), thêm vào `PAGE_MODULES`; cần mục menu thì thêm `NavKey` và `NAV_ITEMS`.
@@ -370,17 +371,52 @@ Thêm trang: tạo module export `PageModule` (`routes`, `css` tuỳ chọn), th
 - Riêng tư: mục trong kênh admin không xem được bị giấu tiêu đề, câu hỏi, tên kênh và link. Chi tiết vote thì 400 "không tìm thấy" (như `/poll results`); contribution vẫn gỡ được (như `/admin contribution remove`).
 - Sao lưu: web chỉ tạo bản sao lưu và liệt kê tên file, không có route đọc file. `BackupService.list` không tạo thư mục khi chỉ đọc.
 
+### 3.8 Retro sprint theo team (Phase 19, DEC-049)
+
+- **Module** `src/modules/retro/` (`services.retro`, không import discord.js):
+  - phiên gắn kênh hoặc thread và tuỳ chọn role team; mỗi kênh một phiên mở (unique index một phần);
+  - phiếu theo người, 5 cột: Learned, Thiếu sót, Sáng tạo, Tuyên dương, Đặt tên sprint; điền lại được tới khi đóng;
+  - ứng viên tên sprint: bỏ trùng theo NFC, không phân biệt hoa thường; bỏ tên chỉ toàn số; nhớ người đề xuất;
+  - XP ghi qua `xpLedger`, nguồn `admin`, người thao tác là bot:
+    - điền: `fill_xp`, mỗi phiên một lần;
+    - người đề xuất tên thắng: `proposer_bonus_xp`, chốt trong transaction nên gọi lại cũng không cộng lần hai;
+  - quyền: `permissions.ts` `canCreateRetro` (admin bot hoặc role quản lý retro) và `canManageRetro` (thêm người tạo phiên).
+- **Thao tác dùng chung lệnh và web** `src/discord/retroOps.ts`:
+  - `createRetroSession`;
+  - `closeRetroSession`, `reopenRetroSession`, `extendRetroSession`;
+  - `startRetroVote`, `pickRetroName`, `remindRetro`;
+  - `writeRetroDoc`, `retroDocSection`;
+  - `RetroActions` (ghi Confluence, sửa/đăng tin) inject được để test.
+- **Discord:**
+  - lệnh `/retro create|close|reopen|extend|vote|status|remind|pick|write`; không đặt `setDefaultMemberPermissions`, để role quản lý retro dùng được; quyền kiểm trong code;
+  - nút `retro:fill:<id>` mở form `retro:form:<id>` gồm 5 ô;
+  - `retroScheduler` chạy mỗi 30 giây: tự đóng phiên quá hạn, chốt vote tên đã đóng;
+  - `afterPollClosed` móc vào lúc vote đóng (lệnh, lịch quét, web);
+  - `/retro status`: chỉ admin bot thấy tên người đã điền.
+- **Confluence** `src/integrations/confluence.ts`:
+  - REST Data Center: GET `/rest/api/content/{id}?expand=body.storage,version`, PUT với version+1; header Bearer, `redirect: "error"`, timeout 15 giây; gặp 409 thì đọc lại và thử lại;
+  - chỉ gọi host `CONFLUENCE_BASE_URL` (bắt buộc https);
+  - bot quản lý một khu vực cuối trang, giữa macro anchor `ezbot-retro-<guild>-<phiên>-start` và `…-end`: tiêu đề, bảng 5 cột ẩn danh, tên sprint đã chốt; ghi lại thì thay đúng khu vực đó;
+  - lỗi lưu vào `confluence_error`, hiện trên web, có nút ghi lại;
+  - không đặt `CONFLUENCE_*` thì bỏ bước ghi;
+  - token được `registerSecret`, selfcheck che.
+- **Web:**
+  - `/retro` (danh sách), `/retro/new` (tạo phiên), `/retro/view?id=` (chi tiết, thao tác, xuất chữ để dán tay);
+  - `/retro/settings` (XP, thời hạn vote, role quản lý; bảng role không có "Chọn tất cả");
+  - phiên ở kênh admin không xem được: vẫn quản lý được, nhưng giấu tiêu đề, kênh, nội dung.
+
 ## 4. Dữ liệu
 
 | Nhóm | Bảng |
 | --- | --- |
 | Cấu hình | `guild_settings` (có `poll_xp_daily_cap`, `xp_channel_mode`, `level_up_channel_id`), `channel_settings` (cấu hình riêng, thắng chế độ kênh), `team_roles`, `tier_roles` (có `created_by_bot`), `tier_set_config`, `tier_name_overrides`, `live_boards` |
+| Retro | `retro_sessions`, `retro_entries`, `retro_config`, `retro_manager_roles` (Phase 19) |
 | Activity XP | `xp_events` (ledger), `xp_event_teams` (snapshot team), `member_xp` (tổng + last_message_xp_at), `xp_team_totals` (cache điểm team) |
 | Contribution | `contributions` (có `source_message_id`), `contribution_teams`, `contribution_events`, `contribution_event_teams`, `member_contribution`, `contribution_team_totals`, `contribution_votes` |
 | Vote | `polls`, `poll_options`, `poll_votes`, `poll_participants` (XP một lần) |
 | Quản trị | `audit_log` |
 
-Migration (8 migration sau Phase 18; version lưu ở `PRAGMA user_version`):
+Migration (9 migration sau Phase 19; version lưu ở `PRAGMA user_version`):
 - **1**: toàn bộ schema ban đầu.
 - **2**:
   - bảng cache `*_team_totals` (backfill từ các event còn hiệu lực), giúp bảng xếp hạng team không phải quét toàn bộ event;
@@ -404,6 +440,13 @@ Migration (8 migration sau Phase 18; version lưu ở `PRAGMA user_version`):
 - **8** (Phase 18, DEC-047): bảng `member_tier_prefs (guild_id, user_id, set_key, updated_at)` (bộ danh hiệu hiển thị của từng người) và cột `tier_set_config.allow_personal INTEGER NOT NULL DEFAULT 1 CHECK (0,1)` (công tắc cho phép tự chọn; guild chưa có dòng thì coi là bật). Khoá bộ lạ đọc như "theo server".
   - `TierSetService.displayFor(guildId, userId)`: bộ hiển thị (đã áp tên tuỳ chỉnh của server cho bộ đó) dùng cho thẻ `/rank` (GamificationService.profile) và lời chúc lên level/lên bậc (messageCreate). Role danh hiệu, `/leaderboard`, Bảng vàng vẫn dùng `tierSets.current` (bộ của server).
   - Backup/restore: một file SQLite; backup cũ tự migrate lên 8 (không có lựa chọn cá nhân, công tắc bật). Code cũ (≤ 7) gặp DB version 8 thì từ chối khởi động.
+- **9** (Phase 19, DEC-049): retro sprint.
+  - Bảng `retro_sessions`: unique index một phần `(guild_id, channel_id) WHERE status='open'`, unique `poll_id`, cột `tie_names` (JSON).
+  - Bảng `retro_entries`: `id` tự tăng, `UNIQUE(session_id, user_id)`, 5 cột chữ, `team_role_ids` (snapshot), `fill_xp_event_id`.
+  - Bảng `retro_config` (mặc định 20 / 100 / 1440 phút) và `retro_manager_roles`.
+  - Xoá nội dung một phiên thì đặt các cột chữ về NULL (DEC-049, ngoại lệ có chủ ý của DEC-027).
+  - Backup vẫn giữ chữ cũ cho tới khi bị xoay vòng; SQLite không bật `secure_delete`.
+  - Code cũ (≤ 8) gặp DB version 9 thì từ chối khởi động.
 
 Quy tắc:
 - bảng gốc có `guild_id`; bảng con (options, votes, teams, ...) được lọc qua bảng cha;

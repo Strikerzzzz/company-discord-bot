@@ -626,6 +626,32 @@ Bot và lệnh Discord vẫn chạy bình thường khi web tắt.
 
 Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì reset riêng theo mục 2 (tab Bot → Reset Token).
 
+### 7.6. Retro sprint và ghi vào Confluence (Phase 19, DEC-049)
+
+**Dùng retro (không cần Confluence):**
+
+1. Người tạo phiên là admin bot hoặc có role quản lý retro (web, Retro → Cài đặt). Có hai cách tạo:
+   - vào **kênh hoặc thread của team**, gõ `/retro create ten:<tên sprint> link:<link trang Confluence> team:<role team> han-gio:<số giờ>`;
+   - hoặc trên web, trang **Retro → Tạo phiên**, chọn kênh/thread.
+2. Thành viên bấm **📝 Điền retro**, điền 5 ô (ẩn danh), bấm lại để sửa tới khi đóng.
+3. Người quản lý dùng `/retro status|remind|extend|close|reopen` ngay trong thread, hoặc trang **Retro** trên web.
+4. Sau buổi họp:
+   - gõ `/retro vote` để tạo vote tên sprint từ cột "Đặt tên sprint"; nhiều hơn 10 tên thì chọn danh sách rút gọn trên web;
+   - hoà thì `/retro pick`;
+   - vote xong bot công bố tên thắng và cộng XP cho người đề xuất.
+
+**Bật ghi Confluence:**
+
+1. Server phải truy cập được Confluence. Kiểm tra trên server: `curl -s -o /dev/null -w "%{http_code}\n" https://docs.ezcloud.vn/rest/api/space?limit=1`; ra `401` hay `200` là được, `000` là chưa có đường mạng (cần IT).
+   - Ngày 2026-10-01, server **chưa vào được**: thiếu route dải 10.19.193.0/24 trên VPN `tun0`, đã nhờ IT.
+2. Tạo Personal Access Token trên Confluence, nên dùng **tài khoản dành riêng cho bot**, chỉ có quyền sửa các trang retro. Không gửi token qua chat.
+3. Trên server: `sudo bash ~/deploy/enable-confluence.sh`. Script:
+   - hỏi địa chỉ Confluence (ví dụ `https://docs.ezcloud.vn`) và token; màn hình không hiện token khi dán;
+   - thử token, rồi ghi `CONFLUENCE_BASE_URL`, `CONFLUENCE_TOKEN` vào `.env`.
+4. `sudo bash ~/deploy/start.sh`. Log phải có "Ghi retro vào Confluence: bật (...)".
+5. Bot ghi vào **cuối trang** đã gắn một khu vực "🤖 Retro từ Discord: <tên phiên>", gồm bảng 5 cột ẩn danh và tên sprint đã chốt. Đừng sửa tay trong khu vực này; bot ghi lại sẽ thay nó.
+6. Ghi lỗi thì trang chi tiết phiên trên web hiện lỗi, có nút **Ghi lại vào Confluence**, và phần **xuất chữ để dán tay**.
+
 ## 8. Xử lý sự cố
 
 | Hiện tượng | Nguyên nhân thường gặp |

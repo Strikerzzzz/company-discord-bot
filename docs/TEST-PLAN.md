@@ -388,3 +388,19 @@
 
 - [ ] `/rank` → nút ❓ ở góc trên bên phải; ảnh thẻ hiện đầy đủ; người khác bấm ❓ → nhận lời giải thích riêng (không ai khác thấy), không ping ai.
 - [ ] Lời giải thích đúng với cấu hình hiện tại (XP mỗi tin, cooldown, chế độ kênh, XP vote, điểm mỗi lượt ghi nhận) và bộ hiển thị của người bấm; đổi XP mỗi tin trên web rồi bấm ❓ lại → số mới.
+
+## 15. Retro sprint (Phase 19, DEC-049)
+
+> Làm sau khi cài bản Phase 19 (migration 9: sao lưu trước). Dùng một thread thử của một team; A là admin, C là thành viên có role team, D là thành viên không có role team.
+
+- [ ] A gõ `/retro create ten:"Sprint thử" team:@Backend han-gio:1` trong thread → tin có nút 📝 Điền retro, "Đã điền 0 người".
+- [ ] C bấm nút → form 5 ô; điền, gửi → "Đã lưu (ẩn danh)", tin gốc thành "Đã điền 1 người"; C được +20 XP (`/rank`). C bấm lại → form điền sẵn câu cũ; sửa → không cộng XP lần hai.
+- [ ] Tên sprint chỉ toàn số (ví dụ `24`) → bị từ chối. D bấm nút → bị từ chối (không thuộc team).
+- [ ] `/retro status`: A thấy tên người đã điền; một người quản lý retro không phải admin chỉ thấy số người.
+- [ ] `/retro close` → nút bị tắt, bảng tổng hợp ẩn danh (không có tên) hiện trong thread.
+- [ ] Trang web **Retro**: phiên vừa đóng có danh sách người đã điền (tên), nội dung 5 cột không có tên; xoá một ý (tick xác nhận) → biến mất; phần "xuất chữ" có bảng dán được.
+- [ ] (Khi server vào được Confluence và đã chạy `enable-confluence.sh`) phiên có link trang: đóng phiên → cuối trang có khu vực "🤖 Retro từ Discord" với bảng 5 cột ẩn danh; bấm "Ghi lại" → khu vực được thay, không nhân đôi; phần người khác viết không bị đổi.
+- [ ] `/retro vote` → vote tên sprint trong thread; vài người bấm chọn; đóng vote (`/poll close` hoặc hết hạn) → bot công bố tên thắng (không nêu người đề xuất), người đề xuất được +100 XP, Confluence có dòng "🏆 Tên sprint được chọn".
+- [ ] Hoà: `/retro pick` chọn tên → như trên. Chỉ có một tên đề xuất: `/retro vote` báo dùng `pick`.
+- [ ] Web **Retro → Cài đặt**: đổi XP điền retro, XP người đề xuất, thời hạn vote, thêm role quản lý retro → có hiệu lực ở phiên tiếp theo; `/admin audit` ghi đúng người.
+- [ ] Web: xoá nội dung phiên (tick + gõ XOA) → nội dung mất, danh sách người đã điền và XP vẫn giữ.
