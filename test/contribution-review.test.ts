@@ -92,14 +92,10 @@ function floorEvents(context: TestContext, contributionId: number): FloorRow[]
 		WHERE guild_id = ? AND reference_id = ? AND source = 'vote' AND actor_id IS NULL ORDER BY id`).all(GUILD, String(contributionId));
 }
 
-function activeFloorAmounts(context: TestContext, contributionId: number): number[]
+/** Tổng các event sàn chưa huỷ của contribution: phải bằng max(0, −tổng các lượt). */
+function activeFloorSum(context: TestContext, contributionId: number): number
 {
-	return floorEvents(context, contributionId).filter(row => row.voided_at === null).map(row => row.amount);
-}
-
-function floorEventId(context: TestContext, contributionId: number): number | null | undefined
-{
-	return context.db.prepare<[number], { floor_event_id: number | null }>("SELECT floor_event_id FROM contributions WHERE id = ?").get(contributionId)?.floor_event_id;
+	return floorEvents(context, contributionId).filter(row => row.voided_at === null).reduce((sum, row) => sum + row.amount, 0);
 }
 
 /** Đọc thẳng bảng tổng team, vì teamTotals chỉ trả team có tổng > 0 nên không thấy được tổng âm. */
@@ -161,7 +157,10 @@ function applyToModel(model: VoteModel, voterId: string, action: ContributionVot
 	return { current: target, change: current === null ? "added" : target === null ? "withdrawn" : "switched" };
 }
 
-/** Điểm, số lượt và event sàn của contribution khớp mô hình: điểm = max(0, Σ👍 − Σ👎), đúng một event sàn khi tổng âm. */
+/**
+ * Điểm, số lượt và event sàn của contribution khớp mô hình: điểm = max(0, Σ👍 − Σ👎), tổng event sàn còn hiệu lực = max(0, −Σ), và
+ * thao tác lượt không bao giờ huỷ event sàn (sàn ghi theo chênh lệch).
+ */
 function assertMatchesModel(context: ContributionTestContext, contributionId: number, model: VoteModel, label: string): void
 {
 	const contribution = context.service.get(GUILD, contributionId);
@@ -169,7 +168,8 @@ function assertMatchesModel(context: ContributionTestContext, contributionId: nu
 	assert.equal(contribution?.score, Math.max(0, raw), `${label}: điểm`);
 	assert.equal(contribution?.votes, modelCount(model, "up"), `${label}: số 👍`);
 	assert.equal(contribution?.downvotes, modelCount(model, "down"), `${label}: số 👎`);
-	assert.deepEqual(activeFloorAmounts(context, contributionId), raw < 0 ? [-raw] : [], `${label}: event sàn`);
+	assert.equal(activeFloorSum(context, contributionId), Math.max(0, -raw), `${label}: tổng event sàn`);
+	assert.ok(floorEvents(context, contributionId).every(row => row.voided_at === null), `${label}: event sàn không bị huỷ`);
 }
 
 function mulberry32(seed: number): () => number
@@ -521,7 +521,7 @@ describe("Contribution DEC-051: 👍 Ghi nhận / 👎 Không ghi nhận", () =>
 		const down = voteDown(service, id, USER_C);
 		assert.deepEqual([down.contribution.votes, down.contribution.downvotes, down.contribution.score], [1, 1, 1]);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
-		assert.deepEqual(activeFloorAmounts(context, id), []);
+		assert.equal(floorEvents(context, id).length, 0);
 	});
 });
 
@@ -568,21 +568,27 @@ describe("Contribution DEC-051: điểm = max(0, Σ👍 − Σ👎)", () =>
 		assert.deepEqual(compensationAmounts(context, USER_A), [], "không có admin trừ điểm thì không bao giờ cần bù");
 	});
 
-	test("thao tác ngẫu nhiên (có seed): điểm, số lượt, event sàn, tổng tác giả, tổng team và XP người bấm luôn khớp mô hình", () =>
+	test("thao tác ngẫu nhiên (có seed) qua hai tuần: điểm, số lượt, event sàn, tổng tác giả, tổng team, điểm tuần và XP người bấm luôn khớp mô hình", () =>
 	{
 		const voters = [USER_B, USER_C, USER_D, USER_E, USER_F];
 		const actions: ContributionVoteAction[] = ["up", "down", "withdraw"];
 		for (const seed of [1, 42, 2026])
 		{
 			const context = setupContributions();
-			const { service, deps } = context;
+			const { service, deps, clock } = context;
 			deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
+			const board = new LeaderboardService(deps);
+			const weekValue = (): number => board.userStanding(GUILD, "contribution", "week", USER_A).value;
+			clock.current = LAST_WEEK;
 			const { id } = submitApproved(service, contributionInput({ authorRoleIds: [ROLE_BACKEND] }));
 			const random = mulberry32(seed);
 			const model: VoteModel = new Map();
+			const votedThisWeek = new Set<string>();
 			let points = 1;
 			for (let step = 0; step < 200; step++)
 			{
+				const thisWeek = step >= 100;
+				clock.current = (thisWeek ? THIS_WEEK : LAST_WEEK) + step * 1000;
 				if (random() < 0.15)
 				{
 					points = Math.floor(random() * 4);
@@ -591,6 +597,9 @@ describe("Contribution DEC-051: điểm = max(0, Σ👍 − Σ👎)", () =>
 				const voterId = voters[Math.floor(random() * voters.length)];
 				const action = actions[Math.floor(random() * actions.length)];
 				const label = `seed ${seed}, bước ${step}`;
+				const scoreBefore = Math.max(0, modelRaw(model));
+				const weekBefore = weekValue();
+				const ownVoteThisWeek = votedThisWeek.has(voterId);
 				const expected = applyToModel(model, voterId, action, points);
 				const result = castVote(service, id, voterId, action, { reason: DOWN_REASON });
 				assert.deepEqual([result.current, result.change, result.locked], [expected.current, expected.change, false], label);
@@ -600,31 +609,45 @@ describe("Contribution DEC-051: điểm = max(0, Σ👍 − Σ👎)", () =>
 				assert.equal(rawTeamTotal(context, ROLE_BACKEND), score, `${label}: tổng team không âm`);
 				assert.equal(deps.xpLedger.total(GUILD, voterId), model.has(voterId) ? 5 : 0, `${label}: XP người bấm`);
 				assert.deepEqual(service.voterState(GUILD, id, voterId), { current: model.get(voterId)?.kind ?? null, locked: false }, label);
+
+				if (!thisWeek)
+				{
+					assert.equal(weekValue(), score, `${label}: trong một kỳ, điểm kỳ bằng điểm contribution`);
+				}
+				else if (expected.change === "added" || (expected.change !== "unchanged" && ownVoteThisWeek))
+				{
+					assert.equal(weekValue() - weekBefore, score - scoreBefore, `${label}: điểm tuần đổi đúng bằng điểm contribution`);
+					if (action === "down") assert.ok(weekValue() <= weekBefore, `${label}: bị 👎 không làm điểm tuần tăng`);
+				}
+				assert.ok(board.query({ guildId: GUILD, kind: "contribution", scope: "individual", period: "week", page: 1 }).entries.every(entry => entry.value > 0), label);
+				if (expected.change === "withdrawn") votedThisWeek.delete(voterId);
+				else if (expected.change !== "unchanged" && thisWeek) votedThisWeek.add(voterId);
 			}
 			assert.ok(floorEvents(context, id).length > 0, `seed ${seed}: kịch bản có đi qua trạng thái âm`);
 		}
 	});
 
-	test("event sàn: có đúng một event còn hiệu lực khi tổng âm, bằng phần âm, theo snapshot team; huỷ (không xoá) khi không cần", () =>
+	test("event sàn ghi theo chênh lệch: tổng còn hiệu lực bằng phần âm, theo snapshot team; không huỷ event cũ, không ghi khi không đổi", () =>
 	{
 		const context = setupContributions();
 		const { service, deps } = context;
 		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
 		const { id } = submitApproved(service, contributionInput({ authorRoleIds: [ROLE_BACKEND] }));
-		const assertFloor = (amounts: number[], label: string): void =>
+		const assertFloor = (sum: number, amounts: number[], label: string): void =>
 		{
-			assert.deepEqual(activeFloorAmounts(context, id), amounts, label);
+			assert.equal(activeFloorSum(context, id), sum, label);
+			assert.deepEqual(floorEvents(context, id).map(row => row.amount), amounts, `${label}: lịch sử event sàn`);
+			assert.ok(floorEvents(context, id).every(row => row.voided_at === null), `${label}: không huỷ event sàn cũ`);
 			assert.equal(deps.contributionLedger.total(GUILD, USER_A), service.get(GUILD, id)?.score, `${label}: tổng tác giả = điểm contribution`);
 			assert.ok(rawTeamTotal(context, ROLE_BACKEND) >= 0, `${label}: tổng team không âm`);
 		};
 
 		voteUp(service, id, USER_B);
 		voteDown(service, id, USER_C);
-		assertFloor([], "1 👍 1 👎: tổng 0, chưa cần sàn");
-		assert.equal(floorEventId(context, id), null);
+		assertFloor(0, [], "1 👍 1 👎: tổng 0, chưa cần sàn");
 
 		voteDown(service, id, USER_D);
-		assertFloor([1], "tổng −1");
+		assertFloor(1, [1], "tổng −1");
 		const [first] = floorEvents(context, id);
 		const firstEvent = deps.contributionLedger.getEvent(first.id);
 		assert.deepEqual(
@@ -632,24 +655,56 @@ describe("Contribution DEC-051: điểm = max(0, Σ👍 − Σ👎)", () =>
 			["vote", null, String(id), USER_A, FLOOR_REASON],
 		);
 		assert.deepEqual(eventTeams(context, "contribution_event_teams", first.id), [ROLE_BACKEND]);
-		assert.equal(floorEventId(context, id), first.id);
 
 		setPoints(context, 2);
 		voteDown(service, id, USER_E);
-		assertFloor([3], "tổng −3: sàn cũ bị huỷ, sàn mới bằng 3");
+		assertFloor(3, [1, 2], "tổng −3: chỉ ghi thêm phần chênh lệch 2");
 		withdrawVote(service, id, USER_B);
-		assertFloor([4], "rút 👍: tổng −4");
+		assertFloor(4, [1, 2, 1], "rút 👍: tổng −4");
 		voteDown(service, id, USER_F);
 		voteDown(service, id, USER_F);
-		assertFloor([6], "bấm lại đúng 👎 không đổi gì");
+		assertFloor(6, [1, 2, 1, 2], "bấm lại đúng 👎 không ghi gì");
 
 		for (const voterId of [USER_C, USER_D, USER_E, USER_F]) withdrawVote(service, id, voterId);
-		assertFloor([], "rút hết 👎: không còn sàn");
-		assert.equal(floorEventId(context, id), null);
-		const history = floorEvents(context, id);
-		assert.deepEqual(history.map(row => row.amount), [1, 3, 4, 6, 5, 4, 2], "mọi event sàn cũ còn nguyên, đã huỷ");
-		assert.ok(history.every(row => row.voided_at !== null));
+		assertFloor(0, [1, 2, 1, 2, -1, -1, -2, -2], "rút hết 👎: tổng sàn về 0 bằng các event chênh lệch âm");
+		voteUp(service, id, USER_G);
+		assertFloor(0, [1, 2, 1, 2, -1, -1, -2, -2], "tổng dương: không cần sàn, không ghi gì");
+		assert.equal(service.get(GUILD, id)?.score, 2);
 		assert.deepEqual(compensationAmounts(context, USER_A), []);
+	});
+
+	test("bị 👎 không làm điểm kỳ hiện tại tăng: 👎 tuần trước rồi 👎 hoặc 👍 tuần này thì tuần này 0", () =>
+	{
+		for (const second of ["down", "up"] as const)
+		{
+			const context = setupContributions();
+			const { service, deps, clock } = context;
+			const board = new LeaderboardService(deps);
+			clock.current = LAST_WEEK;
+			const { id } = submitApproved(service, contributionInput());
+			voteDown(service, id, USER_B);
+			clock.current = THIS_WEEK;
+			castVote(service, id, USER_C, second, { reason: DOWN_REASON });
+
+			assert.equal(service.get(GUILD, id)?.score, 0, second);
+			const week = board.userStanding(GUILD, "contribution", "week", USER_A);
+			assert.deepEqual([week.rank, week.value], [null, 0], `tuần này: điểm contribution vẫn 0 nên điểm kỳ 0 (${second})`);
+			assert.deepEqual(board.query({ guildId: GUILD, kind: "contribution", scope: "individual", period: "week", page: 1 }).entries, [], second);
+			const month = board.userStanding(GUILD, "contribution", "month", USER_A);
+			assert.deepEqual([month.rank, month.value], [null, 0], second);
+		}
+
+		const context = setupContributions();
+		const { service, deps, clock } = context;
+		const board = new LeaderboardService(deps);
+		clock.current = LAST_WEEK;
+		const { id } = submitApproved(service, contributionInput());
+		voteDown(service, id, USER_B);
+		clock.current = THIS_WEEK;
+		withdrawVote(service, id, USER_B);
+		assert.equal(service.get(GUILD, id)?.score, 0);
+		assert.equal(board.userStanding(GUILD, "contribution", "week", USER_A).rank, null);
+		assert.deepEqual(board.query({ guildId: GUILD, kind: "contribution", scope: "individual", period: "week", page: 1 }).entries, [], "rút lượt của kỳ trước: bảng không hiện số âm");
 	});
 
 	test("👎 không trừ sang contribution khác của cùng tác giả", () =>
@@ -816,7 +871,7 @@ describe("Contribution DEC-051: khoá lượt khi phải bù cho tác giả đan
 
 		assert.equal(withdrawVote(service, id, USER_B).locked, false);
 		assert.equal(voteDown(service, id, USER_E).locked, false);
-		assert.deepEqual(activeFloorAmounts(context, id), [3]);
+		assert.equal(activeFloorSum(context, id), 3);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(compensationAmounts(context, USER_A), []);
 		assert.equal(voteUp(service, id, USER_B).locked, false, "rút không bị khoá thì bấm lại được");
@@ -833,13 +888,16 @@ describe("Contribution DEC-051: reset và gỡ", () =>
 		voteUp(service, id, USER_B);
 		voteDown(service, id, USER_C);
 		voteDown(service, id, USER_D);
-		assert.deepEqual(activeFloorAmounts(context, id), [1]);
+		voteDown(service, id, USER_E);
+		assert.equal(activeFloorSum(context, id), 2);
+		assert.equal(floorEvents(context, id).length, 2);
 
-		assert.deepEqual(service.resetUser(GUILD, USER_A, ADMIN), { voidedEvents: 4 });
+		assert.deepEqual(service.resetUser(GUILD, USER_A, ADMIN), { voidedEvents: 6 }, "4 lượt + 2 event sàn");
 		const afterReset = service.get(GUILD, id);
 		assert.deepEqual([afterReset?.votes, afterReset?.downvotes, afterReset?.score], [0, 0, 0]);
-		assert.deepEqual(activeFloorAmounts(context, id), []);
-		for (const voterId of [USER_B, USER_C, USER_D])
+		assert.equal(activeFloorSum(context, id), 0, "sau reset tổng sàn còn hiệu lực bằng 0");
+		assert.ok(floorEvents(context, id).every(row => row.voided_at !== null));
+		for (const voterId of [USER_B, USER_C, USER_D, USER_E])
 		{
 			assert.deepEqual(service.voterState(GUILD, id, voterId), { current: null, locked: true });
 			assert.throws(() => voteUp(service, id, voterId), userError(VOTE_LOCKED));
@@ -847,12 +905,13 @@ describe("Contribution DEC-051: reset và gỡ", () =>
 		}
 		assert.ok(service.listVoters(GUILD, id).every(voter => !voter.active && voter.locked));
 
-		voteDown(service, id, USER_E);
-		assert.deepEqual(activeFloorAmounts(context, id), [1], "sàn chỉ tính lượt còn hiệu lực");
+		voteDown(service, id, USER_F);
+		assert.equal(activeFloorSum(context, id), 1, "sàn chỉ tính lượt còn hiệu lực");
 		assert.equal(service.get(GUILD, id)?.score, 0);
-		voteUp(service, id, USER_F);
+		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		voteUp(service, id, USER_G);
-		assert.deepEqual(activeFloorAmounts(context, id), []);
+		voteUp(service, id, REVIEWER);
+		assert.equal(activeFloorSum(context, id), 0);
 		assert.equal(service.get(GUILD, id)?.score, 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 	});
@@ -881,11 +940,12 @@ describe("Contribution DEC-051: reset và gỡ", () =>
 		const { id } = submitApproved(service, contributionInput());
 		voteUp(service, id, USER_B);
 		for (const voterId of [USER_C, USER_D, USER_E]) voteDown(service, id, voterId);
-		assert.deepEqual(activeFloorAmounts(context, id), [2]);
+		assert.equal(activeFloorSum(context, id), 2);
 
 		const removed = service.remove(GUILD, id, ADMIN);
 		assert.deepEqual([removed.status, removed.votes, removed.downvotes, removed.score], ["removed", 0, 0, 0]);
-		assert.deepEqual(activeFloorAmounts(context, id), []);
+		assert.equal(activeFloorSum(context, id), 0, "sau khi gỡ tổng sàn còn hiệu lực bằng 0");
+		assert.ok(floorEvents(context, id).every(row => row.voided_at !== null));
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(compensationAmounts(context, USER_A), []);
 		assert.deepEqual(deps.audit.list(GUILD, 1)[0].details, { contributionId: id, title: removed.title });
@@ -928,6 +988,13 @@ describe("Contribution DEC-051: XP cho người bấm", () =>
 			.all(GUILD, userId);
 	}
 
+	/** Dòng contribution_interaction_xp của một người trên một contribution (undefined nếu chưa có). */
+	function xpRecord(context: TestContext, contributionId: number, userId: string): { xp_event_id: number | null; revoked_at: number | null } | undefined
+	{
+		return context.db.prepare<[number, string], { xp_event_id: number | null; revoked_at: number | null }>(
+			"SELECT xp_event_id, revoked_at FROM contribution_interaction_xp WHERE contribution_id = ? AND user_id = ?").get(contributionId, userId);
+	}
+
 	test("+contributionInteractionXp một lần mỗi contribution (👍 hay 👎 như nhau); nguồn admin, actor là bot, reference contribution:<id>, team theo role người bấm", () =>
 	{
 		const context = setupContributions();
@@ -952,12 +1019,13 @@ describe("Contribution DEC-051: XP cho người bấm", () =>
 		assert.equal(deps.xpLedger.total(GUILD, USER_A), 0, "tác giả không nhận XP người bấm");
 	});
 
-	test("đổi 👍↔👎 giữ XP; rút thì thu lại; bấm lại sau khi rút thì được lại", () =>
+	test("đổi 👍↔👎 giữ XP; rút thì thu lại, giữ dòng và đánh dấu đã thu; bấm lại thì được trả lại (không lời không lỗ)", () =>
 	{
 		const context = setupContributions();
-		const { service, deps } = context;
+		const { service, deps, clock } = context;
 		const { id } = submitApproved(service, contributionInput());
 		voteUp(service, id, USER_B);
+		const [firstEvent] = xpEvents(context, USER_B);
 
 		const switched = voteDown(service, id, USER_B);
 		assert.deepEqual([switched.xpAwarded, switched.xpRevoked], [0, 0]);
@@ -965,16 +1033,70 @@ describe("Contribution DEC-051: XP cho người bấm", () =>
 		assert.equal(xpEvents(context, USER_B).length, 1, "đổi lượt không ghi event XP mới");
 		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5);
 
+		clock.advanceSeconds(10);
 		const withdrawn = withdrawVote(service, id, USER_B);
 		assert.deepEqual([withdrawn.xpAwarded, withdrawn.xpRevoked], [0, 5]);
 		assert.equal(deps.xpLedger.total(GUILD, USER_B), 0);
 		assert.notEqual(xpEvents(context, USER_B)[0].voided_at, null, "event XP bị huỷ, không xoá");
-		assert.equal(countRows(context, "contribution_interaction_xp"), 0);
+		assert.deepEqual(xpRecord(context, id, USER_B), { xp_event_id: firstEvent.id, revoked_at: clock.now() }, "dòng giữ lại, trỏ event đã huỷ");
 
 		const again = voteDown(service, id, USER_B);
-		assert.deepEqual([again.xpAwarded, again.xpCapped], [5, false]);
+		assert.deepEqual([again.xpAwarded, again.xpCapped, again.xpRevoked], [5, false, 0]);
 		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5);
-		assert.equal(xpEvents(context, USER_B).length, 2);
+		const events = xpEvents(context, USER_B);
+		assert.equal(events.length, 2);
+		assert.deepEqual(xpRecord(context, id, USER_B), { xp_event_id: events[1].id, revoked_at: null });
+
+		for (let round = 0; round < 3; round++)
+		{
+			assert.equal(withdrawVote(service, id, USER_B).xpRevoked, 5);
+			assert.equal(voteUp(service, id, USER_B).xpAwarded, 5);
+		}
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5, "rút rồi bấm lại nhiều lần vẫn đúng 5 XP");
+		assert.equal(voteDown(service, id, USER_B).xpAwarded, 0);
+		assert.equal(countRows(context, "contribution_interaction_xp"), 1);
+	});
+
+	test("rút rồi bấm lại không được cộng bù: trả lại tối đa số đã thu trong hạn mức ngày; phần bị cắt mất hẳn; bị admin reset thì không lấy lại được", () =>
+	{
+		const context = setupContributions();
+		const { service, deps, clock } = context;
+		deps.guildConfig.updateSettings(GUILD, { contributionInteractionXp: 10, contributionInteractionXpDailyCap: 25 }, ADMIN);
+		clock.current = Date.UTC(2026, 0, 1, 1, 0);
+		const ids = Array.from({ length: 6 }, (_, index) => submitApproved(service, contributionInput({ title: `Đóng góp ${index}` })).id);
+		const xp = (result: ContributionVoteResult): [number, boolean] => [result.xpAwarded, result.xpCapped];
+
+		assert.deepEqual(xp(voteUp(service, ids[0], USER_B)), [10, false]);
+		assert.deepEqual(xp(voteUp(service, ids[1], USER_B)), [10, false]);
+		assert.deepEqual(xp(voteUp(service, ids[2], USER_B)), [5, true]);
+		assert.deepEqual(xp(voteUp(service, ids[3], USER_B)), [0, true]);
+		assert.equal(withdrawVote(service, ids[0], USER_B).xpRevoked, 10);
+		assert.deepEqual(xp(voteUp(service, ids[0], USER_B)), [10, false], "trong ngày: rút rồi bấm lại không lời không lỗ");
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 25);
+
+		clock.current = Date.UTC(2026, 0, 1, 17, 0);
+		assert.equal(withdrawVote(service, ids[3], USER_B).xpRevoked, 0);
+		assert.deepEqual(xp(voteUp(service, ids[3], USER_B)), [0, false], "lần trước bị cắt về 0: ngày mới cũng không được bù");
+		assert.deepEqual(xpRecord(context, ids[3], USER_B), { xp_event_id: null, revoked_at: null });
+		assert.equal(withdrawVote(service, ids[2], USER_B).xpRevoked, 5);
+		assert.deepEqual(xp(voteUp(service, ids[2], USER_B)), [5, false], "chỉ trả lại 5 đã thu, không bù 5 bị cắt");
+		assert.deepEqual(xp(voteUp(service, ids[4], USER_B)), [10, false]);
+		assert.deepEqual(xp(voteUp(service, ids[5], USER_B)), [10, false]);
+		assert.equal(withdrawVote(service, ids[1], USER_B).xpRevoked, 10);
+		assert.deepEqual(xp(voteUp(service, ids[1], USER_B)), [0, true], "bấm lại khi đã hết hạn mức ngày: bị cắt");
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 35);
+
+		clock.current = Date.UTC(2026, 0, 2, 17, 0);
+		assert.equal(withdrawVote(service, ids[1], USER_B).xpRevoked, 0);
+		assert.deepEqual(xp(voteUp(service, ids[1], USER_B)), [0, false], "phần bị cắt khi bấm lại cũng mất hẳn");
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 35);
+
+		deps.xpLedger.voidUser(GUILD, USER_B);
+		assert.equal(withdrawVote(service, ids[0], USER_B).xpRevoked, 0, "event đã bị admin reset: không có gì để thu");
+		assert.deepEqual(xp(voteUp(service, ids[0], USER_B)), [0, false], "admin reset XP thì rút rồi bấm lại không lấy lại được");
+		assert.equal(xpRecord(context, ids[0], USER_B)?.revoked_at, null);
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 0);
+		assert.equal(countRows(context, "contribution_interaction_xp"), 6, "mỗi người mỗi contribution một dòng, giữ vĩnh viễn");
 	});
 
 	test("hạn mức ngày theo giờ Việt Nam: cắt phần vượt (xpCapped), không cộng bù khi đổi lượt; rút trả lại hạn mức; sang ngày mới có lại", () =>
@@ -1019,9 +1141,11 @@ describe("Contribution DEC-051: XP cho người bấm", () =>
 		const none = voteUp(service, ids[0], USER_B);
 		assert.deepEqual([none.xpAwarded, none.xpCapped, none.xpRevoked], [0, false, 0]);
 		assert.equal(countRows(context, "xp_events"), 0);
-		assert.deepEqual([withdrawVote(service, ids[0], USER_B).xpRevoked, countRows(context, "contribution_interaction_xp")], [0, 0]);
+		assert.equal(withdrawVote(service, ids[0], USER_B).xpRevoked, 0);
+		assert.deepEqual(xpRecord(context, ids[0], USER_B), { xp_event_id: null, revoked_at: null });
 
 		deps.guildConfig.updateSettings(GUILD, { contributionInteractionXp: 5, contributionInteractionXpDailyCap: 0 }, ADMIN);
+		assert.deepEqual([voteUp(service, ids[0], USER_B).xpAwarded, countRows(context, "xp_events")], [0, 0], "lần trước được 0 thì bật XP sau cũng không được bù");
 		for (const id of ids)
 		{
 			const result = voteUp(service, id, USER_C);
@@ -1046,10 +1170,30 @@ describe("Contribution DEC-051: XP cho người bấm", () =>
 		assert.deepEqual(service.voterState(GUILD, id, USER_B), { current: "up", locked: false });
 		assert.equal(voteDown(service, id, USER_B).xpAwarded, 0, "đã có dòng XP (dù event bị reset) thì đổi lượt không cộng lại");
 		assert.equal(withdrawVote(service, id, USER_B).xpRevoked, 0, "event XP đã bị reset thì không thu lại gì");
+		assert.equal(voteUp(service, id, USER_B).xpAwarded, 0, "rút rồi bấm lại cũng không lấy lại XP đã bị reset");
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 0);
 
 		service.resetUser(GUILD, USER_A, ADMIN);
 		assert.deepEqual([deps.xpLedger.total(GUILD, USER_C), deps.xpLedger.total(GUILD, USER_D)], [5, 5], "reset điểm contribution không đụng XP người bấm");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
+	});
+
+	test("admin gỡ contribution: XP người bấm đã nhận được giữ nguyên", () =>
+	{
+		const context = setupContributions();
+		const { service, deps } = context;
+		const { id } = submitApproved(service, contributionInput());
+		voteUp(service, id, USER_B);
+		voteDown(service, id, USER_C);
+		voteUp(service, id, USER_D);
+		withdrawVote(service, id, USER_D);
+
+		service.remove(GUILD, id, ADMIN);
+		assert.deepEqual([USER_B, USER_C, USER_D].map(user => deps.xpLedger.total(GUILD, user)), [5, 5, 0], "người đã rút trước khi gỡ thì không còn XP");
+		assert.ok(xpEvents(context, USER_B).every(row => row.voided_at === null));
+		assert.ok(xpEvents(context, USER_C).every(row => row.voided_at === null));
+		assert.throws(() => withdrawVote(service, id, USER_B), userError(ALREADY_REMOVED));
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5);
 	});
 });
 

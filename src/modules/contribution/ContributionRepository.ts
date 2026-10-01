@@ -27,8 +27,6 @@ export interface ContributionRow
 	reviewed_by: string | null;
 	reviewed_at: number | null;
 	review_reason: string | null;
-	/** Event sàn gần nhất của contribution (có thể đã bị huỷ); null nếu chưa từng cần (migration 10). */
-	floor_event_id: number | null;
 	/** Chỉ đếm lượt 👍 có event chưa bị huỷ (lượt bị reset hoặc thuộc contribution đã gỡ không tính). */
 	votes: number;
 	/** Chỉ đếm lượt 👎 có event chưa bị huỷ. */
@@ -65,10 +63,14 @@ export interface DownvoteRecord
 	locked: boolean;
 }
 
-/** Dòng XP người bấm của một người trên một contribution; xpEventId null = lần đó không được XP. */
+/**
+ * Dòng XP người bấm của một người trên một contribution (giữ vĩnh viễn). xpEventId: event XP gần nhất, null = lần đó không được
+ * XP. revokedAt: lúc rút hẳn đã huỷ event đó (null nếu chưa rút, hoặc đã bấm lại).
+ */
 export interface InteractionXpRecord
 {
 	xpEventId: number | null;
+	revokedAt: number | null;
 }
 
 export interface VoterRow
@@ -122,7 +124,6 @@ export class ContributionRepository
 	private readonly updateMessage: Statement<[string, string, string, number]>;
 	private readonly updateRemoved: Statement<[number, string, string, number]>;
 	private readonly updateReview: Statement<[string, string, number, string | null, string, number]>;
-	private readonly updateFloor: Statement<[number | null, string, number]>;
 	private readonly selectVote: Statement<[number, string], { event_id: number; voided_at: number | null }>;
 	private readonly insertVoteRow: Statement<[number, string, number, number]>;
 	private readonly deleteVoteRow: Statement<[number, string]>;
@@ -131,9 +132,11 @@ export class ContributionRepository
 	private readonly deleteDownvoteRow: Statement<[number, string]>;
 	private readonly lockDownvoteRow: Statement<[number, number, string]>;
 	private readonly selectRawVoteSum: Statement<[string, string], { total: number }>;
-	private readonly selectInteractionXp: Statement<[number, string], { xp_event_id: number | null }>;
+	private readonly selectFloorSum: Statement<[string, string], { total: number }>;
+	private readonly selectInteractionXp: Statement<[number, string], { xp_event_id: number | null; revoked_at: number | null }>;
 	private readonly insertInteractionXpRow: Statement<[number, string, string, number | null, number]>;
-	private readonly deleteInteractionXpRow: Statement<[number, string]>;
+	private readonly updateInteractionXpRevoked: Statement<[number, number, string]>;
+	private readonly updateInteractionXpRestored: Statement<[number | null, number, string]>;
 	private readonly selectInteractionXpSince: Statement<[string, string, number], { total: number }>;
 	private readonly selectVoters: Statement<[number, number], VoterRow>;
 	private readonly selectPage: Statement<[ContributionFilterParams & { limit: number; offset: number }], ContributionRow>;
@@ -164,7 +167,6 @@ export class ContributionRepository
 		this.updateReview = db.prepare(
 			"UPDATE contributions SET review_state = ?, reviewed_by = ?, reviewed_at = ?, review_reason = ? WHERE guild_id = ? AND id = ?",
 		);
-		this.updateFloor = db.prepare("UPDATE contributions SET floor_event_id = ? WHERE guild_id = ? AND id = ?");
 		this.selectVote = db.prepare(`
 			SELECT v.event_id, e.voided_at
 			FROM contribution_votes v
@@ -185,11 +187,17 @@ export class ContributionRepository
 		this.selectRawVoteSum = db.prepare(`
 			SELECT COALESCE(SUM(amount), 0) AS total FROM contribution_events
 			WHERE guild_id = ? AND reference_id = ? AND voided_at IS NULL AND actor_id IS NOT NULL`);
-		this.selectInteractionXp = db.prepare("SELECT xp_event_id FROM contribution_interaction_xp WHERE contribution_id = ? AND user_id = ?");
+		this.selectFloorSum = db.prepare(`
+			SELECT COALESCE(SUM(amount), 0) AS total FROM contribution_events
+			WHERE guild_id = ? AND reference_id = ? AND voided_at IS NULL AND source = 'vote' AND actor_id IS NULL`);
+		this.selectInteractionXp = db.prepare("SELECT xp_event_id, revoked_at FROM contribution_interaction_xp WHERE contribution_id = ? AND user_id = ?");
 		this.insertInteractionXpRow = db.prepare(
 			"INSERT INTO contribution_interaction_xp (contribution_id, guild_id, user_id, xp_event_id, created_at) VALUES (?, ?, ?, ?, ?)",
 		);
-		this.deleteInteractionXpRow = db.prepare("DELETE FROM contribution_interaction_xp WHERE contribution_id = ? AND user_id = ?");
+		this.updateInteractionXpRevoked = db.prepare("UPDATE contribution_interaction_xp SET revoked_at = ? WHERE contribution_id = ? AND user_id = ?");
+		this.updateInteractionXpRestored = db.prepare(
+			"UPDATE contribution_interaction_xp SET xp_event_id = ?, revoked_at = NULL WHERE contribution_id = ? AND user_id = ?",
+		);
 		this.selectInteractionXpSince = db.prepare(`
 			SELECT COALESCE(SUM(e.amount), 0) AS total
 			FROM contribution_interaction_xp x
@@ -282,11 +290,6 @@ export class ContributionRepository
 		this.updateReview.run(state, reviewedBy, reviewedAt, reason, guildId, contributionId);
 	}
 
-	setFloorEvent(guildId: string, contributionId: number, eventId: number | null): void
-	{
-		this.updateFloor.run(eventId, guildId, contributionId);
-	}
-
 	/** Lượt 👍 của người này (kể cả lượt có điểm đã bị huỷ), hoặc null nếu chưa từng ghi nhận. */
 	findVote(contributionId: number, voterId: string): VoteRecord | null
 	{
@@ -332,10 +335,16 @@ export class ContributionRepository
 		return this.selectRawVoteSum.get(guildId, String(contributionId))?.total ?? 0;
 	}
 
+	/** Tổng các event sàn chưa huỷ của contribution (nguồn 'vote', không actor). */
+	floorSum(guildId: string, contributionId: number): number
+	{
+		return this.selectFloorSum.get(guildId, String(contributionId))?.total ?? 0;
+	}
+
 	findInteractionXp(contributionId: number, userId: string): InteractionXpRecord | null
 	{
 		const row = this.selectInteractionXp.get(contributionId, userId);
-		return row ? { xpEventId: row.xp_event_id } : null;
+		return row ? { xpEventId: row.xp_event_id, revokedAt: row.revoked_at } : null;
 	}
 
 	insertInteractionXp(contributionId: number, guildId: string, userId: string, xpEventId: number | null, createdAt: number): void
@@ -343,9 +352,16 @@ export class ContributionRepository
 		this.insertInteractionXpRow.run(contributionId, guildId, userId, xpEventId, createdAt);
 	}
 
-	deleteInteractionXp(contributionId: number, userId: string): void
+	/** Đánh dấu đã thu lại XP (rút hẳn); giữ xp_event_id trỏ event đã huỷ để biết số XP. */
+	markInteractionXpRevoked(contributionId: number, userId: string, revokedAt: number): void
 	{
-		this.deleteInteractionXpRow.run(contributionId, userId);
+		this.updateInteractionXpRevoked.run(revokedAt, contributionId, userId);
+	}
+
+	/** Bấm lại sau khi rút: trỏ sang event XP mới (null nếu được 0) và bỏ đánh dấu đã thu lại. */
+	restoreInteractionXp(contributionId: number, userId: string, xpEventId: number | null): void
+	{
+		this.updateInteractionXpRestored.run(xpEventId, contributionId, userId);
 	}
 
 	/** Tổng XP người bấm còn hiệu lực của một người, từ event phát sinh từ `since` (ms, tính cả mốc) trở đi. */

@@ -320,12 +320,15 @@ describe("migrations", () =>
 
 		assert.equal(runMigrations(db), 1);
 		assert.equal(currentSchemaVersion(db), 10);
-		const contributions = db.prepare<[], { review_state: string; reviewed_by: string | null; reviewed_at: number | null; review_reason: string | null; floor_event_id: number | null }>(
-			"SELECT review_state, reviewed_by, reviewed_at, review_reason, floor_event_id FROM contributions ORDER BY id").all();
+		const contributions = db.prepare<[], { review_state: string; reviewed_by: string | null; reviewed_at: number | null; review_reason: string | null }>(
+			"SELECT review_state, reviewed_by, reviewed_at, review_reason FROM contributions ORDER BY id").all();
 		assert.deepEqual(contributions, [
-			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null, floor_event_id: null },
-			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null, floor_event_id: null },
+			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null },
+			{ review_state: "approved", reviewed_by: null, reviewed_at: null, review_reason: null },
 		], "contribution cũ coi như đã duyệt");
+		const columnsOf = (table: string): string[] => db.prepare<[], { name: string }>(`PRAGMA table_info(${table})`).all().map(column => column.name);
+		assert.ok(!columnsOf("contributions").includes("floor_event_id"), "event sàn nằm trong contribution_events, không có cột riêng");
+		assert.deepEqual(columnsOf("contribution_interaction_xp"), ["contribution_id", "guild_id", "user_id", "xp_event_id", "revoked_at", "created_at"]);
 		assert.deepEqual(
 			db.prepare("SELECT contribution_channel_id, contribution_interaction_xp, contribution_interaction_xp_daily_cap, contribution_vote_points FROM guild_settings").get(),
 			{ contribution_channel_id: null, contribution_interaction_xp: 5, contribution_interaction_xp_daily_cap: 25, contribution_vote_points: 2 },
@@ -357,6 +360,7 @@ describe("migrations", () =>
 		insertInteraction.run(1, "u1", null);
 		assert.throws(() => insertInteraction.run(1, "u1", null), /UNIQUE|PRIMARY/);
 		assert.throws(() => insertInteraction.run(1, "u2", 999), /FOREIGN KEY/);
+		assert.equal(db.prepare<[], { revoked_at: number | null }>("SELECT revoked_at FROM contribution_interaction_xp").get()?.revoked_at, null, "mặc định chưa thu lại");
 
 		const clock = new FakeClock();
 		const config = new GuildConfigService(db, clock, new AuditService(db, clock));
