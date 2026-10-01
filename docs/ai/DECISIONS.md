@@ -532,6 +532,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - mỗi phiên gắn với một kênh hoặc thread của team, là nơi chạy `/retro create`, và tuỳ chọn một role team (DEC-024);
     - có role team thì chỉ người có role đó điền được; không có thì ai xem được kênh cũng điền được;
     - mọi thứ của phiên diễn ra trong thread hoặc kênh đó: nút điền, số người đã điền, bảng tổng hợp, vote tên sprint, công bố tên thắng.
+  - **Tạo phiên:** bằng `/retro create` trong kênh hoặc thread của team, hoặc trên web (chọn kênh/thread). Người tạo phải là admin bot hoặc có role quản lý retro, và phải gửi được tin ở kênh đó.
   - **Người quản lý phiên:**
     - admin bot, người tạo phiên, và role "quản lý retro" (tối đa 25 role, đặt trên web);
     - trong thread họ làm được: đóng, mở lại, gia hạn, nhắc người chưa điền, tạo vote tên, ghi lại vào Confluence.
@@ -540,7 +541,8 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - ô trống được, mỗi người một phiếu, sửa được tới khi đóng;
     - tên sprint chỉ toàn số bị từ chối, theo luật của mẫu: "cấm đặt tên Sprint là số".
   - **Ẩn danh:**
-    - database lưu người điền để admin theo dõi (web: ai đã điền, ai chưa);
+    - database lưu người điền để **admin bot** theo dõi (web và `/retro status`): chỉ danh sách ai đã điền, không ghép với nội dung; người quản lý retro không phải admin chỉ thấy số lượng;
+    - bot không đếm được ai chưa điền: không có intent GuildMembers; `/retro remind` ping role team;
     - bảng trên Discord và trên Confluence không có tên người viết.
   - **Lưu nội dung** (quyết định đầu tiên cho phép lưu chữ người dùng viết):
     - câu trả lời lưu theo phiên;
@@ -557,9 +559,13 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - nhiều hơn 10 tên thì người quản lý chọn danh sách rút gọn trên web.
   - **Confluence** (ngoại lệ luật protected số 3, chỉ trong phạm vi này):
     - bot gọi REST API của Confluence nội bộ tại `CONFLUENCE_BASE_URL`, xác thực bằng `CONFLUENCE_TOKEN` (Personal Access Token, header Bearer);
-    - khi đóng phiên (và khi người quản lý bấm "ghi lại"), bot thêm các dòng ẩn danh vào bảng retro 5 cột của trang đã gắn, tức bảng có cột "Đặt tên sprint";
-    - không tìm thấy bảng đó thì thêm một bảng mới cuối trang;
-    - vote xong thì ghi tên sprint được chọn;
+    - khi đóng phiên (và khi người quản lý bấm "ghi lại"), bot ghi vào **một khu vực riêng ở cuối trang** đã gắn, không chèn vào bảng người khác đang sửa. Khu vực gồm:
+      - macro anchor đầu và cuối;
+      - tiêu đề "🤖 Retro từ Discord: <tên phiên>";
+      - bảng 5 cột đúng như mẫu, mỗi phiếu một dòng, không có tên;
+      - dòng "🏆 Tên sprint được chọn" khi đã chốt;
+    - ghi lại thì thay đúng khu vực đó, không ghi trùng; mất dấu kết thúc thì báo lỗi, không đoán;
+    - web có nút xuất chữ của khu vực này để dán tay, dùng khi server chưa vào được Confluence;
     - chỉ nhận link trang cùng host với `CONFLUENCE_BASE_URL`, để không gửi token sang nơi khác;
     - không thêm dependency (dùng `fetch` có sẵn); lỗi được ghi lại và hiện trên web để thử lại;
     - không đặt `CONFLUENCE_*` thì mọi phần khác của retro vẫn chạy, chỉ bỏ bước ghi Confluence.
