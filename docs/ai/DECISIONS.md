@@ -618,12 +618,13 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - mỗi người chọn **một** trong hai cho mỗi contribution, đổi hoặc rút được; không bấm cho contribution mà mình là tác giả;
     - 👎 bắt buộc ghi lý do (tối đa 200 ký tự);
     - công khai chỉ hiện số lượng; danh sách người bấm và lý do chỉ admin (web) và người duyệt (`/contribution view`) xem được;
-    - **điểm của một contribution = max(0, tổng 👍 − tổng 👎)**, mỗi lượt có giá trị bằng "Điểm mỗi lượt ghi nhận" (`contributionVotePoints`) lúc bấm; 👎 không trừ sang điểm của contribution khác. Cách ghi: mỗi lượt một event (👍 dương, 👎 âm) và một event "sàn" (nguồn `vote`, không có actor, `reference_id` = contribution) đưa tổng của contribution về 0 khi âm;
+    - **điểm của một contribution = max(0, tổng 👍 − tổng 👎)**, mỗi lượt có giá trị bằng "Điểm mỗi lượt ghi nhận" (`contributionVotePoints`) lúc bấm; 👎 không trừ sang điểm của contribution khác. Cách ghi: mỗi lượt một event (👍 dương, 👎 âm), cộng các event "sàn" (nguồn `vote`, không có actor, `reference_id` = contribution) ghi **phần chênh lệch** mỗi khi phần âm đổi, để tổng event sàn còn hiệu lực luôn bằng max(0, −tổng các lượt). Ghi chênh lệch (không huỷ rồi ghi lại cả phần sàn) để bị 👎 không bao giờ làm điểm kỳ hiện tại tăng (review Phase 20);
     - giữ PROP-024 (tổng của tác giả không âm) và PROP-031: thao tác làm giảm điểm (rút 👍, thêm hoặc đổi sang 👎) mà phải bù vì tác giả đang bị trừ điểm thì lượt đó bị **khoá**, không đổi hay rút được nữa. Lượt có event đã bị admin reset cũng bị khoá như trước.
   - **XP cho người bấm** (người phụ trách: "kích thích mọi người tương tác"):
     - mỗi người được **+5 Activity XP** (`contributionInteractionXp`, 0–100) một lần cho mỗi contribution, bấm 👍 hay 👎 như nhau;
-    - đổi 👍↔👎 giữ XP; rút hẳn thì thu lại XP;
-    - tối đa **25 XP mỗi ngày** giờ Việt Nam từ contribution (`contributionInteractionXpDailyCap`, 0 = không giới hạn); phần bị cắt không được cộng bù;
+    - đổi 👍↔👎 giữ XP; rút hẳn thì thu lại XP; bấm lại sau khi rút thì được lại đúng phần đã thu (nếu còn hạn mức ngày);
+    - tối đa **25 XP mỗi ngày** giờ Việt Nam từ contribution (`contributionInteractionXpDailyCap`, 0 = không giới hạn); phần bị cắt không được cộng bù, XP đã bị admin reset cũng không lấy lại được bằng cách rút rồi bấm lại;
+    - admin gỡ contribution thì người bấm vẫn giữ XP đã nhận;
     - XP ghi vào `xpLedger` nguồn `admin`, actor là bot, `reference_id` = `contribution:<id>`, như XP retro (DEC-049); không đổi CHECK của `xp_events`;
     - điểm contribution vẫn tách khỏi XP (DEC-004): XP người bấm là Activity XP như tham gia vote, không phải điểm contribution.
   - **Điểm cho tác giả mỗi lượt:** vẫn là `contributionVotePoints` (mặc định 1). Người phụ trách nêu ví dụ 2 điểm: chỉnh trên web, không đổi mặc định trong code.
@@ -631,7 +632,7 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - **Contribution cũ** (trước migration 10): coi như đã duyệt, giữ ở kênh cũ, ghi nhận được như trước.
   - Contribution chờ duyệt hoặc bị từ chối không bấm 👍/👎 được; admin vẫn gỡ được.
   - Contribution từ chuột phải "Ghi nhận đóng góp": tiêu đề không nêu tên kênh nguồn nếu `@everyone` không xem được kênh đó (thẻ nằm ở kênh Contribution công khai).
-  - Schema: migration 10 (cột duyệt của `contributions`, bảng `contribution_downvotes`, bảng `contribution_interaction_xp`, ba cột cấu hình mới, thêm loại `contribution_reviewer` cho `guild_role_grants`). Triển khai ở Phase 20, branch `phase-20/contribution-review`.
+  - Schema: migration 10 (cột duyệt của `contributions`, bảng `contribution_downvotes`, bảng `contribution_interaction_xp` có `revoked_at`, ba cột cấu hình mới, thêm loại `contribution_reviewer` cho `guild_role_grants`). Triển khai ở Phase 20, branch `phase-20/contribution-review`.
 
 ---
 
