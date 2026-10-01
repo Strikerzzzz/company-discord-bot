@@ -91,18 +91,15 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 		discordOnly: "thành viên tự chọn bộ danh hiệu hiển thị cho chính mình; admin bật/tắt cho phép tự chọn và xem số người chọn từng bộ ở trang Danh hiệu, xem và xoá lựa chọn của từng người ở hồ sơ trang Thành viên",
 	},
 	"menu:Ghi nhận đóng góp": { options: [], discordOnly: "thành viên ghi nhận tin nhắn của người khác ngay trong Discord" },
-	"/retro create": {
-		options: ["han-gio", "link", "team", "ten"],
-		discordOnly: "đăng phiên retro (tin có nút điền) vào đúng kênh hoặc thread của team nơi gõ lệnh; phiên đã tạo được quản lý trên trang Retro",
-	},
-	"/retro close": { options: ["id"], web: ["/retro"] },
-	"/retro reopen": { options: ["han-gio", "id"], web: ["/retro"] },
-	"/retro extend": { options: ["han-gio", "id"], web: ["/retro"] },
-	"/retro vote": { options: ["id", "rut-gon"], web: ["/retro"] },
-	"/retro status": { options: ["id"], web: ["/retro"] },
-	"/retro remind": { options: ["id"], web: ["/retro"] },
-	"/retro pick": { options: ["id", "ten"], web: ["/retro"] },
-	"/retro write": { options: ["id"], web: ["/retro"] },
+	"/retro create": { options: ["han-gio", "link", "team", "ten"], web: ["/retro", "/retro/new"] },
+	"/retro close": { options: ["id"], web: ["/retro/view"] },
+	"/retro reopen": { options: ["han-gio", "id"], web: ["/retro/view"] },
+	"/retro extend": { options: ["han-gio", "id"], web: ["/retro/view"] },
+	"/retro vote": { options: ["id", "rut-gon"], web: ["/retro/view"] },
+	"/retro status": { options: ["id"], web: ["/retro", "/retro/view"] },
+	"/retro remind": { options: ["id"], web: ["/retro/view"] },
+	"/retro pick": { options: ["id", "ten"], web: ["/retro/view"] },
+	"/retro write": { options: ["id"], web: ["/retro/view"] },
 };
 
 interface OptionJson

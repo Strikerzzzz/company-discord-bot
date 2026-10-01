@@ -297,12 +297,21 @@ export function retroDocStatusLine(session: RetroSession, docEnabled: boolean): 
 	return session.confluenceWrittenAt === null ? "Confluence: chưa ghi." : `Confluence: ✅ đã ghi ${relativeTime(session.confluenceWrittenAt)}.`;
 }
 
-/**
- * Trả lời riêng của `/retro status`: trạng thái, kênh, số người đã điền. `participants` (chỉ cho người quản lý) là danh sách người
- * đã điền; null thì không hiện.
- */
-export function retroStatusText(session: RetroSession, participants: readonly string[] | null, docEnabled: boolean): string
+/** Người xem `/retro status` thấy thêm những gì. */
+export interface RetroStatusAudience
 {
+	/** Người quản lý phiên: thấy thêm tình trạng Confluence và nội dung đã xoá hay chưa. */
+	manager: boolean;
+	/** Danh sách người đã điền, chỉ cho admin bot (DEC-049: ghi tên cho admin theo dõi); null thì không hiện tên. */
+	participants: readonly string[] | null;
+}
+
+export const PARTICIPANTS_ADMIN_ONLY = "-# Danh sách người đã điền chỉ admin bot xem được (`/retro status` của admin, hoặc trang Retro của web quản trị).";
+
+/** Trả lời riêng của `/retro status`: trạng thái, kênh, số người đã điền; thêm phần theo `audience`. */
+export function retroStatusText(session: RetroSession, audience: RetroStatusAudience, docEnabled: boolean): string
+{
+	const { participants } = audience;
 	const lines = [
 		`**🔁 Retro #${session.id}: ${retroTitle(session)}**`,
 		`Trạng thái: ${retroStatusLabel(session)}`,
@@ -315,6 +324,13 @@ export function retroStatusText(session: RetroSession, participants: readonly st
 		lines.push(participants.length === 0
 			? "Người đã điền: chưa có ai."
 			: `Người đã điền: ${fitLines(participants.map(userMention), PARTICIPANT_LIST_MAX, hidden => `và ${hidden} người khác`, { separator: ", " })}`);
+	}
+	else if (audience.manager)
+	{
+		lines.push(PARTICIPANTS_ADMIN_ONLY);
+	}
+	if (audience.manager || participants !== null)
+	{
 		lines.push(retroDocStatusLine(session, docEnabled));
 		if (session.contentDeletedAt !== null) lines.push("🗑️ Nội dung phiên đã bị xoá.");
 	}

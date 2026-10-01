@@ -9,11 +9,12 @@ import {
 	SlashCommandIntegerOption,
 } from "discord.js";
 import Command from "../../classes/Command";
-import { assertCanSendMessages, canViewChannel, memberAccess, requireGuildId } from "../../discord/guards";
+import { assertCanSendMessages, canViewChannel, checkAdmin, memberAccess, requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
 import {
 	botActorId,
 	closeRetroSession,
+	createRetroSession,
 	extendRetroSession,
 	pickRetroName,
 	remindRetro,
@@ -43,7 +44,6 @@ import { logger } from "../../shared/logger";
 export const RETRO_CREATE_DENIED = "Chỉ admin bot hoặc người có role quản lý retro mới tạo được phiên retro.";
 export const RETRO_NOT_MANAGER = "Chỉ người quản lý phiên retro (admin bot, người tạo phiên, hoặc role quản lý retro) mới dùng được lệnh này.";
 export const NO_SESSION_HERE = "Kênh này chưa có phiên retro nào. Dùng `/retro create` để tạo, hoặc thêm option `id` để chọn phiên.";
-const DOC_WRITER_OFF_NOTE = "ℹ️ Đã lưu link tài liệu. Bot chưa bật ghi Confluence (CONFLUENCE_BASE_URL, CONFLUENCE_TOKEN) nên sẽ không ghi bảng vào trang.";
 /** Độ dài tối đa của option danh sách rút gọn: 10 tên × 80 ký tự cộng dấu phân cách. */
 const SHORTLIST_INPUT_MAX = 1000;
 
@@ -113,7 +113,7 @@ export default class RetroCmd extends Command
 				.setMaxLength(SHORTLIST_INPUT_MAX)))
 		.addSubcommand(sub => sub
 			.setName("status")
-			.setDescription("Xem tình trạng phiên (người quản lý thấy thêm danh sách người đã điền)")
+			.setDescription("Xem tình trạng phiên (admin bot thấy thêm danh sách người đã điền)")
 			.addIntegerOption(idOption))
 		.addSubcommand(sub => sub
 			.setName("remind")
@@ -283,32 +283,32 @@ export default class RetroCmd extends Command
 		}
 		// Tin của phiên được đăng công khai thay người tạo: phải có quyền gửi tin ở kênh này.
 		assertCanSendMessages(interaction);
-		const channelId = interaction.channelId;
 
-		const link = interaction.options.getString("link");
-		const session = services.retro.create({
+		const { session, notes } = await createRetroSession(retroContext(this.client), {
 			guildId,
-			channelId,
+			channelId: interaction.channelId,
 			title: interaction.options.getString("ten", true),
-			docUrl: link,
+			docUrl: interaction.options.getString("link"),
 			teamRoleId: interaction.options.getRole("team")?.id ?? null,
 			durationHours: interaction.options.getInteger("han-gio"),
 			createdBy: interaction.user.id,
+		}, async payload =>
+		{
+			const response = await interaction.reply({ ...payload, withResponse: true });
+			return response.resource?.message?.id ?? null;
 		});
 
-		const response = await interaction.reply({ ...retroSessionMessage(session), withResponse: true });
-		const message = response.resource?.message;
-		if (message) services.retro.attachMessage(guildId, session.id, message.id);
-		else logger.warn(`Không lấy được message của phiên retro #${session.id}; tin sẽ không được cập nhật số người và trạng thái.`);
-
-		if (session.docUrl !== null && this.client.retroActions.docWriter === null)
+		for (const note of notes)
 		{
-			await interaction.followUp({ content: DOC_WRITER_OFF_NOTE, flags: MessageFlags.Ephemeral })
-				.catch((error: unknown) => logger.warn(`Không gửi được ghi chú Confluence cho người tạo phiên retro #${session.id}:`, error));
+			await interaction.followUp({ content: note, flags: MessageFlags.Ephemeral, allowedMentions: NO_MENTIONS })
+				.catch((error: unknown) => logger.warn(`Không gửi được ghi chú cho người tạo phiên retro #${session.id}:`, error));
 		}
 	}
 
-	/** Tình trạng phiên (trả lời riêng). Người quản lý thấy thêm danh sách người đã điền và tình trạng Confluence. */
+	/**
+	 * Tình trạng phiên (trả lời riêng). Người quản lý thấy thêm tình trạng Confluence; danh sách người đã điền chỉ admin bot thấy
+	 * (DEC-049: ghi tên lại cho admin theo dõi), người quản lý khác chỉ thấy số người.
+	 */
 	private async status(interaction: ChatInputCommandInteraction): Promise<void>
 	{
 		const guildId = requireGuildId(interaction);
@@ -319,8 +319,8 @@ export default class RetroCmd extends Command
 		{
 			throw new UserError(`Không tìm thấy phiên retro #${session.id}.`);
 		}
-		const participants = manager ? this.client.services.retro.participants(guildId, session.id) : null;
-		const content = retroStatusText(session, participants, this.client.retroActions.docWriter !== null);
+		const participants = checkAdmin(interaction, this.client.services) ? this.client.services.retro.participants(guildId, session.id) : null;
+		const content = retroStatusText(session, { manager, participants }, this.client.retroActions.docWriter !== null);
 		await interaction.editReply({ content, allowedMentions: NO_MENTIONS });
 	}
 }
