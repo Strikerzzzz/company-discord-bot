@@ -519,16 +519,17 @@ describe("/config tier", () =>
 		assert.deepEqual(harness.tierRoles.list(GUILD), []);
 	});
 
-	test("set-role: từ chối role là một trong các role admin bot, role tạo vote, hoặc role team (vai trò khác của role bị méo khi bot tự thêm/gỡ)", async () =>
+	test("set-role: từ chối role là một trong các role admin bot, role tạo vote, role duyệt contribution, hoặc role team (vai trò khác của role bị méo khi bot tự thêm/gỡ)", async () =>
 	{
 		const harness = createHarness();
 		const { guildConfig, teams } = harness.context.deps;
 		const cases: [string, () => void][] = [
 			["role admin bot", () => guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_TEAM, ROLE_KIM_DAN] }, ADMIN)],
 			["role được tạo vote", () => guildConfig.updateSettings(GUILD, { adminRoleIds: [ROLE_TEAM], pollCreatorRoleIds: [ROLE_TEAM, ROLE_KIM_DAN] }, ADMIN)],
+			["role duyệt contribution", () => guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: [], contributionReviewerRoleIds: [ROLE_KIM_DAN] }, ADMIN)],
 			["role của một team", () =>
 			{
-				guildConfig.updateSettings(GUILD, { pollCreatorRoleIds: [] }, ADMIN);
+				guildConfig.updateSettings(GUILD, { contributionReviewerRoleIds: [] }, ADMIN);
 				teams.add(GUILD, ROLE_KIM_DAN, ADMIN);
 			}],
 		];

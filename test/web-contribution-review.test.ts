@@ -16,7 +16,9 @@ import {
 	INVALID_CONTRIBUTION_ID,
 	PENDING_LIST_PATH,
 	REJECT_REASON_FIELD,
+	REPOST_HIDDEN,
 } from "../src/web/pages/contributions";
+import { REPOST_OTHER_CHANNEL } from "../src/discord/messages";
 import { NO_CONTRIBUTION_CHANNEL, SETTINGS_STALE_FORM } from "../src/web/pages/settings";
 import { DUPLICATE_POST_WINDOW_MS } from "../src/web/server";
 import { HIDDEN_ITEM_TEXT } from "../src/web/widgets";
@@ -362,6 +364,25 @@ describe("web contribution (DEC-051): duyệt và từ chối", () =>
 		const refused = await post(harness, auth, "/contributions/repost", { id: String(rejected.id) });
 		assert.deepEqual(await flashAfter(harness, auth, refused), { kind: "error", text: `Contribution #${rejected.id} đã bị từ chối nên không cần đăng lại thẻ.` });
 
+		const elsewhere = submit(harness, { title: "Thẻ ở kênh khác" });
+		services.contributions.approve(GUILD, elsewhere.id, ADMIN_USER);
+		services.contributions.attachMessage(GUILD, elsewhere.id, CHANNEL_WORK, MESSAGE_ID);
+		const elsewherePage = await getPage(harness, auth, `/contributions/view?id=${elsewhere.id}`);
+		assert.ok(!elsewherePage.includes(`action="${pageUrl("/contributions/repost")}"`), "thẻ ở kênh khác kênh contribution: không có form");
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
+		const moved = await post(harness, auth, "/contributions/repost", { id: String(elsewhere.id) });
+		assert.deepEqual(await flashAfter(harness, auth, moved), { kind: "error", text: REPOST_OTHER_CHANNEL });
+
+		addSecretChannel(harness);
+		services.guildConfig.updateSettings(GUILD, { contributionChannelId: CHANNEL_SECRET }, ADMIN_USER);
+		const hidden = submit(harness, { title: "Thẻ ở kênh bí mật" });
+		services.contributions.attachMessage(GUILD, hidden.id, CHANNEL_SECRET, MESSAGE_ID);
+		const hiddenPage = await getPage(harness, auth, `/contributions/view?id=${hidden.id}`);
+		assert.ok(!hiddenPage.includes(`action="${pageUrl("/contributions/repost")}"`), "admin không xem được kênh của thẻ: không có form");
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
+		const blind = await post(harness, auth, "/contributions/repost", { id: String(hidden.id) });
+		assert.deepEqual(await flashAfter(harness, auth, blind), { kind: "error", text: REPOST_HIDDEN });
+
 		services.contributions.remove(GUILD, pending.id, ADMIN_USER);
 		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
 		const removed = await post(harness, auth, "/contributions/repost", { id: String(pending.id) });
@@ -401,7 +422,7 @@ describe("web contribution (DEC-051): duyệt và từ chối", () =>
 		assert.equal(entry?.action, "contribution.reject");
 		assert.equal(entry.actorId, ADMIN_USER);
 		assert.equal(entry.targetId, PLAIN_USER);
-		assert.deepEqual(entry.details, { contributionId: contribution.id, title: "Ý tưởng cũ", reason: "Trùng với <b>#3</b> 😀" });
+		assert.deepEqual(entry.details, { contributionId: contribution.id, title: "Ý tưởng cũ" }, "lý do không ghi vào audit");
 		assert.deepEqual(harness.adminCalls, [`refreshContribution:${contribution.id}`, `sendDirectMessage:${PLAIN_USER}`], "người gửi là tác giả: nhắn một lần");
 
 		const flash = await flashAfter(harness, auth, response);
@@ -623,7 +644,7 @@ describe("web contribution (DEC-051): cấu hình", () =>
 		assert.ok(gone.includes(`<option value="${CHANNEL_GONE}" selected>`), "kênh đang đặt luôn có trong danh sách");
 	});
 
-	test("Quyền: bảng Role duyệt contribution thêm, bỏ, chọn tất cả, bỏ hết; role managed bị khoá; audit với người đăng nhập", async () =>
+	test("Quyền: bảng Role duyệt contribution thêm, bỏ, bỏ hết; không có Chọn tất cả (như bảng role admin); role managed bị khoá; audit", async () =>
 	{
 		const harness = createWebHarness();
 		const { services } = harness;
@@ -634,7 +655,7 @@ describe("web contribution (DEC-051): cấu hình", () =>
 		assert.ok(body.includes(`✅ Role duyệt contribution: 0/${MAX_GRANT_ROLES}`) && body.includes("Chưa đặt role nào: chỉ admin bot duyệt được contribution."));
 		assert.ok(body.includes("người duyệt được duyệt cả contribution của chính mình"));
 		assert.match(body, new RegExp(`name="duyet" value="${ROLE_MANAGED}" disabled>`, "u"));
-		assert.ok(body.includes(`href="${pageUrl("/roles?chon-duyet=tat-ca")}"`) && body.includes(`href="${pageUrl("/roles?chon-duyet=bo-het")}"`));
+		assert.ok(!body.includes("chon-duyet="), "bảng role duyệt không có Chọn tất cả (review bảo mật Phase 20)");
 		assert.ok(body.includes(`name="r:${ROLE_TEAM_A}" value="0"`));
 
 		const added = await submitFields(harness, auth, "/roles", check(formFields(body, "/roles"), "duyet", ROLE_TEAM_A, true));
@@ -646,18 +667,18 @@ describe("web contribution (DEC-051): cấu hình", () =>
 		assert.equal(entry?.actorId, ADMIN_USER);
 		assert.deepEqual(entry.details, { contributionReviewerRoleIds: [ROLE_TEAM_A], addedRoles: [ROLE_TEAM_A] });
 
-		const all = await getPage(harness, auth, "/roles?chon-duyet=tat-ca");
-		const allFields = formFields(all, "/roles");
-		assert.deepEqual(ticked(allFields, "duyet").sort(), [ROLE_ADMIN_BOT, ROLE_TEAM_A, ROLE_TEAM_B].sort(), "chọn tất cả: mọi role dùng được");
-		assert.deepEqual(ticked(allFields, "admin"), [], "chọn tất cả của bảng duyệt không tick bảng admin");
-		assert.equal((await submitFields(harness, auth, "/roles", allFields)).kind, "ok");
+		const ignored = formFields(await getPage(harness, auth, "/roles?chon-duyet=tat-ca"), "/roles");
+		assert.deepEqual(ticked(ignored, "duyet"), [ROLE_TEAM_A], "tham số chọn tất cả bị bỏ qua: vẫn như đang lưu");
+		const more = check(check(ignored, "duyet", ROLE_TEAM_B, true), "duyet", ROLE_ADMIN_BOT, true);
+		assert.equal((await submitFields(harness, auth, "/roles", more)).kind, "ok");
 		assert.deepEqual([...reviewers()].sort(), [ROLE_ADMIN_BOT, ROLE_TEAM_A, ROLE_TEAM_B].sort());
 
 		const removeOne = check(formFields(await getPage(harness, auth, "/roles"), "/roles"), "duyet", ROLE_TEAM_B, false);
 		assert.equal((await submitFields(harness, auth, "/roles", removeOne)).kind, "ok");
 		assert.deepEqual([...reviewers()].sort(), [ROLE_ADMIN_BOT, ROLE_TEAM_A].sort());
 
-		const none = formFields(await getPage(harness, auth, "/roles?chon-duyet=bo-het"), "/roles");
+		let none = formFields(await getPage(harness, auth, "/roles"), "/roles");
+		for (const roleId of ticked(none, "duyet")) none = check(none, "duyet", roleId, false);
 		assert.deepEqual(ticked(none, "duyet"), []);
 		const clearedFlash = await submitFields(harness, auth, "/roles", none);
 		assert.ok(clearedFlash.text.includes("Đã bỏ") && clearedFlash.text.includes("chưa đặt (chỉ admin)"), clearedFlash.text);

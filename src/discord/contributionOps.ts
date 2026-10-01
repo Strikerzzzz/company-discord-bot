@@ -7,6 +7,7 @@ import { AppServices } from "../services";
 import { UserError } from "../shared/errors";
 import type { AdminActions } from "./adminOps";
 import { channelMention, userMention } from "./format";
+import { assertRepostableChannel } from "./messages";
 import { inlineText } from "./views/admin";
 import { contributionMessageUrl } from "./views/contribution";
 
@@ -106,7 +107,8 @@ export async function rejectContribution(
 
 /**
  * Đăng lại thẻ của contribution vào kênh contribution đang chọn (web; DEC-051): dùng khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay, để
- * người duyệt và mọi người còn nút bấm. Chỉ cho contribution còn hiệu lực, chờ duyệt hoặc đã duyệt; thẻ cũ (nếu còn) bị xoá.
+ * người duyệt và mọi người còn nút bấm. Chỉ cho contribution còn hiệu lực, chờ duyệt hoặc đã duyệt, chưa có thẻ hoặc thẻ đang ở kênh
+ * contribution hiện tại (assertRepostableChannel); thẻ cũ (nếu còn) bị xoá. Web còn tự chặn khi admin không xem được kênh của thẻ.
  */
 export async function repostContribution(
 	client: DiscordClient,
@@ -120,6 +122,7 @@ export async function repostContribution(
 	if (!contribution) throw new UserError(`Không tìm thấy contribution #${contributionId}.`);
 	if (contribution.status === "removed") throw new UserError(`Contribution #${contributionId} đã bị gỡ nên không đăng lại thẻ.`);
 	if (contribution.reviewState === "rejected") throw new UserError(`Contribution #${contributionId} đã bị từ chối nên không cần đăng lại thẻ.`);
+	assertRepostableChannel(contribution, services.guildConfig.getSettings(guildId).contributionChannelId);
 	const posted = await actions.repostContribution(client, contribution);
 	const where = posted.channelId === null ? "kênh contribution" : channelMention(posted.channelId);
 	return `📮 Đã đăng lại thẻ contribution #${contribution.id} ở ${where}. Thẻ cũ (nếu còn) đã được xoá.`;

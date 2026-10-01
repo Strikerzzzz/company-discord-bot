@@ -41,7 +41,14 @@ import {
 import ContributionCmd from "../src/interactions/commands/contribution";
 import PollCmd from "../src/interactions/commands/poll";
 import RecognizeContribution from "../src/interactions/contextMenus/RecognizeContribution";
-import { Contribution, ContributionVoteInput, ContributionVoteResult, ContributionVoterState, SubmitContributionInput } from "../src/modules/contribution/types";
+import {
+	Contribution,
+	ContributionVoteInput,
+	ContributionVoter,
+	ContributionVoteResult,
+	ContributionVoterState,
+	SubmitContributionInput,
+} from "../src/modules/contribution/types";
 import { DEFAULT_GUILD_SETTINGS, GuildSettings } from "../src/modules/guild-config/types";
 import { CreatePollInput, Poll, PollVoteResult } from "../src/modules/poll/types";
 import { AppServices } from "../src/services";
@@ -184,6 +191,11 @@ class FakeContributions
 	votes: ContributionVoteInput[] = [];
 	listCalls: { guildId: string; authorId?: string; limit: number }[] = [];
 	stored = new Map<number, Contribution>();
+
+	listVoters(): ContributionVoter[]
+	{
+		return [];
+	}
 	/** Lượt hiện tại của người bấm (voterState); vote() cập nhật theo thao tác. */
 	state: ContributionVoterState = { current: null, locked: false };
 	// Vị trí message công khai gốc mà vote trả về (null = chưa đăng message).
@@ -1291,7 +1303,7 @@ describe("/contribution", () =>
 	{
 		const { client, contributions } = setup();
 		contributions.stored.set(7, makeContribution({ channelId: CHANNEL_GENERAL, messageId: MESSAGE_ID }));
-		contributions.stored.set(8, makeContribution({ id: 8, status: "removed" }));
+		contributions.stored.set(8, makeContribution({ id: 8, status: "removed", channelId: CHANNEL_GENERAL }));
 		const command = new ContributionCmd(client);
 
 		const active = chatInput("view", { id: 7 });
@@ -1330,7 +1342,7 @@ describe("/contribution", () =>
 	test("list: lọc theo thành viên, lấy đủ để lọc quyền, hiện tối đa 10, trả lời riêng", async () =>
 	{
 		const { client, contributions } = setup();
-		contributions.stored.set(7, makeContribution());
+		contributions.stored.set(7, makeContribution({ channelId: CHANNEL_GENERAL }));
 		const { interaction, deferred, edits } = chatInput("list", { "thanh-vien": USER_A });
 
 		await new ContributionCmd(client).execute(interaction);
@@ -1338,6 +1350,29 @@ describe("/contribution", () =>
 		assert.deepEqual(contributions.listCalls, [{ guildId: GUILD, authorId: USER_A, limit: 50 }]);
 		assert.deepEqual(deferred, [{ flags: MessageFlags.Ephemeral }]);
 		assert.ok(embedJson(edits[0]).description?.includes("#7 · **Tối ưu thời gian build** · 👍 3 · 👎 0"));
+	});
+
+	test("contribution chưa có thẻ (đăng lỗi lúc gửi): chỉ tác giả, người gửi, người duyệt và admin xem được (view và list)", async () =>
+	{
+		const { client, contributions } = setup({ contributionReviewerRoleIds: [ROLE_BACKEND] });
+		contributions.stored.set(7, makeContribution({ title: "Chưa có thẻ", channelId: null, messageId: null }));
+		const command = new ContributionCmd(client);
+
+		for (const member of [{ userId: USER_A }, { userId: USER_C, roleIds: [ROLE_BACKEND] }, { userId: ADMIN, manageGuild: true }])
+		{
+			const allowed = chatInput("view", { id: 7 }, member);
+			await command.execute(allowed.interaction);
+			assert.equal(embedJson(allowed.edits[0]).title, "Chưa có thẻ");
+		}
+		const outsider = chatInput("view", { id: 7 }, { userId: USER_B });
+		await assert.rejects(command.execute(outsider.interaction), userError("Không tìm thấy đóng góp #7."));
+
+		const list = chatInput("list", {}, { userId: USER_B });
+		await command.execute(list.interaction);
+		assert.ok(!(embedJson(list.edits[0]).description ?? "").includes("Chưa có thẻ"));
+		const own = chatInput("list", {}, { userId: USER_A });
+		await command.execute(own.interaction);
+		assert.ok((embedJson(own.edits[0]).description ?? "").includes("Chưa có thẻ"));
 	});
 
 	test("list: bỏ đóng góp ở kênh không xem được, rồi mới cắt còn 10", async () =>

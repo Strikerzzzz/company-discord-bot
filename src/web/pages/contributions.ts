@@ -224,6 +224,14 @@ async function renderList(ctx: GuildPageContext): Promise<WebResponse>
 
 // ---------- Chi tiết ----------
 
+export const REPOST_HIDDEN = "Bạn không xem được kênh của thẻ contribution này nên không đăng lại được.";
+
+/** Thẻ đăng lại được: chưa có thẻ, hoặc thẻ đang ở đúng kênh contribution hiện tại (như contributionOps.repostContribution). */
+function canRepost(ctx: GuildPageContext, contribution: Contribution): boolean
+{
+	return contribution.channelId === null || contribution.channelId === ctx.deps.services.guildConfig.getSettings(ctx.guild.id).contributionChannelId;
+}
+
 /** Form đăng lại thẻ (contribution còn hiệu lực, chờ duyệt hoặc đã duyệt): khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay. */
 function repostForm(ctx: GuildPageContext, contribution: Contribution): RawHtml
 {
@@ -394,7 +402,7 @@ async function renderDetail(ctx: GuildPageContext): Promise<WebResponse>
 ${detail}
 ${active && contribution.reviewState === "pending" ? reviewForms(ctx, contribution, visible) : ""}
 ${votersSection(ctx, contribution, voters, displays, visible)}
-${active && contribution.reviewState !== "rejected" ? repostForm(ctx, contribution) : ""}
+${active && contribution.reviewState !== "rejected" && visible && canRepost(ctx, contribution) ? repostForm(ctx, contribution) : ""}
 ${active ? removeForm(ctx, contribution) : html`<p class="muted">Contribution này đã bị gỡ: toàn bộ điểm của nó đã bị huỷ.</p>`}`,
 	});
 }
@@ -434,11 +442,16 @@ async function reject(ctx: GuildPageContext): Promise<WebResponse>
 	return redirectWithFlash(ctx, viewPath(id), "ok", await reviewFlash(ctx, outcome));
 }
 
-/** Đăng lại thẻ qua contributionOps.repostContribution (kiểm tra kênh và quyền bot ở tầng Discord). */
+/**
+ * Đăng lại thẻ qua contributionOps.repostContribution (kiểm tra kênh và quyền bot ở tầng Discord). Admin không xem được kênh của thẻ
+ * thì không được đăng lại (trang chi tiết đang giấu nội dung đó).
+ */
 async function repost(ctx: GuildPageContext): Promise<WebResponse>
 {
 	const id = requireContributionId(ctx.req.form?.get("id"));
 	const { client, services, adminActions } = ctx.deps;
+	const contribution = services.contributions.get(ctx.guild.id, id);
+	if (contribution && !(await canViewItemChannel(client, ctx.guild, contribution.channelId, ctx.member))) throw new UserError(REPOST_HIDDEN);
 	const text = await repostContribution(client, services, adminActions, ctx.guild.id, id);
 	return redirectWithFlash(ctx, viewPath(id), "ok", text);
 }

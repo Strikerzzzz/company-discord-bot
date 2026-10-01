@@ -1,5 +1,6 @@
 import { ButtonInteraction, ChatInputCommandInteraction, MessageFlags, MessageMentionOptions, ModalSubmitInteraction, SlashCommandBuilder } from "discord.js";
 import Command from "../../classes/Command";
+import type DiscordClient from "../../classes/DiscordClient";
 import { DEFAULT_ADMIN_ACTIONS } from "../../discord/adminOps";
 import { approveContribution, ContributionReviewActions, rejectContribution } from "../../discord/contributionOps";
 import { canViewChannel, checkCanReviewContributions, filterViewable, requireGuildId } from "../../discord/guards";
@@ -311,13 +312,13 @@ export default class ContributionCmd extends Command
 
 		const { contributions } = this.client.services;
 		const contribution = contributions.get(guildId, contributionId);
-		if (!contribution || !(await canViewChannel(this.client, interaction, contribution.channelId)))
+		const reviewer = checkCanReviewContributions(interaction, this.client.services);
+		if (!contribution || !(await canSeeContribution(this.client, interaction, contribution, reviewer)))
 		{
 			throw new UserError(`Không tìm thấy đóng góp #${contributionId}.`);
 		}
 
-		const reviewer = checkCanReviewContributions(interaction, this.client.services);
-		const involved = interaction.user.id === contribution.authorId || interaction.user.id === contribution.submittedBy;
+		const involved = isInvolved(contribution, interaction.user.id);
 		const detail = contributionDetailMessage(contribution, {
 			showReviewReason: reviewer || involved,
 			voters: reviewer ? contributions.listVoters(guildId, contributionId) : null,
@@ -332,11 +333,29 @@ export default class ContributionCmd extends Command
 		const member = interaction.options.getUser("thanh-vien");
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-		const recent = this.client.services.contributions.list(guildId, { authorId: member?.id, limit: LIST_FETCH_LIMIT });
+		const reviewer = checkCanReviewContributions(interaction, this.client.services);
+		const recent = this.client.services.contributions.list(guildId, { authorId: member?.id, limit: LIST_FETCH_LIMIT })
+			.filter(contribution => contribution.channelId !== null || reviewer || isInvolved(contribution, interaction.user.id));
 		const visible = (await filterViewable(this.client, interaction, recent)).slice(0, CONTRIBUTION_LIST_LIMIT);
 
 		await interaction.editReply({ embeds: [contributionListEmbed(visible, member?.id ?? null)] });
 	}
+}
+
+/** Người dùng là tác giả hoặc người gửi contribution. */
+function isInvolved(contribution: Contribution, userId: string): boolean
+{
+	return userId === contribution.authorId || userId === contribution.submittedBy;
+}
+
+/**
+ * Người gọi xem được contribution: theo quyền xem kênh của thẻ; contribution chưa có thẻ (đăng lỗi lúc gửi, chưa biết kênh) thì chỉ
+ * tác giả, người gửi, người duyệt và admin (review bảo mật Phase 20).
+ */
+async function canSeeContribution(client: DiscordClient, interaction: ChatInputCommandInteraction, contribution: Contribution, reviewer: boolean): Promise<boolean>
+{
+	if (contribution.channelId === null) return reviewer || isInvolved(contribution, interaction.user.id);
+	return canViewChannel(client, interaction, contribution.channelId);
 }
 
 /** Lý do trong form (ô CONTRIBUTION_REASON_INPUT); không có ô đó (form lạ) thì coi như trống để service báo lỗi độ dài. */

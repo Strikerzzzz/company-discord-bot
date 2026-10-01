@@ -218,7 +218,8 @@ export interface ContributionServiceApi
 	approve(guildId: string, contributionId: number, actorId: string): Contribution;
 	/**
 	 * Từ chối contribution đang chờ với lý do bắt buộc (CONTRIBUTION_LIMITS.rejectReasonMin–Max). Cùng điều kiện như approve.
-	 * Ghi audit `contribution.reject` (target = tác giả, details { contributionId, title, reason }).
+	 * Ghi audit `contribution.reject` (target = tác giả, details { contributionId, title }; lý do không ghi vào audit vì nhật ký không
+	 * giấu theo quyền xem kênh, PROP-038 — lý do lưu ở contribution và hiện trên trang chi tiết).
 	 */
 	reject(guildId: string, contributionId: number, actorId: string, reason: string): Contribution;
 	/** Lượt hiện tại của `voterId` trên contribution (để tầng Discord quyết định bấm lại là rút hay đổi). */

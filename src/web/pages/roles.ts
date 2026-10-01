@@ -83,7 +83,7 @@ const GRANT_TABLES: readonly GrantTable[] = [
 		column: "Được duyệt contribution",
 		field: "duyet",
 		drawnPrefix: "r:",
-		selectParam: "chon-duyet",
+		selectParam: null,
 		hint: "Người có ít nhất một role trong danh sách duyệt hoặc từ chối được contribution mới (nút ✅ Duyệt / ❌ Từ chối trên thẻ), và xem được ai đã 👍/👎 kèm lý do bằng /contribution view. "
 			+ "Admin bot luôn duyệt được; người duyệt được duyệt cả contribution của chính mình.",
 		empty: "Chưa đặt role nào: chỉ admin bot duyệt được contribution.",

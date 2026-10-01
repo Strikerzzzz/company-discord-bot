@@ -239,11 +239,8 @@ export class ContributionService implements ContributionServiceApi
 		{
 			const contribution = this.requirePending(guildId, contributionId);
 			this.repo.setReview(guildId, contributionId, "rejected", actorId, this.deps.clock.now(), text);
-			this.deps.audit.record(guildId, actorId, "contribution.reject", contribution.authorId, {
-				contributionId,
-				title: contribution.title,
-				reason: text,
-			});
+			// Lý do từ chối không ghi vào audit (nhật ký không giấu theo quyền xem kênh, PROP-038); lý do nằm ở contributions.review_reason.
+			this.deps.audit.record(guildId, actorId, "contribution.reject", contribution.authorId, { contributionId, title: contribution.title });
 			return this.require(guildId, contributionId);
 		})();
 	}

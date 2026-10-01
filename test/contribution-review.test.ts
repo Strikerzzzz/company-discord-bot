@@ -304,7 +304,7 @@ describe("Contribution DEC-051: duyệt và từ chối", () =>
 		const [entry] = deps.audit.list(GUILD, 1);
 		assert.deepEqual(
 			[entry.action, entry.actorId, entry.targetId, entry.details],
-			["contribution.reject", REVIEWER, USER_A, { contributionId: created.id, title: created.title, reason: "Chưa có kết quả đo được" }],
+			["contribution.reject", REVIEWER, USER_A, { contributionId: created.id, title: created.title }],
 		);
 
 		assert.throws(() => voteUp(service, created.id, USER_B), userError(REJECTED));

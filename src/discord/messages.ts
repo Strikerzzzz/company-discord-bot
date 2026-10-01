@@ -129,6 +129,18 @@ export async function postContributionCard(services: AppServices, channel: Board
 	return { ...contribution, channelId: message.channelId, messageId: message.id };
 }
 
+export const REPOST_OTHER_CHANNEL = "Thẻ của contribution này nằm ở kênh khác kênh contribution hiện tại (contribution có từ trước khi có kênh "
+	+ "contribution, hoặc admin đã đổi kênh). Bot không đăng lại để không chuyển nội dung sang kênh khác; thẻ cũ vẫn bấm được ở kênh của nó.";
+
+/**
+ * Chỉ đăng lại khi contribution chưa có thẻ, hoặc thẻ đang ở đúng kênh contribution hiện tại (review bảo mật Phase 20): thẻ ở kênh
+ * khác (ví dụ contribution cũ trong kênh riêng tư) mà đăng lại sang kênh contribution sẽ lộ tiêu đề, mô tả cho người xem kênh đó.
+ */
+export function assertRepostableChannel(contribution: Pick<Contribution, "channelId">, contributionChannelId: string | null): void
+{
+	if (contribution.channelId !== null && contribution.channelId !== contributionChannelId) throw new UserError(REPOST_OTHER_CHANNEL);
+}
+
 /**
  * Đăng lại thẻ của một contribution vào kênh contribution đang chọn (DEC-051; web, khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay): kiểm
  * tra kênh và quyền của bot như lúc gửi, xoá thẻ cũ nếu còn (bot xoá được tin của chính mình; lỗi chỉ ghi log), đăng thẻ mới theo
@@ -158,6 +170,7 @@ export async function repostContributionCard(client: DiscordClient, contribution
 	{
 		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở kênh contribution ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
 	}
+	assertRepostableChannel(contribution, channel.id);
 
 	if (contribution.channelId !== null && contribution.messageId !== null)
 	{

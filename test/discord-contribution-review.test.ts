@@ -613,7 +613,7 @@ describe("duyệt và từ chối qua nút trên thẻ (DEC-051)", () =>
 		assert.ok(!json(contributionMessage(harness.refreshed[0])).includes("Trùng ý tưởng"), "thẻ công khai không có lý do");
 		assert.deepEqual(harness.dms.map(dm => dm.userId), [USER_A]);
 		assert.ok(harness.dms[0].content.includes(SECRET_REASON), harness.dms[0].content);
-		assert.deepEqual(harness.context.deps.audit.list(GUILD, 1)[0]?.details, { contributionId: contribution.id, title: contribution.title, reason: SECRET_REASON });
+		assert.deepEqual(harness.context.deps.audit.list(GUILD, 1)[0]?.details, { contributionId: contribution.id, title: contribution.title }, "lý do không ghi vào audit");
 	});
 
 	test("form từ chối: lý do quá ngắn, hoặc contribution vừa được duyệt trong lúc form mở: báo lỗi, không đổi, không nhắn ai", async () =>
