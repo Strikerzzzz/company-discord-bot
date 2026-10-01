@@ -632,6 +632,8 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - **Contribution cũ** (trước migration 10): coi như đã duyệt, giữ ở kênh cũ, ghi nhận được như trước.
   - Contribution chờ duyệt hoặc bị từ chối không bấm 👍/👎 được; admin vẫn gỡ được.
   - Contribution từ chuột phải "Ghi nhận đóng góp": tiêu đề không nêu tên kênh nguồn nếu `@everyone` không xem được kênh đó (thẻ nằm ở kênh Contribution công khai).
+  - **Đăng lại thẻ** (trang web, chi tiết contribution): khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay, admin đăng lại thẻ vào kênh contribution đang chọn (thẻ cũ nếu còn bị xoá); chỉ cho bài chờ duyệt hoặc đã duyệt, còn hiệu lực.
+  - **Hệ quả đã biết** (review Phase 20): tổng điểm luôn đúng, nhưng bảng tuần/tháng có thể lệch khi một lượt của kỳ trước bị rút hoặc đổi (event của kỳ trước bị huỷ, như rút ghi nhận trước Phase 20). Trường hợp hiếm: bài đang 0 điểm, đổi lượt 👍 của kỳ trước sang 👎 có thể làm điểm kỳ này của tác giả nhích lên tối đa bằng điểm của lượt 👍 đó. Chấp nhận; sửa triệt để cần ghi event đảo thay cho huỷ, ảnh hưởng toàn bộ ledger contribution.
   - Schema: migration 10 (cột duyệt của `contributions`, bảng `contribution_downvotes`, bảng `contribution_interaction_xp` có `revoked_at`, ba cột cấu hình mới, thêm loại `contribution_reviewer` cho `guild_role_grants`). Triển khai ở Phase 20, branch `phase-20/contribution-review`.
 
 ---

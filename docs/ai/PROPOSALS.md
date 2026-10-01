@@ -50,6 +50,7 @@
 | PROP-038 | Nhật ký quản trị giấu tiêu đề contribution và câu hỏi vote ở kênh người xem không xem được | LOW | PROPOSED |
 | PROP-039 | Retro sprint theo team trong Discord, tự ghi vào Confluence nội bộ | HIGH | APPROVED (DEC-049) |
 | PROP-040 | Contribution: kênh riêng, duyệt trước khi mở ghi nhận, nút "Không ghi nhận" | HIGH | APPROVED (DEC-051) |
+| PROP-041 | Giới hạn số contribution mỗi người gửi mỗi ngày | LOW | PROPOSED |
 
 ---
 
@@ -1608,3 +1609,21 @@ HIGH (người phụ trách yêu cầu)
 ### Trạng thái
 
 APPROVED (2026-10-01, DEC-051): phương án 2B (một kênh), 5a; người duyệt được duyệt bài của mình; người bấm 👍/👎 được Activity XP. Triển khai ở Phase 20.
+
+## PROP-041 — Giới hạn số contribution mỗi người gửi mỗi ngày
+
+### Vấn đề
+
+Từ Phase 20 (DEC-051), ai xem được kênh contribution đều làm bot đăng thẻ vào kênh đó (kể cả khi kênh chỉ đọc với họ). Thẻ ở trạng thái chờ duyệt và không ping ai, nhưng chưa có giới hạn tần suất, nên một người có thể gửi liên tục làm đầy kênh. DEC-025 cũng đã ghi "giới hạn số contribution mỗi ngày… chưa làm".
+
+### Đề xuất
+
+Cấu hình `contributionDailyLimit` (mặc định đề xuất 5, 0 = không giới hạn): mỗi người gửi (tính theo `submitted_by`) tối đa bấy nhiêu contribution mỗi ngày giờ Việt Nam, kể cả qua chuột phải "Ghi nhận đóng góp". Admin chỉnh trên web và `/config contribution`. Cần một cột cấu hình mới (migration).
+
+### Độ ưu tiên
+
+LOW (chưa thấy lạm dụng; người duyệt vẫn từ chối được)
+
+### Trạng thái
+
+PROPOSED (2026-10-01, phát hiện khi làm Phase 20).

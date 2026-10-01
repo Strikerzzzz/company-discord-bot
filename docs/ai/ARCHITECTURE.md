@@ -173,6 +173,7 @@ messageCreate  (bỏ qua bot, webhook, tin hệ thống, tin ngoài guild; threa
   - `votes` / `downvotes` chỉ đếm lượt còn hiệu lực; `score` là tổng event chưa huỷ của contribution.
 - **Xem**: `/contribution view` trả lời riêng; người duyệt và admin thấy thêm lượt 👍/👎 kèm lý do và lý do từ chối; tác giả/người gửi thấy lý do từ chối bài của mình.
 - **Admin gỡ contribution** (mọi trạng thái) → `voidByReference` huỷ mọi điểm của nó, và message gốc chuyển sang "Đã bị gỡ". XP người bấm đã nhận được giữ nguyên.
+- **Đăng lại thẻ** (web, `contributionOps.repostContribution` → `AdminActions.repostContribution` = `messages.repostContributionCard`): kiểm tra kênh và quyền bot như lúc gửi, xoá thẻ cũ nếu còn, đăng thẻ mới, `attachMessage`. Chỉ cho bài còn hiệu lực, chờ duyệt hoặc đã duyệt.
 - Contribution có từ trước migration 10 mang `review_state = 'approved'`: thẻ cũ (nút `contrib:<id>`) vẫn bấm 👍 được, lần bấm đầu sẽ vẽ lại thẻ có nút 👎.
 
 ### 3.4 Vote / bầu cử (DEC-026)
@@ -331,7 +332,7 @@ node:http (WEB_HOST:WEB_PORT; requestTimeout 15 s, headersTimeout 10 s, keepAliv
 | Dữ liệu | `overview` (rỗng) | `/config view` |
 | | `members` `/members`, `/members/view?u=<userId>`; POST `/members/xp`, `/members/xp-reset`, `/members/contribution`, `/members/contribution-reset` | `/admin xp view·give·remove·reset`, `/admin contribution adjust·reset` |
 | | `leaderboard` `/leaderboard?loai=&pv=&ky=&trang=` | `/leaderboard` |
-| | `contributions` `/contributions?tt=&u=&trang=`, `/contributions/view?id=`; POST `/contributions/remove` | `/contribution list·view`, `/admin contribution remove` |
+| | `contributions` `/contributions?tt=&dd=&u=&trang=`, `/contributions/view?id=`; POST `/contributions/approve`, `/contributions/reject`, `/contributions/repost`, `/contributions/remove` | `/contribution list·view`, nút ✅/❌ trên thẻ, `/admin contribution remove` |
 | | `polls` `/polls?tt=&trang=`, `/polls/view?id=`; POST `/polls/close` | `/poll list·results·close` (tạo vote chỉ bằng lệnh, DEC-042) |
 | | `stats` `/stats` | `/admin stats` |
 | Cấu hình | `channels`, `teams`, `settings`, `roles`, `board`, `tiers` | `/config …` |

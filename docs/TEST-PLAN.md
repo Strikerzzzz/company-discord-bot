@@ -422,5 +422,6 @@
 - [ ] Bấm 👍 ở 6 bài trong một ngày với XP 5, giới hạn 25 → bài thứ 6 không được XP, bot báo đã hết hạn mức hôm nay.
 - [ ] `/contribution view <id>`: R và A thấy danh sách người bấm 👍/👎 kèm lý do; D chỉ thấy số lượng.
 - [ ] Web **Contribution**: lọc "Chờ duyệt"; trang chi tiết duyệt/từ chối được (từ chối bắt buộc lý do), thẻ trong Discord đổi theo; bảng lượt 👍/👎 có tên và lý do; Nhật ký ghi "Duyệt contribution"/"Từ chối contribution" với người thao tác.
+- [ ] Xoá tay thẻ của một bài chờ duyệt → web, chi tiết contribution, bấm **Đăng lại thẻ** → thẻ mới hiện ở kênh contribution, bấm duyệt được.
 - [ ] Thẻ contribution cũ (trước Phase 20) vẫn bấm 👍 được; lần bấm đầu vẽ lại thẻ có nút 👎.
 - [ ] `/config contribution kenh:#... xp-nguoi-bam:5 gioi-han-xp-ngay:25 role-duyet:@R` → kết quả giống web.

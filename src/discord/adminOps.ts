@@ -15,7 +15,7 @@ import { logger } from "../shared/logger";
 import { formatNumber, relativeTime, userMention } from "./format";
 import { isNotFoundError } from "./guards";
 import { MemberDisplay } from "./memberDirectory";
-import { refreshContributionMessage } from "./messages";
+import { refreshContributionMessage, repostContributionCard } from "./messages";
 import { afterPollClosed } from "./pollScheduler";
 import { syncTierRoles, TierRoleSyncResult } from "./roleSync";
 import { inlineText, tierRoleSyncLine } from "./views/admin";
@@ -75,6 +75,11 @@ export interface AdminActions
 	 * không gửi được (người đó tắt tin nhắn riêng, đã chặn bot, tài khoản không còn, Discord lỗi).
 	 */
 	sendDirectMessage(client: DiscordClient, userId: string, content: string): Promise<boolean>;
+	/**
+	 * Đăng lại thẻ contribution vào kênh contribution đang chọn, xoá thẻ cũ nếu còn, lưu vị trí mới (DEC-051). UserError nếu kênh
+	 * chưa chọn, không còn, bot thiếu quyền hoặc Discord từ chối đăng.
+	 */
+	repostContribution(client: DiscordClient, contribution: Contribution): Promise<Contribution>;
 }
 
 async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{ bot: boolean } | null>
@@ -114,6 +119,7 @@ export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
 	displays: (client, guild, userIds) => client.members.resolve(guild, userIds),
 	fetchUser: fetchUserOrNull,
 	sendDirectMessage,
+	repostContribution: repostContributionCard,
 };
 
 /**

@@ -128,3 +128,50 @@ export async function postContributionCard(services: AppServices, channel: Board
 	services.contributions.attachMessage(contribution.guildId, contribution.id, message.channelId, message.id);
 	return { ...contribution, channelId: message.channelId, messageId: message.id };
 }
+
+/**
+ * Đăng lại thẻ của một contribution vào kênh contribution đang chọn (DEC-051; web, khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay): kiểm
+ * tra kênh và quyền của bot như lúc gửi, xoá thẻ cũ nếu còn (bot xoá được tin của chính mình; lỗi chỉ ghi log), đăng thẻ mới theo
+ * trạng thái hiện tại rồi lưu vị trí. UserError nếu chưa chọn kênh, kênh không còn, bot thiếu quyền hoặc Discord từ chối đăng.
+ */
+export async function repostContributionCard(client: DiscordClient, contribution: Contribution): Promise<Contribution>
+{
+	const { guildId } = contribution;
+	const channelId = client.services.guildConfig.getSettings(guildId).contributionChannelId;
+	if (channelId === null) throw new UserError(NO_CONTRIBUTION_CHANNEL);
+
+	let channel;
+	try
+	{
+		channel = await client.channels.fetch(channelId);
+	}
+	catch (error)
+	{
+		logger.debug(`Không lấy được kênh contribution "${channelId}":`, error);
+		throw new UserError(isNotFoundError(error) ? CONTRIBUTION_CHANNEL_GONE : channelUnavailable(channelId));
+	}
+	if (!channel || channel.isDMBased() || channel.guildId !== guildId || !isBoardChannel(channel)) throw new UserError(CONTRIBUTION_CHANNEL_GONE);
+	const bot = channel.guild.members.me;
+	if (!bot) throw new UserError(BOT_MEMBER_UNAVAILABLE);
+	const missing = missingContributionBotPermissions(channel, bot);
+	if (missing.length > 0)
+	{
+		throw new UserError(`Bot thiếu quyền ${missing.join(", ")} ở kênh contribution ${channelMention(channel.id)}. Hãy cấp quyền cho bot ở kênh đó rồi thử lại.`);
+	}
+
+	if (contribution.channelId !== null && contribution.messageId !== null)
+	{
+		try
+		{
+			const old = await client.channels.fetch(contribution.channelId);
+			if (old?.isTextBased()) await old.messages.delete(contribution.messageId);
+		}
+		catch (error)
+		{
+			logger.debug(`Không xoá được thẻ cũ của contribution #${contribution.id} (có thể đã bị xoá):`, error);
+		}
+	}
+	const posted = await postContributionCard(client.services, channel, contribution);
+	if (posted === null) throw new UserError(`Discord từ chối đăng thẻ vào ${channelMention(channel.id)}. Hãy thử lại sau ít phút.`);
+	return posted;
+}

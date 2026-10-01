@@ -4,8 +4,9 @@
 import type DiscordClient from "../classes/DiscordClient";
 import { Contribution } from "../modules/contribution/types";
 import { AppServices } from "../services";
+import { UserError } from "../shared/errors";
 import type { AdminActions } from "./adminOps";
-import { userMention } from "./format";
+import { channelMention, userMention } from "./format";
 import { inlineText } from "./views/admin";
 import { contributionMessageUrl } from "./views/contribution";
 
@@ -101,4 +102,25 @@ export async function rejectContribution(
 	const head = `❌ Đã từ chối đóng góp #${contribution.id} "${inlineText(contribution.title, TITLE_MAX)}" của ${userMention(contribution.authorId)}.`
 		+ " Lý do chỉ gửi riêng cho tác giả, không hiện trên thẻ.";
 	return finishReview(client, actions, contribution, head);
+}
+
+/**
+ * Đăng lại thẻ của contribution vào kênh contribution đang chọn (web; DEC-051): dùng khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay, để
+ * người duyệt và mọi người còn nút bấm. Chỉ cho contribution còn hiệu lực, chờ duyệt hoặc đã duyệt; thẻ cũ (nếu còn) bị xoá.
+ */
+export async function repostContribution(
+	client: DiscordClient,
+	services: AppServices,
+	actions: Pick<AdminActions, "repostContribution">,
+	guildId: string,
+	contributionId: number,
+): Promise<string>
+{
+	const contribution = services.contributions.get(guildId, contributionId);
+	if (!contribution) throw new UserError(`Không tìm thấy contribution #${contributionId}.`);
+	if (contribution.status === "removed") throw new UserError(`Contribution #${contributionId} đã bị gỡ nên không đăng lại thẻ.`);
+	if (contribution.reviewState === "rejected") throw new UserError(`Contribution #${contributionId} đã bị từ chối nên không cần đăng lại thẻ.`);
+	const posted = await actions.repostContribution(client, contribution);
+	const where = posted.channelId === null ? "kênh contribution" : channelMention(posted.channelId);
+	return `📮 Đã đăng lại thẻ contribution #${contribution.id} ở ${where}. Thẻ cũ (nếu còn) đã được xoá.`;
 }

@@ -337,6 +337,38 @@ describe("web contribution (DEC-051): duyệt và từ chối", () =>
 		assert.equal(services.contributions.get(GUILD, contribution.id)?.reviewState, "approved");
 	});
 
+	test("đăng lại thẻ: chờ duyệt và đã duyệt có form, gọi repostContribution, flash; bị từ chối hoặc đã gỡ thì không có form và POST báo lỗi", async () =>
+	{
+		const harness = createWebHarness();
+		const { services } = harness;
+		const pending = submit(harness, { title: "Chưa có thẻ" });
+		const auth = await login(harness, ADMIN_USER);
+		const detail = await getPage(harness, auth, `/contributions/view?id=${pending.id}`);
+		assert.ok(detail.includes(`action="${pageUrl("/contributions/repost")}"`), "bài chờ duyệt có form đăng lại thẻ");
+		assert.ok(detail.includes("chưa có thẻ trong Discord"), "bài chưa có thẻ thì có cảnh báo");
+
+		const response = await post(harness, auth, "/contributions/repost", { id: String(pending.id) });
+		assert.equal(response.headers.Location, pageUrl(`/contributions/view?id=${pending.id}`));
+		const flash = await flashAfter(harness, auth, response);
+		assert.equal(flash.kind, "ok");
+		assert.ok(flash.text.includes(`Đã đăng lại thẻ contribution #${pending.id}`), flash.text);
+		assert.deepEqual(harness.adminCalls, [`repostContribution:${pending.id}`]);
+
+		const rejected = submit(harness, { title: "Bị từ chối" });
+		services.contributions.reject(GUILD, rejected.id, ADMIN_USER, "Không đủ thông tin");
+		const rejectedPage = await getPage(harness, auth, `/contributions/view?id=${rejected.id}`);
+		assert.ok(!rejectedPage.includes(`action="${pageUrl("/contributions/repost")}"`));
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
+		const refused = await post(harness, auth, "/contributions/repost", { id: String(rejected.id) });
+		assert.deepEqual(await flashAfter(harness, auth, refused), { kind: "error", text: `Contribution #${rejected.id} đã bị từ chối nên không cần đăng lại thẻ.` });
+
+		services.contributions.remove(GUILD, pending.id, ADMIN_USER);
+		harness.clock.advance(DUPLICATE_POST_WINDOW_MS);
+		const removed = await post(harness, auth, "/contributions/repost", { id: String(pending.id) });
+		assert.deepEqual(await flashAfter(harness, auth, removed), { kind: "error", text: `Contribution #${pending.id} đã bị gỡ nên không đăng lại thẻ.` });
+		assert.equal(harness.adminCalls.length, 1, "lỗi thì không gọi đăng lại");
+	});
+
 	test("từ chối: lý do rỗng, quá ngắn, quá dài báo lỗi về đúng trang và không ghi gì; lý do hợp lệ được lưu, audit, nhắn riêng, admin xem được", async () =>
 	{
 		const harness = createWebHarness();

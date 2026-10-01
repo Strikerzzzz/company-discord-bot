@@ -7,7 +7,7 @@
 // Discord báo "không tìm thấy"), nhưng vẫn duyệt, từ chối và gỡ được: admin chịu trách nhiệm về contribution của cả server, như
 // `/admin contribution remove` không kiểm tra kênh.
 import { removeContribution } from "../../discord/adminOps";
-import { approveContribution, rejectContribution, ReviewOutcome } from "../../discord/contributionOps";
+import { approveContribution, rejectContribution, repostContribution, ReviewOutcome } from "../../discord/contributionOps";
 import { formatNumber, userMention } from "../../discord/format";
 import { MemberDisplay } from "../../discord/memberDirectory";
 import { categoryLabel, contributionMessageUrl } from "../../discord/views/contribution";
@@ -33,6 +33,7 @@ const VIEW_PATH = `${PATH}/view`;
 const REMOVE_PATH = `${PATH}/remove`;
 const APPROVE_PATH = `${PATH}/approve`;
 const REJECT_PATH = `${PATH}/reject`;
+const REPOST_PATH = `${PATH}/repost`;
 /** Số contribution mỗi trang của danh sách. */
 export const CONTRIBUTION_PAGE_SIZE = 20;
 const STATUS_PARAM = "tt";
@@ -223,6 +224,20 @@ async function renderList(ctx: GuildPageContext): Promise<WebResponse>
 
 // ---------- Chi tiết ----------
 
+/** Form đăng lại thẻ (contribution còn hiệu lực, chờ duyệt hoặc đã duyệt): khi thẻ đăng lỗi lúc gửi hoặc bị xoá tay. */
+function repostForm(ctx: GuildPageContext, contribution: Contribution): RawHtml
+{
+	const missing = contribution.messageId === null
+		? html`<div class="warn-box">Contribution này chưa có thẻ trong Discord (bot đăng lỗi lúc gửi), nên chưa ai bấm duyệt hay 👍/👎 được trên Discord.</div>`
+		: "";
+	return html`<section class="card"><h2>📮 Đăng lại thẻ</h2>
+${missing}<p>Bot đăng lại thẻ của contribution này vào kênh contribution đang chọn, theo trạng thái hiện tại, và xoá thẻ cũ nếu còn. Dùng khi thẻ bị xoá
+hoặc đăng lỗi. Không đổi điểm hay lượt bấm.</p>
+<form method="post" action="${guildUrl(ctx, REPOST_PATH)}">${csrfField(ctx)}<input type="hidden" name="id" value="${contribution.id}">
+<div class="actions"><button class="btn" type="submit">📮 Đăng lại thẻ #${contribution.id}</button></div>
+</form></section>`;
+}
+
 function removeForm(ctx: GuildPageContext, contribution: Contribution): RawHtml
 {
 	return html`<section class="card danger-zone"><h2>Gỡ contribution</h2>
@@ -379,6 +394,7 @@ async function renderDetail(ctx: GuildPageContext): Promise<WebResponse>
 ${detail}
 ${active && contribution.reviewState === "pending" ? reviewForms(ctx, contribution, visible) : ""}
 ${votersSection(ctx, contribution, voters, displays, visible)}
+${active && contribution.reviewState !== "rejected" ? repostForm(ctx, contribution) : ""}
 ${active ? removeForm(ctx, contribution) : html`<p class="muted">Contribution này đã bị gỡ: toàn bộ điểm của nó đã bị huỷ.</p>`}`,
 	});
 }
@@ -418,6 +434,15 @@ async function reject(ctx: GuildPageContext): Promise<WebResponse>
 	return redirectWithFlash(ctx, viewPath(id), "ok", await reviewFlash(ctx, outcome));
 }
 
+/** Đăng lại thẻ qua contributionOps.repostContribution (kiểm tra kênh và quyền bot ở tầng Discord). */
+async function repost(ctx: GuildPageContext): Promise<WebResponse>
+{
+	const id = requireContributionId(ctx.req.form?.get("id"));
+	const { client, services, adminActions } = ctx.deps;
+	const text = await repostContribution(client, services, adminActions, ctx.guild.id, id);
+	return redirectWithFlash(ctx, viewPath(id), "ok", text);
+}
+
 // ---------- Gỡ ----------
 
 /**
@@ -452,6 +477,7 @@ export const contributionsPage: PageModule = {
 		{ method: "GET", path: VIEW_PATH, handler: renderDetail },
 		{ method: "POST", path: APPROVE_PATH, handler: approve, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: REJECT_PATH, handler: reject, errorRedirect: detailErrorRedirect },
+		{ method: "POST", path: REPOST_PATH, handler: repost, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: REMOVE_PATH, handler: remove, errorRedirect: detailErrorRedirect },
 	],
 	css: `

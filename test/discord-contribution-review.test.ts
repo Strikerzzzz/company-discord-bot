@@ -17,6 +17,7 @@ import {
 	PermissionsBitField,
 } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
+import { CONTRIBUTION_CHANNEL_GONE, NO_CONTRIBUTION_CHANNEL, repostContributionCard } from "../src/discord/messages";
 import {
 	CONTRIBUTION_REASON_INPUT,
 	contributionComponentId,
@@ -379,6 +380,8 @@ interface Harness
 	edits: { messageId: string; payload: unknown }[];
 	/** Các thẻ bot đăng vào kênh contribution. */
 	sent: unknown[];
+	/** Các message bot xoá trong kênh contribution (đăng lại thẻ). */
+	deleted: string[];
 }
 
 function createHarness(settings: Partial<GuildSettings> = {}): Harness
@@ -391,6 +394,7 @@ function createHarness(settings: Partial<GuildSettings> = {}): Harness
 	const dms: { userId: string; content: string }[] = [];
 	const edits: { messageId: string; payload: unknown }[] = [];
 	const sent: unknown[] = [];
+	const deleted: string[] = [];
 	const contribChannel = {
 		id: CHANNEL_CONTRIB,
 		guildId: GUILD,
@@ -408,6 +412,11 @@ function createHarness(settings: Partial<GuildSettings> = {}): Harness
 			edit: (messageId: string, payload: unknown) =>
 			{
 				edits.push({ messageId, payload });
+				return Promise.resolve();
+			},
+			delete: (messageId: string) =>
+			{
+				deleted.push(messageId);
 				return Promise.resolve();
 			},
 		},
@@ -431,7 +440,7 @@ function createHarness(settings: Partial<GuildSettings> = {}): Harness
 			return Promise.resolve(true);
 		},
 	};
-	return { context, contributions, command, client, refreshed, dms, edits, sent };
+	return { context, contributions, command, client, refreshed, dms, edits, sent, deleted };
 }
 
 /** Contribution chờ duyệt của `authorId` (gửi bởi `submittedBy`), đã có thẻ trong kênh contribution. */
@@ -1096,5 +1105,38 @@ describe("/config contribution (DEC-051)", () =>
 		harness.context.deps.guildConfig.changeRoleGrants(GUILD, "contributionReviewerRoleIds", { add: [ROLE_BACKEND] }, ADMIN);
 		await press(harness, `contrib:approve:${contribution.id}`, { userId: USER_C, roleIds: [ROLE_BACKEND] });
 		assert.equal(current(harness, contribution.id).reviewState, "approved");
+	});
+});
+
+describe("repostContributionCard (đăng lại thẻ từ web, DEC-051)", () =>
+{
+	test("xoá thẻ cũ, đăng thẻ mới theo trạng thái hiện tại vào kênh contribution đang chọn và lưu vị trí mới", async () =>
+	{
+		const harness = createHarness();
+		const contribution = harness.contributions.submit({
+			guildId: GUILD, authorId: USER_A, submittedBy: USER_A, title: "Thẻ bị xoá", description: "Mô tả.", category: "khac", link: null, authorRoleIds: [],
+		});
+		harness.contributions.attachMessage(GUILD, contribution.id, CHANNEL_CONTRIB, "600000000000000099");
+		const before = harness.contributions.get(GUILD, contribution.id);
+		assert.ok(before);
+
+		const posted = await repostContributionCard(harness.client, before);
+		assert.deepEqual(harness.deleted, ["600000000000000099"]);
+		assert.equal(harness.sent.length, 1);
+		assert.equal(posted.messageId, CARD_MESSAGE_ID);
+		assert.equal(harness.contributions.get(GUILD, contribution.id)?.messageId, CARD_MESSAGE_ID);
+	});
+
+	test("chưa chọn kênh contribution hoặc bot thiếu quyền: UserError, không đăng gì", async () =>
+	{
+		const harness = createHarness();
+		const contribution = harness.contributions.submit({
+			guildId: GUILD, authorId: USER_A, submittedBy: USER_A, title: "Chưa có kênh", description: "Mô tả.", category: "khac", link: null, authorRoleIds: [],
+		});
+		harness.context.deps.guildConfig.updateSettings(GUILD, { contributionChannelId: null }, ADMIN);
+		await assert.rejects(repostContributionCard(harness.client, contribution), (error: unknown) => error instanceof UserError && error.message === NO_CONTRIBUTION_CHANNEL);
+		harness.context.deps.guildConfig.updateSettings(GUILD, { contributionChannelId: "419999999999999998" }, ADMIN);
+		await assert.rejects(repostContributionCard(harness.client, contribution), (error: unknown) => error instanceof UserError && error.message === CONTRIBUTION_CHANNEL_GONE);
+		assert.equal(harness.sent.length, 0);
 	});
 });
