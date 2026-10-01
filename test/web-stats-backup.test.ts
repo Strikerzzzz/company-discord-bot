@@ -113,9 +113,10 @@ describe("web: trang Thống kê (DEC-041)", () =>
 		services.activity.adjustXp({ guildId: GUILD, userId: PLAIN_USER, delta: 1234, actorId: ADMIN_USER, reason: null, roleIds: [] });
 		services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
 		ensureContributionChannel(harness);
-		services.contributions.submit({
+		const contribution = services.contributions.submit({
 			guildId: GUILD, authorId: PLAIN_USER, submittedBy: PLAIN_USER, title: "Viết tài liệu", description: "Mô tả", category: "y-tuong", link: null, authorRoleIds: [],
 		});
+		services.contributions.approve(GUILD, contribution.id, ADMIN_USER);
 		const open = services.polls.create({ guildId: GUILD, creatorId: ADMIN_USER, question: "Ăn gì?", options: ["Phở", "Bún"], multiSelect: false, xpReward: 0, durationMinutes: null });
 		const closed = services.polls.create({ guildId: GUILD, creatorId: ADMIN_USER, question: "Đi đâu?", options: ["Biển", "Núi"], multiSelect: false, xpReward: 0, durationMinutes: null });
 		services.polls.vote({ guildId: GUILD, pollId: open.id, userId: PLAIN_USER, optionIndex: 0, roleIds: [] });
