@@ -2,6 +2,7 @@ import DiscordClient from "../classes/DiscordClient";
 import { Poll } from "../modules/poll/types";
 import { logger } from "../shared/logger";
 import { editPostedMessage } from "./messages";
+import { settleRetroPoll } from "./retroOps";
 import { pollMessage } from "./views/poll";
 
 /**
@@ -13,7 +14,18 @@ export function refreshPollMessage(client: DiscordClient, poll: Poll): Promise<b
 	return editPostedMessage(client, poll, () => pollMessage(poll), `vote #${poll.id}`);
 }
 
-/** Một lượt: đóng mọi vote quá hạn rồi cập nhật message của từng vote. Trả về số vote vừa đóng. */
+/**
+ * Việc cần làm sau khi một vote bị đóng (lệnh, web hay lịch tự đóng): sửa message của vote, rồi nếu là vote tên sprint của một phiên
+ * retro thì chốt tên (DEC-049). Không ném lỗi. Trả về true nếu đã sửa được message của vote.
+ */
+export async function afterPollClosed(client: DiscordClient, poll: Poll): Promise<boolean>
+{
+	const refreshed = await refreshPollMessage(client, poll);
+	await settleRetroPoll(client, poll);
+	return refreshed;
+}
+
+/** Một lượt: đóng mọi vote quá hạn rồi cập nhật message của từng vote (và chốt vote tên sprint). Trả về số vote vừa đóng. */
 export async function runPollSweep(client: DiscordClient): Promise<number>
 {
 	let closed: Poll[];
@@ -27,7 +39,7 @@ export async function runPollSweep(client: DiscordClient): Promise<number>
 		return 0;
 	}
 
-	for (const poll of closed) await refreshPollMessage(client, poll);
+	for (const poll of closed) await afterPollClosed(client, poll);
 	if (closed.length > 0) logger.info(`Đã tự đóng ${closed.length} vote quá hạn.`);
 	return closed.length;
 }

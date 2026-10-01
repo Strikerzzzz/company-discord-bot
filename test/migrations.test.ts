@@ -9,6 +9,8 @@ import { AuditService } from "../src/modules/audit/AuditService";
 import { GuildConfigService } from "../src/modules/guild-config/GuildConfigService";
 import { TierSetService } from "../src/modules/gamification/TierSetService";
 import { Ledger } from "../src/modules/ledger/Ledger";
+import { PollService } from "../src/modules/poll/PollService";
+import { RetroService } from "../src/modules/retro/RetroService";
 import { TeamService } from "../src/modules/team/TeamService";
 import { FakeClock } from "./helpers";
 
@@ -21,7 +23,7 @@ describe("migrations", () =>
 		assert.equal(currentSchemaVersion(db), MIGRATIONS[MIGRATIONS.length - 1].version);
 
 		const tables = db.prepare<[], { name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name);
-		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals", "guild_role_grants", "member_tier_prefs"])
+		for (const name of ["guild_settings", "channel_settings", "team_roles", "xp_events", "member_xp", "contributions", "contribution_events", "member_contribution", "contribution_votes", "polls", "poll_options", "poll_votes", "poll_participants", "audit_log", "xp_team_totals", "contribution_team_totals", "guild_role_grants", "member_tier_prefs", "retro_sessions", "retro_entries", "retro_config", "retro_manager_roles"])
 		{
 			assert.ok(tables.includes(name), `thiếu bảng ${name}`);
 		}
@@ -215,7 +217,7 @@ describe("migrations", () =>
 		db.prepare("INSERT INTO tier_set_config (guild_id, set_key, updated_at) VALUES ('g1', 'rank-game', 1000)").run();
 		db.prepare("INSERT INTO tier_name_overrides (guild_id, set_key, tier_key, name, emoji, updated_at) VALUES ('g1', 'cay-xanh', 'bac-1', 'Mầm', NULL, 1000)").run();
 
-		assert.equal(runMigrations(db), 1);
+		assert.equal(runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 8)), 1);
 		assert.equal(currentSchemaVersion(db), 8);
 		const config = db.prepare<[], { guild_id: string; set_key: string; updated_at: number; allow_personal: number }>(
 			"SELECT guild_id, set_key, updated_at, allow_personal FROM tier_set_config").all();
@@ -244,6 +246,55 @@ describe("migrations", () =>
 		assert.equal(display.source, "personal");
 		assert.equal(display.set.tiers[0].name, "Mầm", "tên tuỳ chỉnh của server cho bộ đã chọn vẫn áp dụng");
 		assert.equal(display.serverSet.key, "rank-game");
+	});
+
+	test("DB đang ở version 8 có dữ liệu: migration 9 thêm các bảng retro, không đổi xp_events; ràng buộc đúng (DEC-049)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 8));
+		db.prepare("INSERT INTO xp_events (guild_id, user_id, amount, source, created_at) VALUES ('g1', 'u1', 10, 'message', 0)").run();
+		const xpColumns = (): string[] => db.prepare<[], { name: string }>("PRAGMA table_info(xp_events)").all().map(column => column.name);
+		const before = xpColumns();
+
+		assert.equal(runMigrations(db), 1);
+		assert.equal(currentSchemaVersion(db), 9);
+		assert.deepEqual(xpColumns(), before, "bảng xp_events không đổi");
+		assert.equal(db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM xp_events").get()?.n, 1);
+		assert.throws(() => db.prepare("INSERT INTO xp_events (guild_id, user_id, amount, source, created_at) VALUES ('g1', 'u1', 1, 'retro', 0)").run(), /CHECK/, "không thêm nguồn XP mới");
+
+		const insertSession = db.prepare<[string, string, string]>(
+			"INSERT INTO retro_sessions (guild_id, title, channel_id, status, created_by, created_at) VALUES ('g1', 'Retro', ?, ?, ?, 0)");
+		insertSession.run("c1", "open", "u1");
+		assert.throws(() => insertSession.run("c1", "open", "u2"), /UNIQUE/, "một kênh chỉ một phiên đang mở");
+		insertSession.run("c1", "closed", "u2");
+		insertSession.run("c1", "done", "u2");
+		assert.throws(() => insertSession.run("c2", "paused", "u1"), /CHECK/);
+		db.prepare("INSERT INTO retro_entries (session_id, guild_id, user_id, learned, submitted_at, updated_at) VALUES (1, 'g1', 'u1', 'x', 0, 0)").run();
+		assert.throws(() => db.prepare("INSERT INTO retro_entries (session_id, guild_id, user_id, submitted_at, updated_at) VALUES (1, 'g1', 'u1', 0, 0)").run(), /UNIQUE/);
+		assert.throws(() => db.prepare("INSERT INTO retro_entries (session_id, guild_id, user_id, submitted_at, updated_at) VALUES (99, 'g1', 'u9', 0, 0)").run(), /FOREIGN KEY/);
+		assert.equal(db.prepare<[], { team_role_ids: string }>("SELECT team_role_ids FROM retro_entries").get()?.team_role_ids, "[]");
+		db.prepare("INSERT INTO retro_config (guild_id, updated_at) VALUES ('g1', 0)").run();
+		assert.deepEqual(db.prepare("SELECT fill_xp, proposer_bonus_xp, vote_minutes FROM retro_config").get(), { fill_xp: 20, proposer_bonus_xp: 100, vote_minutes: 1440 });
+		db.prepare("INSERT INTO retro_manager_roles (guild_id, role_id, created_at) VALUES ('g1', 'r1', 0)").run();
+		assert.throws(() => db.prepare("INSERT INTO retro_manager_roles (guild_id, role_id, created_at) VALUES ('g1', 'r1', 1)").run(), /UNIQUE|PRIMARY/);
+
+		const clock = new FakeClock();
+		const audit = new AuditService(db, clock);
+		const deps = {
+			clock,
+			audit,
+			guildConfig: new GuildConfigService(db, clock, audit),
+			teams: new TeamService(db, clock, audit),
+			xpLedger: new Ledger(db, "xp", clock),
+			contributionLedger: new Ledger(db, "contribution", clock),
+			tierSets: new TierSetService(db, clock, audit),
+		};
+		const retro = new RetroService(db, deps, new PollService(db, deps));
+		const session = retro.create({ guildId: "g2", channelId: "c1", title: "Retro mới", docUrl: null, teamRoleId: null, durationHours: null, createdBy: "u1" });
+		retro.submit({ guildId: "g2", sessionId: session.id, userId: "u1", roleIds: [], answers: { learned: "a", improve: "", ideas: "", kudos: "", sprintName: "" }, systemActorId: "bot" });
+		assert.equal(retro.get("g2", session.id)?.participants, 1);
+		assert.equal(retro.getConfig("g1").fillXp, 20);
+		assert.deepEqual(retro.getConfig("g1").managerRoleIds, ["r1"]);
 	});
 
 	test("từ chối database mới hơn code", () =>

@@ -41,14 +41,14 @@ const ICONS: Readonly<Record<CheckStatus, string>> = { ok: "✅", warn: "⚠️"
 const HIDDEN = "[đã ẩn]";
 
 /**
- * Che mọi lần xuất hiện của DISCORD_TOKEN (nguyên văn và đã trim), rồi che thêm chuỗi có dạng token như logger của bot.
- * Token (đã trim) ngắn hơn MIN_TOKEN_LENGTH không được thay nguyên văn: thay một chuỗi như "a" làm nát mọi dòng, còn dòng
+ * Che mọi lần xuất hiện của DISCORD_TOKEN và CONFLUENCE_TOKEN (nguyên văn và đã trim), rồi che thêm chuỗi có dạng token như logger
+ * của bot. Giá trị (đã trim) ngắn hơn MIN_TOKEN_LENGTH không được thay nguyên văn: thay một chuỗi như "a" làm nát mọi dòng, còn dòng
  * DISCORD_TOKEN đã báo token đó không phải token bot.
  */
 export function redactSecrets(text: string, env: NodeJS.ProcessEnv): string
 {
-	const raw = env.DISCORD_TOKEN ?? "";
-	const secrets = [raw, raw.trim()]
+	const raws = [env.DISCORD_TOKEN ?? "", env.CONFLUENCE_TOKEN ?? ""];
+	const secrets = raws.flatMap(raw => [raw, raw.trim()])
 		.filter(secret => secret.trim().length >= MIN_TOKEN_LENGTH)
 		.sort((a, b) => b.length - a.length);
 	return redact(secrets.reduce((result, secret) => result.split(secret).join(HIDDEN), text));

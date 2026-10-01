@@ -17,6 +17,8 @@ import { Ledger } from "./modules/ledger/Ledger";
 import { LiveBoardService, LiveBoardServiceApi } from "./modules/live-board/LiveBoardService";
 import { PollService } from "./modules/poll/PollService";
 import { PollServiceApi } from "./modules/poll/types";
+import { RetroService } from "./modules/retro/RetroService";
+import { RetroServiceApi } from "./modules/retro/types";
 import { StatisticsService } from "./modules/statistics/StatisticsService";
 import { StatisticsServiceApi } from "./modules/statistics/types";
 import { TeamService } from "./modules/team/TeamService";
@@ -41,6 +43,8 @@ export interface AppServices
 	tierSets: TierSetServiceApi;
 	/** Bảng vàng tự cập nhật (DEC-030). */
 	liveBoards: LiveBoardServiceApi;
+	/** Retro sprint theo team (DEC-049). */
+	retro: RetroServiceApi;
 	backup: BackupService;
 }
 
@@ -49,6 +53,8 @@ export interface ServiceOptions
 	clock: Clock;
 	backupDir: string;
 	backupKeep: number;
+	/** CONFLUENCE_BASE_URL đã chuẩn hoá (DEC-049); không có = chưa cấu hình, link tài liệu retro không bị kiểm tra host. */
+	confluenceBaseUrl?: string | null;
 }
 
 /** Composition root của tầng nghiệp vụ: tạo mọi service bằng constructor injection thủ công. */
@@ -66,6 +72,8 @@ export function createServices(db: Db, options: ServiceOptions): AppServices
 		tierSets: new TierSetService(db, clock, audit),
 	};
 
+	const polls = new PollService(db, deps);
+
 	return {
 		clock,
 		audit,
@@ -73,13 +81,14 @@ export function createServices(db: Db, options: ServiceOptions): AppServices
 		teams: deps.teams,
 		activity: new ActivityService(db, deps),
 		contributions: new ContributionService(db, deps),
-		polls: new PollService(db, deps),
+		polls,
 		leaderboard: new LeaderboardService(deps),
 		statistics: new StatisticsService(db, deps),
 		gamification: new GamificationService(db, deps),
 		tierRoles: new TierRoleService(db, clock, audit),
 		tierSets: deps.tierSets,
 		liveBoards: new LiveBoardService(db, clock, audit),
+		retro: new RetroService(db, deps, polls, options.confluenceBaseUrl ?? null),
 		backup: new BackupService(db, options.backupDir, options.backupKeep, clock),
 	};
 }

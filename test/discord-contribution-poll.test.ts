@@ -317,6 +317,7 @@ function setup(settings: Partial<GuildSettings> = {}, channels: Record<string, F
 		guildConfig: { getSettings: (): GuildSettings => ({ ...DEFAULT_GUILD_SETTINGS, ...settings }) },
 		contributions,
 		polls,
+		retro: { findByPoll: (): null => null },
 	};
 	const client = {
 		services: services as unknown as AppServices,
@@ -1364,7 +1365,7 @@ describe("pollScheduler", () =>
 
 	function schedulerClient(closeDue: () => Poll[], fetch: FetchChannel): DiscordClient
 	{
-		const client = { services: { polls: { closeDue } }, channels: { fetch } };
+		const client = { services: { polls: { closeDue }, retro: { findByPoll: (): null => null } }, channels: { fetch } };
 		return client as unknown as DiscordClient;
 	}
 

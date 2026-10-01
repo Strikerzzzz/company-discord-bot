@@ -5,6 +5,7 @@ import type DiscordClient from "../classes/DiscordClient";
 import type { WebConfig } from "../config";
 import type { AdminActions } from "../discord/adminOps";
 import type { LiveBoardActions } from "../discord/configOps";
+import type { RetroActions } from "../discord/retroOps";
 import type { AppServices } from "../services";
 import type { Clock } from "../shared/clock";
 import type { WebRequest, WebResponse } from "./http";
@@ -28,6 +29,12 @@ export interface WebDeps
 	 * role danh hiệu, tìm thành viên, tên hiển thị. Test thay bằng hàm giả.
 	 */
 	adminActions: AdminActions;
+	/**
+	 * Tác dụng phụ của retro (DEC-049, src/discord/retroOps.ts): sửa/đăng tin trong kênh của phiên, ghi Confluence (`docWriter` null
+	 * = chưa cấu hình). Trang Retro gọi các hàm của retroOps với context { client, services, actions: retroActions }. Test thay bằng
+	 * bản giả.
+	 */
+	retroActions: RetroActions;
 }
 
 /**
@@ -55,6 +62,7 @@ export type NavKey =
 	| "leaderboard"
 	| "contributions"
 	| "polls"
+	| "retro"
 	| "stats"
 	| "channels"
 	| "teams"

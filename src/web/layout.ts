@@ -25,6 +25,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
 	{ key: "leaderboard", path: "/leaderboard", label: "📊 Bảng xếp hạng", group: DATA_GROUP },
 	{ key: "contributions", path: "/contributions", label: "🤝 Contribution", group: DATA_GROUP },
 	{ key: "polls", path: "/polls", label: "🗳️ Vote", group: DATA_GROUP },
+	{ key: "retro", path: "/retro", label: "🔁 Retro", group: DATA_GROUP },
 	{ key: "stats", path: "/stats", label: "📈 Thống kê", group: DATA_GROUP },
 	{ key: "channels", path: "/channels", label: "📺 Kênh tính XP", group: CONFIG_GROUP },
 	{ key: "teams", path: "/teams", label: "👥 Team", group: CONFIG_GROUP },

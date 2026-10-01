@@ -92,6 +92,15 @@ const AUDIT_ACTIONS: Record<AuditAction, true> = {
 	"board.set": true,
 	"board.clear": true,
 	"backup.manual": true,
+	"retro.create": true,
+	"retro.close": true,
+	"retro.reopen": true,
+	"retro.extend": true,
+	"retro.vote": true,
+	"retro.pick": true,
+	"retro.idea_delete": true,
+	"retro.content_delete": true,
+	"retro.config": true,
 };
 const ALL_ACTIONS = Object.keys(AUDIT_ACTIONS) as AuditAction[];
 

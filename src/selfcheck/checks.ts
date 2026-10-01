@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { loadConfig, loadWebConfig } from "../config";
+import { loadConfig, loadConfluenceConfig, loadWebConfig } from "../config";
 
 /*
  * Các bước tự kiểm tra môi trường (`npm run selfcheck`, DEC-034). Mỗi hàm trả về kết quả thay vì in ra hay throw,
@@ -185,6 +185,18 @@ export function checkWebConfig(env: NodeJS.ProcessEnv): CheckResult
 }
 
 /**
+ * Cấu hình ghi retro vào Confluence (DEC-049), đọc bằng đúng loadConfluenceConfig của bot. Không in token (chỉ báo "có"); lỗi chỉ
+ * nêu tên biến. Không gọi mạng: token đúng hay sai chỉ biết khi bot ghi thật (lỗi hiện trên trang Retro của web).
+ */
+export function checkConfluenceConfig(env: NodeJS.ProcessEnv): CheckResult
+{
+	const confluence = attempt(() => loadConfluenceConfig(env));
+	if (!confluence.ok) return fail("config", `Ghi retro vào Confluence: ${confluence.error}`);
+	if (confluence.value === null) return ok("config", "Ghi retro vào Confluence: tắt (không đặt CONFLUENCE_BASE_URL, CONFLUENCE_TOKEN). Retro vẫn chạy, chỉ bỏ bước ghi.");
+	return ok("config", `Ghi retro vào Confluence: bật, địa chỉ ${confluence.value.baseUrl}; CONFLUENCE_TOKEN: có.`);
+}
+
+/**
  * Đọc cấu hình bằng đúng loadConfig của bot. Token luôn được thay bằng chuỗi giả trước khi gọi loadConfig, nên token thật
  * không thể lọt vào thông báo lỗi. Guild ID và các biến còn lại được kiểm tra riêng để một lần chạy báo đủ các lỗi.
  * Giá trị sai của biến cấu hình không được in lại (có thể là secret dán nhầm chỗ, hoặc chứa ký tự xuống dòng tạo dòng giả).
@@ -194,16 +206,23 @@ export function checkConfig(env: NodeJS.ProcessEnv): ConfigCheck
 	const results = [checkToken(env.DISCORD_TOKEN)];
 	const base: NodeJS.ProcessEnv = { ...env, DISCORD_TOKEN: PLACEHOLDER_TOKEN };
 
-	const guilds = attempt(() => loadConfig({ ...base, BACKUP_KEEP: undefined }).guildIds);
+	const guilds = attempt(() => loadConfig({ ...base, BACKUP_KEEP: undefined, CONFLUENCE_BASE_URL: undefined, CONFLUENCE_TOKEN: undefined }).guildIds);
 	results.push(guilds.ok
 		? ok("config", `DISCORD_GUILD_IDS: ${guilds.value.length} guild hợp lệ (${guilds.value.join(", ")}).`)
 		: guildIdsFailure(env.DISCORD_GUILD_IDS));
 
-	const rest = attempt(() => loadConfig({ ...base, DISCORD_GUILD_IDS: PLACEHOLDER_GUILD, WEB_PORT: undefined }));
+	const rest = attempt(() => loadConfig({
+		...base,
+		DISCORD_GUILD_IDS: PLACEHOLDER_GUILD,
+		WEB_PORT: undefined,
+		CONFLUENCE_BASE_URL: undefined,
+		CONFLUENCE_TOKEN: undefined,
+	}));
 	results.push(rest.ok
 		? ok("config", `Database: ${rest.value.databasePath} · Backup: ${rest.value.backupDir} (giữ ${rest.value.backupKeep} bản).`)
 		: fail("config", rest.error));
 	results.push(checkWebConfig(env));
+	results.push(checkConfluenceConfig(env));
 
 	const logLevel = env.LOG_LEVEL;
 	if (logLevel && !LOG_LEVELS.includes(logLevel))

@@ -5,6 +5,7 @@ import ButtonHandler from "../handlers/ButtonHandler";
 import { AvatarFetcher } from "../discord/avatars";
 import { MemberDirectory } from "../discord/memberDirectory";
 import { RenderGate } from "../discord/renderGate";
+import { createRetroActions, RetroActions } from "../discord/retroOps";
 import { AppServices } from "../services";
 import { logger } from "../shared/logger";
 
@@ -24,8 +25,10 @@ export default class DiscordClient extends Client
 	readonly members = new MemberDirectory();
 	// Cooldown theo người và giới hạn số lần vẽ ảnh đồng thời cho /rank, /leaderboard và Bảng vàng.
 	readonly renderGate = new RenderGate();
+	// Tác dụng phụ của retro (DEC-049): sửa/đăng tin trong kênh của phiên, ghi Confluence (null nếu chưa cấu hình).
+	readonly retroActions: RetroActions;
 
-	constructor(services: AppServices, guildIds: readonly string[])
+	constructor(services: AppServices, guildIds: readonly string[], retroActions: RetroActions = createRetroActions(null))
 	{
 		super({
 			intents: [
@@ -42,6 +45,7 @@ export default class DiscordClient extends Client
 
 		this.services = services;
 		this.guildIds = guildIds;
+		this.retroActions = retroActions;
 
 		// Nếu không có listener cho "error", EventEmitter sẽ ném lỗi và làm sập process.
 		this.on(Events.Error, (error) => logger.error("Lỗi từ discord.js client:", error));

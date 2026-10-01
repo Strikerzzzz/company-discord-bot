@@ -104,12 +104,13 @@ export async function fetchBotMember(guild: Guild): Promise<GuildMember>
  * Vai trò khác của role trong cấu hình bot (một trong các role admin bot, một trong các role tạo vote, team; DEC-044); null nếu
  * không có.
  */
-export function otherRoleUsage(services: TierRoleServices, guildId: string, roleId: string): string | null
+export function otherRoleUsage(services: TierRoleServices & Partial<Pick<AppServices, "retro">>, guildId: string, roleId: string): string | null
 {
 	const settings = services.guildConfig.getSettings(guildId);
 	if (settings.adminRoleIds.includes(roleId)) return "role admin bot";
 	if (settings.pollCreatorRoleIds.includes(roleId)) return "role được tạo vote";
 	if (services.teams.list(guildId).includes(roleId)) return "role của một team";
+	if (services.retro?.getConfig(guildId).managerRoleIds.includes(roleId)) return "role quản lý retro";
 	return null;
 }
 

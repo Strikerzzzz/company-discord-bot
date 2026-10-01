@@ -3,10 +3,13 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ChannelType, Collection, PermissionFlagsBits, PermissionsBitField } from "discord.js";
-import type { Guild, GuildMember, Role } from "discord.js";
+import type { Guild, GuildMember, MessageCreateOptions, Role } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
 import type { AdminActions } from "../src/discord/adminOps";
 import type { LiveBoardActions } from "../src/discord/configOps";
+import type { RetroActions } from "../src/discord/retroOps";
+import { ConfluenceError } from "../src/integrations/confluence";
+import type { RetroDocSection, RetroDocWriter } from "../src/integrations/confluence";
 import { UNKNOWN_MEMBER_NAME } from "../src/discord/memberDirectory";
 import type { MemberDisplay } from "../src/discord/memberDirectory";
 import type { TierRoleSyncResult } from "../src/discord/roleSync";
@@ -220,6 +223,28 @@ export interface WebHarness
 	formerUsers: Map<string, { bot: boolean }>;
 	/** Kết quả đồng bộ role danh hiệu giả trả về (mặc định: không đổi gì). Test gán để giả lập role được thêm/bỏ/bỏ qua. */
 	tierSync: { result: TierRoleSyncResult };
+	/** Các lần gọi RetroActions giả: "refreshSession:<id>", "post:<channelId>" (tin đăng nằm trong `retroPosts`). */
+	retroCalls: string[];
+	/** Tin RetroActions giả đã "đăng", theo thứ tự. */
+	retroPosts: { channelId: string; payload: MessageCreateOptions }[];
+	/** Nơi ghi Confluence giả (RetroActions.docWriter): ghi lại mỗi lần ghi; gán `error` để lần ghi sau ném ConfluenceError. */
+	retroDoc: FakeRetroDoc;
+}
+
+/** RetroDocWriter giả cho test web: không gọi mạng. */
+export class FakeRetroDoc implements RetroDocWriter
+{
+	readonly baseUrl = "https://confluence.test";
+	writes: { docUrl: string; section: RetroDocSection }[] = [];
+	/** Khác null: lần ghi ném ConfluenceError với thông báo này. */
+	error: string | null = null;
+
+	writeRetroSection(docUrl: string, section: RetroDocSection): Promise<void>
+	{
+		if (this.error !== null) return Promise.reject(new ConfluenceError(this.error));
+		this.writes.push({ docUrl, section });
+		return Promise.resolve();
+	}
 }
 
 let backupDirCounter = 0;
@@ -314,6 +339,23 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 			return Promise.resolve(formerUsers.get(userId) ?? null);
 		},
 	};
+	const retroCalls: string[] = [];
+	const retroPosts: { channelId: string; payload: MessageCreateOptions }[] = [];
+	const retroDoc = new FakeRetroDoc();
+	const retroActions: RetroActions = {
+		docWriter: retroDoc,
+		refreshSessionMessage: (_client, session) =>
+		{
+			retroCalls.push(`refreshSession:${session.id}`);
+			return Promise.resolve(session.messageId !== null);
+		},
+		post: (_client, channelId, payload) =>
+		{
+			retroCalls.push(`post:${channelId}`);
+			retroPosts.push({ channelId, payload });
+			return Promise.resolve({ channelId, messageId: String(700000000000000000n + BigInt(retroPosts.length)) });
+		},
+	};
 	const deps: WebDeps = {
 		client,
 		services,
@@ -323,8 +365,22 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		clock,
 		liveBoardActions,
 		adminActions,
+		retroActions,
 	};
-	return { handler: createWebHandler(deps, modules), services, clock, world, deps, boardCalls, adminCalls, tierSync, formerUsers };
+	return {
+		handler: createWebHandler(deps, modules),
+		services,
+		clock,
+		world,
+		deps,
+		boardCalls,
+		adminCalls,
+		tierSync,
+		formerUsers,
+		retroCalls,
+		retroPosts,
+		retroDoc,
+	};
 }
 
 function jsonResponse(status: number, body: unknown): Response

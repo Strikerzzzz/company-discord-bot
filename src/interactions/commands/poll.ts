@@ -2,7 +2,7 @@ import { ButtonInteraction, ChatInputCommandInteraction, MessageFlags, SlashComm
 import Command from "../../classes/Command";
 import { assertCanSendMessages, canViewChannel, checkAdmin, checkCanCreatePoll, filterViewable, requireGuildId } from "../../discord/guards";
 import { roleIdsOf } from "../../discord/members";
-import { refreshPollMessage } from "../../discord/pollScheduler";
+import { afterPollClosed } from "../../discord/pollScheduler";
 import {
 	parsePollButtonId,
 	parsePollOptions,
@@ -172,9 +172,9 @@ export default class PollCmd extends Command
 		await this.requireVisiblePoll(interaction, guildId, pollId);
 		const poll = services.polls.close({ guildId, pollId, actorId: interaction.user.id, actorIsAdmin: checkAdmin(interaction, services) });
 
-		// Trả lời trước, sau đó mới sửa message gốc; lỗi khi sửa chỉ ghi log.
+		// Trả lời trước, sau đó mới sửa message gốc (và chốt vote tên sprint nếu là vote của retro); lỗi chỉ ghi log.
 		await interaction.editReply({ content: "Đã đóng vote.", embeds: [pollEmbed(poll)] });
-		await refreshPollMessage(this.client, poll);
+		await afterPollClosed(this.client, poll);
 	}
 
 	private async results(interaction: ChatInputCommandInteraction): Promise<void>

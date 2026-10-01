@@ -14,6 +14,20 @@ export interface BotConfig
 	backupKeep: number;
 	/** Trang web quản trị (DEC-039); null = tắt (không đặt WEB_PORT). */
 	web: WebConfig | null;
+	/** Ghi retro vào Confluence nội bộ (DEC-049); null = tắt (không đặt CONFLUENCE_BASE_URL và CONFLUENCE_TOKEN). */
+	confluence: ConfluenceConfig | null;
+}
+
+/** Kết nối Confluence nội bộ để bot ghi bảng retro (DEC-049, ngoại lệ luật protected số 3). */
+export interface ConfluenceConfig
+{
+	/**
+	 * Địa chỉ gốc của Confluence, https, không có "/" ở cuối (ví dụ https://confluence.congty.vn hoặc
+	 * https://congty.vn/confluence). Bot chỉ gửi token tới đúng host này.
+	 */
+	baseUrl: string;
+	/** Personal Access Token (header Bearer). Bí mật: không bao giờ log hay đưa vào thông báo lỗi. */
+	token: string;
 }
 
 /** Cấu hình trang web quản trị (DEC-039). */
@@ -58,7 +72,45 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig
 		backupDir: resolve(optionalEnv(env, "BACKUP_DIR") ?? join(PROJECT_ROOT, "data", "backups")),
 		backupKeep: integerEnv(env, "BACKUP_KEEP", 14, 1, 365),
 		web: loadWebConfig(env),
+		confluence: loadConfluenceConfig(env),
 	};
+}
+
+/**
+ * Cấu hình ghi Confluence (DEC-049): không đặt cả CONFLUENCE_BASE_URL lẫn CONFLUENCE_TOKEN thì trả về null (tắt; retro vẫn chạy,
+ * chỉ bỏ bước ghi). Đặt một trong hai thì bắt buộc đủ cả hai. Lỗi không bao giờ chứa giá trị token.
+ */
+export function loadConfluenceConfig(env: NodeJS.ProcessEnv = process.env): ConfluenceConfig | null
+{
+	const rawBase = optionalEnv(env, "CONFLUENCE_BASE_URL");
+	const token = optionalEnv(env, "CONFLUENCE_TOKEN");
+	if (rawBase === undefined && token === undefined) return null;
+	if (rawBase === undefined) throw new Error("Có CONFLUENCE_TOKEN nhưng thiếu CONFLUENCE_BASE_URL. Chạy lại deploy/enable-confluence.sh, hoặc xoá cả hai để tắt ghi Confluence.");
+	if (token === undefined) throw new Error("Có CONFLUENCE_BASE_URL nhưng thiếu CONFLUENCE_TOKEN. Chạy lại deploy/enable-confluence.sh, hoặc xoá cả hai để tắt ghi Confluence.");
+	if (/\s/u.test(token)) throw new Error("CONFLUENCE_TOKEN có khoảng trắng hoặc xuống dòng ở giữa. Dán lại trên một dòng.");
+	return { baseUrl: parseConfluenceBaseUrl(rawBase), token };
+}
+
+/** https://host[:port][/đường-dẫn-gốc], không query, hash hay tài khoản; bỏ "/" ở cuối. */
+export function parseConfluenceBaseUrl(raw: string): string
+{
+	const example = "Ví dụ: https://confluence.congty.vn";
+	let url: URL;
+	try
+	{
+		url = new URL(raw);
+	}
+	catch
+	{
+		throw new Error(`CONFLUENCE_BASE_URL không phải URL hợp lệ. ${example}`);
+	}
+	if (url.protocol !== "https:") throw new Error(`CONFLUENCE_BASE_URL phải dùng https (token không được gửi qua kết nối không mã hoá). ${example}`);
+	if (url.search !== "" || url.hash !== "" || url.username !== "" || url.password !== "")
+	{
+		throw new Error(`CONFLUENCE_BASE_URL chỉ gồm https://địa-chỉ và đường dẫn gốc (nếu có), không có ? # hay tài khoản. ${example}`);
+	}
+	const path = url.pathname.replace(/\/+$/u, "");
+	return `${url.origin}${path}`;
 }
 
 /**

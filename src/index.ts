@@ -10,6 +10,8 @@ import { systemClock } from "./shared/clock";
 import { logger, registerSecret } from "./shared/logger";
 import { DEFAULT_ADMIN_ACTIONS } from "./discord/adminOps";
 import { DEFAULT_LIVE_BOARD_ACTIONS } from "./discord/configOps";
+import { createRetroActions } from "./discord/retroOps";
+import { ConfluenceClient } from "./integrations/confluence";
 import { startWebServer, WebServerHandle } from "./web/server";
 
 // Lưới an toàn cuối cùng: lỗi async không có ai bắt thì chỉ ghi log, không để process thoát (LL-001).
@@ -24,15 +26,24 @@ async function main(): Promise<void>
 	const config = loadConfig();
 	registerSecret(config.token);
 	if (config.web) registerSecret(config.web.clientSecret);
+	if (config.confluence) registerSecret(config.confluence.token);
 
 	// Database mở và migrate TRƯỚC khi login Discord (LL-007).
 	const db = openDatabase(config.databasePath);
 	const applied = runMigrations(db);
 	logger.info(`Database: ${config.databasePath} (áp dụng ${applied} migration mới).`);
 
-	const services = createServices(db, { clock: systemClock, backupDir: config.backupDir, backupKeep: config.backupKeep });
+	const services = createServices(db, {
+		clock: systemClock,
+		backupDir: config.backupDir,
+		backupKeep: config.backupKeep,
+		confluenceBaseUrl: config.confluence?.baseUrl ?? null,
+	});
 	const stopBackups = startBackupSchedule(services.backup);
-	const client = new DiscordClient(services, config.guildIds);
+	// Ghi retro vào Confluence nội bộ (DEC-049): chỉ khi có CONFLUENCE_BASE_URL và CONFLUENCE_TOKEN.
+	const confluence = config.confluence ? new ConfluenceClient(config.confluence, (input, init) => fetch(input, init)) : null;
+	logger.info(confluence ? `Ghi retro vào Confluence: bật (${confluence.baseUrl}).` : "Ghi retro vào Confluence: tắt (không đặt CONFLUENCE_*).");
+	const client = new DiscordClient(services, config.guildIds, createRetroActions(confluence));
 
 	// Trang web quản trị (DEC-039): chỉ mở khi có WEB_PORT, sau khi bot sẵn sàng (cần cache server, role, kênh).
 	let web: WebServerHandle | null = null;
@@ -50,6 +61,7 @@ async function main(): Promise<void>
 				clock: systemClock,
 				liveBoardActions: DEFAULT_LIVE_BOARD_ACTIONS,
 				adminActions: DEFAULT_ADMIN_ACTIONS,
+				retroActions: client.retroActions,
 			})
 				.then(handle =>
 				{

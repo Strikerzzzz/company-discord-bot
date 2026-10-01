@@ -15,7 +15,7 @@ import { formatNumber, relativeTime, userMention } from "./format";
 import { isNotFoundError } from "./guards";
 import { MemberDisplay } from "./memberDirectory";
 import { refreshContributionMessage } from "./messages";
-import { refreshPollMessage } from "./pollScheduler";
+import { afterPollClosed } from "./pollScheduler";
 import { syncTierRoles, TierRoleSyncResult } from "./roleSync";
 import { inlineText, tierRoleSyncLine } from "./views/admin";
 
@@ -53,7 +53,10 @@ export interface AdminActions
 {
 	/** Sửa message công khai của contribution theo trạng thái hiện tại (sau khi gỡ). Không ném lỗi; false nếu không sửa được. */
 	refreshContribution(client: DiscordClient, contribution: Contribution): Promise<boolean>;
-	/** Sửa message của vote theo trạng thái hiện tại (sau khi đóng). Không ném lỗi; false nếu không sửa được. */
+	/**
+	 * Sửa message của vote theo trạng thái hiện tại (sau khi đóng); vote tên sprint của phiên retro thì chốt tên luôn (DEC-049).
+	 * Không ném lỗi; false nếu không sửa được message.
+	 */
 	refreshPoll(client: DiscordClient, poll: Poll): Promise<boolean>;
 	/** Đưa role danh hiệu của member về đúng `level` (DEC-031). */
 	syncTierRoles(member: GuildMember, level: number, tierRoles: TierRoleServiceApi, reason: string): Promise<TierRoleSyncResult>;
@@ -84,7 +87,7 @@ async function fetchUserOrNull(client: DiscordClient, userId: string): Promise<{
 
 export const DEFAULT_ADMIN_ACTIONS: AdminActions = {
 	refreshContribution: refreshContributionMessage,
-	refreshPoll: refreshPollMessage,
+	refreshPoll: afterPollClosed,
 	syncTierRoles,
 	searchMembers: async (guild, query, limit) => [...(await guild.members.search({ query, limit, cache: false })).values()],
 	displays: (client, guild, userIds) => client.members.resolve(guild, userIds),

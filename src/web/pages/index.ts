@@ -4,6 +4,7 @@ import { membersPage } from "./members";
 import { leaderboardPage } from "./leaderboard";
 import { contributionsPage } from "./contributions";
 import { pollsPage } from "./polls";
+import { retroPage } from "./retro";
 import { statsPage } from "./stats";
 import { channelsPage } from "./channels";
 import { teamsPage } from "./teams";
@@ -22,6 +23,7 @@ export const PAGE_MODULES: readonly PageModule[] = [
 	leaderboardPage,
 	contributionsPage,
 	pollsPage,
+	retroPage,
 	statsPage,
 	channelsPage,
 	teamsPage,

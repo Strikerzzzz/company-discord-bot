@@ -5,6 +5,7 @@ import { ActivityProfile, XpEventSource, XpEventView } from "../../modules/activ
 import { AuditAction, AuditEntry } from "../../modules/audit/AuditService";
 import { TierRoleMapping } from "../../modules/gamification/types";
 import { ChannelSettings, GuildSettings, isXpChannelMode, XpChannelMode } from "../../modules/guild-config/types";
+import { isRetroField, RETRO_FIELD_TITLES } from "../../modules/retro/types";
 import { GuildStatistics } from "../../modules/statistics/types";
 import { MAX_TEAMS } from "../../modules/team/TeamService";
 import {
@@ -444,11 +445,22 @@ const AUDIT_LABELS: Record<AuditAction, string> = {
 	"board.set": "Đặt kênh Bảng vàng",
 	"board.clear": "Tắt Bảng vàng",
 	"backup.manual": "Sao lưu thủ công",
+	"retro.create": "Tạo phiên retro",
+	"retro.close": "Đóng phiên retro",
+	"retro.reopen": "Mở lại phiên retro",
+	"retro.extend": "Gia hạn phiên retro",
+	"retro.vote": "Tạo vote tên sprint",
+	"retro.pick": "Chọn tên sprint",
+	"retro.idea_delete": "Xoá một ý trong retro",
+	"retro.content_delete": "Xoá nội dung phiên retro",
+	"retro.config": "Cập nhật cấu hình retro",
 };
 
 // Khớp với dữ liệu service ghi: contribution.remove có target là tác giả (mã contribution nằm trong details),
 // poll.* không có target (mã vote nằm trong details), tier_role.set/clear có target là role (khoá bậc trong details.tierKey),
 // board.* có target là channel của Bảng vàng, tier_pref.clear có target là thành viên (bộ đã chọn trong details.setKey).
+// retro.* (trừ retro.config) có target là kênh/thread của phiên; mã phiên và tiêu đề nằm trong details (sessionId, title), không
+// bao giờ có người viết một ý. retro.config không có target (các mục đã đổi, managerRoleIds/addedRoles/removedRoles trong details).
 /** Loại đối tượng (target_id) của một mục audit: ID người dùng, role, channel, hoặc chuỗi khác ("none"). */
 export type AuditTargetKind = "user" | "role" | "channel" | "none";
 
@@ -478,6 +490,15 @@ const AUDIT_TARGETS: Record<AuditAction, AuditTargetKind> = {
 	"board.set": "channel",
 	"board.clear": "channel",
 	"backup.manual": "none",
+	"retro.create": "channel",
+	"retro.close": "channel",
+	"retro.reopen": "channel",
+	"retro.extend": "channel",
+	"retro.vote": "channel",
+	"retro.pick": "channel",
+	"retro.idea_delete": "channel",
+	"retro.content_delete": "channel",
+	"retro.config": "none",
 };
 
 /**
@@ -519,6 +540,18 @@ const DETAIL_LABELS = new Map<string, string>([
 	["removedRoles", "Role bỏ"],
 	["adminRoleId", "Role admin bot"],
 	["pollCreatorRoleId", "Role tạo vote"],
+	["sessionId", "Mã phiên retro"],
+	["teamRoleId", "Team"],
+	["docUrl", "Link tài liệu"],
+	["closesAt", "Hạn"],
+	["options", "Số lựa chọn"],
+	["entryId", "Mã phiếu"],
+	["field", "Ô"],
+	["entries", "Số phiếu"],
+	["fillXp", "XP khi điền retro"],
+	["proposerBonusXp", "XP người đề xuất tên được chọn"],
+	["voteMinutes", "Thời hạn vote tên sprint (phút)"],
+	["managerRoleIds", "Role quản lý retro"],
 ]);
 
 /** Khoá cảnh giới tu tiên dùng trước migration 4 (DEC-033), theo thứ tự bậc; audit cũ vẫn giữ nguyên các khoá này. */
@@ -600,6 +633,8 @@ function detailValue(key: string, value: unknown, action: AuditAction | null): s
 {
 	if (value === null && action === "channel.set" && CHANNEL_FALLBACK_KEYS.has(key)) return "dùng giá trị chung";
 	if (value === null && key === "levelUpChannelId") return SETTING_DISPLAY.levelUpChannelId.format(null);
+	if (key === "closesAt" && (value === null || typeof value === "number")) return value === null ? "không giới hạn" : dateTime(value);
+	if (key === "field" && isRetroField(value)) return RETRO_FIELD_TITLES[value];
 	if (value === null || value === undefined) return "không có";
 	if (typeof value === "boolean") return onOff(value);
 	if (typeof value === "number") return key === "delta" ? signed(value) : formatNumber(value);

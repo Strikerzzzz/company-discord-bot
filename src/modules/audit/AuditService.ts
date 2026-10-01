@@ -27,7 +27,16 @@ export type AuditAction =
 	| "tier_pref.clear"
 	| "board.set"
 	| "board.clear"
-	| "backup.manual";
+	| "backup.manual"
+	| "retro.create"
+	| "retro.close"
+	| "retro.reopen"
+	| "retro.extend"
+	| "retro.vote"
+	| "retro.pick"
+	| "retro.idea_delete"
+	| "retro.content_delete"
+	| "retro.config";
 
 export interface AuditEntry
 {

@@ -379,6 +379,81 @@ export const MIGRATIONS: readonly Migration[] = [
 			ALTER TABLE tier_set_config ADD COLUMN allow_personal INTEGER NOT NULL DEFAULT 1 CHECK (allow_personal IN (0, 1));
 		`,
 	},
+	{
+		version: 9,
+		name: "retro",
+		sql: `
+			-- Phiên retro sprint theo team (DEC-049). Mỗi phiên gắn với một kênh hoặc thread (nơi chạy /retro create) và tuỳ chọn một
+			-- role team. status: 'open' (đang nhận câu trả lời), 'closed' (đã đóng), 'voting' (đang vote tên sprint), 'done' (đã chốt
+			-- tên). tie_names: JSON mảng tên hoà khi vote đóng mà hoà (chờ người quản lý chọn); NULL = không có hoà đang chờ.
+			-- confluence_*: kết quả lần ghi Confluence gần nhất. content_deleted_at: admin đã xoá nội dung (chữ) của phiên.
+			CREATE TABLE retro_sessions (
+				id INTEGER PRIMARY KEY,
+				guild_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				channel_id TEXT NOT NULL,
+				message_id TEXT,
+				team_role_id TEXT,
+				doc_url TEXT,
+				doc_page_id TEXT,
+				status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'voting', 'done')),
+				closes_at INTEGER,
+				created_by TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				closed_at INTEGER,
+				poll_id INTEGER REFERENCES polls (id),
+				tie_names TEXT,
+				winner_name TEXT,
+				confluence_written_at INTEGER,
+				confluence_error TEXT,
+				content_deleted_at INTEGER
+			);
+			CREATE INDEX idx_retro_sessions_guild ON retro_sessions (guild_id, created_at);
+			CREATE INDEX idx_retro_sessions_channel ON retro_sessions (guild_id, channel_id, created_at);
+			CREATE INDEX idx_retro_sessions_due ON retro_sessions (status, closes_at);
+			-- Một kênh chỉ có một phiên đang mở; một vote chỉ thuộc một phiên.
+			CREATE UNIQUE INDEX idx_retro_sessions_open_channel ON retro_sessions (guild_id, channel_id) WHERE status = 'open';
+			CREATE UNIQUE INDEX idx_retro_sessions_poll ON retro_sessions (poll_id) WHERE poll_id IS NOT NULL;
+
+			-- Phiếu retro: mỗi người một phiếu mỗi phiên, sửa được tới khi đóng. Đây là chữ người dùng viết (DEC-049): chỉ hiển thị ẩn
+			-- danh; admin xoá nội dung thì các cột chữ về NULL (xoá hẳn, ngoại lệ có chủ ý của DEC-027), dòng giữ lại để biết ai đã
+			-- điền. team_role_ids: JSON role team của người điền lúc gửi lần gần nhất (snapshot cho XP người đề xuất tên thắng).
+			-- fill_xp_event_id: event XP "điền retro" (một lần mỗi phiên), NULL nếu XP điền retro là 0.
+			CREATE TABLE retro_entries (
+				id INTEGER PRIMARY KEY,
+				session_id INTEGER NOT NULL REFERENCES retro_sessions (id),
+				guild_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				learned TEXT,
+				improve TEXT,
+				ideas TEXT,
+				kudos TEXT,
+				sprint_name TEXT,
+				team_role_ids TEXT NOT NULL DEFAULT '[]',
+				fill_xp_event_id INTEGER REFERENCES xp_events (id),
+				submitted_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE (session_id, user_id)
+			);
+
+			-- XP của retro do admin chỉnh (DEC-049); guild chưa có dòng = mặc định 20 / 100 / 1440 phút.
+			CREATE TABLE retro_config (
+				guild_id TEXT PRIMARY KEY,
+				fill_xp INTEGER NOT NULL DEFAULT 20,
+				proposer_bonus_xp INTEGER NOT NULL DEFAULT 100,
+				vote_minutes INTEGER NOT NULL DEFAULT 1440,
+				updated_at INTEGER NOT NULL
+			);
+
+			-- Role "quản lý retro" (tối đa 25 role mỗi guild, RetroService kiểm tra).
+			CREATE TABLE retro_manager_roles (
+				guild_id TEXT NOT NULL,
+				role_id TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				PRIMARY KEY (guild_id, role_id)
+			);
+		`,
+	},
 ];
 
 export function currentSchemaVersion(db: Db): number
