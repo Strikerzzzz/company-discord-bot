@@ -27,6 +27,11 @@ export function isRetroField(value: unknown): value is RetroField
 	return RETRO_FIELDS.some(field => field === value);
 }
 
+/** 4 ô chữ tự do (mọi ô trừ tên sprint): mỗi cột được trộn thứ tự riêng theo khoá ngẫu nhiên của từng ô. */
+export type RetroIdeaField = Exclude<RetroField, "sprintName">;
+
+export const RETRO_IDEA_FIELDS: readonly RetroIdeaField[] = ["learned", "improve", "ideas", "kudos"];
+
 /** Tiêu đề 5 cột, đúng như mẫu retro trên Confluence (dùng cho bảng Discord, Confluence và web). */
 export const RETRO_FIELD_TITLES: Readonly<Record<RetroField, string>> = {
 	learned: "📚 Learned",
@@ -37,11 +42,12 @@ export const RETRO_FIELD_TITLES: Readonly<Record<RetroField, string>> = {
 };
 
 export const RETRO_LIMITS = {
+	/** Tiêu đề phiên, đếm theo UTF-16 (`.length`) như builder của discord.js và PollService. */
 	titleMin: 3,
 	titleMax: 100,
 	/** Mỗi ô Learned / Thiếu sót / Sáng tạo / Tuyên dương, tính theo ký tự (code point). */
 	answerMax: 1000,
-	/** Ô Đặt tên sprint; bằng độ dài tối đa của một lựa chọn vote. */
+	/** Ô Đặt tên sprint, đếm theo UTF-16; bằng độ dài tối đa của một lựa chọn vote (PollService cũng đếm theo UTF-16). */
 	sprintNameMax: POLL_LIMITS.optionLabelMax,
 	docUrlMax: 500,
 	durationHoursMin: 1,
@@ -122,20 +128,30 @@ export interface RetroSession
 	/** Lỗi của lần ghi Confluence gần nhất (tiếng Việt, không chứa token); null nếu lần gần nhất thành công hoặc chưa ghi. */
 	confluenceError: string | null;
 	contentDeletedAt: number | null;
+	/** Lúc bot đăng được bảng tổng hợp của lần đóng gần nhất; null nếu chưa đăng (phiên đang mở, hoặc đăng lỗi và chờ thử lại). */
+	summaryPostedAt: number | null;
 	/** Số người đã điền. */
 	participants: number;
 	/** Tính tại thời điểm đọc: status "open" và chưa quá hạn. */
 	acceptingAnswers: boolean;
 }
 
-/** Một phiếu ẩn danh: không có người viết. `id` là mã phiếu, chỉ dùng để xoá một ý (web), không hiển thị. */
-export interface AnonymousRetroEntry extends RetroAnswers
-{
-	id: number;
-}
-
-/** Nội dung ẩn danh gom theo 5 cột; cột "sprintName" là các tên đã bỏ trùng. */
+/**
+ * Nội dung ẩn danh gom theo 5 cột. Mỗi cột chữ là danh sách ý xếp theo khoá ngẫu nhiên riêng của từng ô (không theo người, mã phiếu
+ * hay thứ tự gửi), nên ý thứ n của hai cột thường không cùng một người viết. Cột "sprintName" là các tên đã bỏ trùng, theo chữ cái.
+ */
 export type RetroColumns = Readonly<Record<RetroField, readonly string[]>>;
+
+/** Xoá một ý: ý thứ `index` của cột `field` (theo thứ tự của `columns`), phải đúng chữ `text` (form cũ thì từ chối). */
+export interface RetroIdeaDelete
+{
+	guildId: string;
+	sessionId: number;
+	field: RetroField;
+	index: number;
+	text: string;
+	actorId: string;
+}
 
 /** Một tên sprint ứng viên sau khi bỏ trùng. */
 export interface SprintNameCandidate
@@ -249,22 +265,29 @@ export interface RetroServiceApi
 	getAnswers(guildId: string, sessionId: number, userId: string): RetroAnswers | null;
 	/** User ID của những người đã điền, sắp theo ID (chỉ cho người quản lý / admin; không kèm thời điểm để không đoán được ai viết gì). */
 	participants(guildId: string, sessionId: number): string[];
-	/** Các phiếu ẩn danh (bỏ phiếu không còn chữ), thứ tự trộn cố định theo phiên (không lộ thứ tự gửi). */
-	anonymousEntries(guildId: string, sessionId: number): AnonymousRetroEntry[];
-	/** Nội dung ẩn danh gom theo 5 cột, cùng thứ tự với anonymousEntries; cột tên sprint đã bỏ trùng. */
+	/**
+	 * Nội dung ẩn danh gom theo 5 cột: mỗi cột chữ xếp theo khoá ngẫu nhiên riêng của từng ô (lưu trong DB nên ổn định giữa các lần
+	 * đọc); cột tên sprint là các tên đã bỏ trùng, theo chữ cái. Cột rỗng nếu không có phiên hoặc nội dung đã bị xoá.
+	 */
 	columns(guildId: string, sessionId: number): RetroColumns;
-	/** Tên sprint ứng viên: bỏ trùng (NFC, gộp khoảng trắng, không phân biệt hoa thường), bỏ tên chỉ toàn số; theo thứ tự gửi. */
+	/** Tên sprint ứng viên: bỏ trùng (NFC, gộp khoảng trắng, không phân biệt hoa thường), bỏ tên chỉ toàn số; xếp theo chữ cái. */
 	sprintNameCandidates(guildId: string, sessionId: number): SprintNameCandidate[];
 	/** Người quản lý đóng phiên đang mở. Audit "retro.close". */
 	close(guildId: string, sessionId: number, actorId: string): RetroSession;
 	/** Đóng mọi phiên quá hạn (mọi guild), không audit. Trả về các phiên vừa đóng. */
 	closeDue(): RetroSession[];
-	/** Mở lại phiên đã đóng (chưa có vote), hạn mới tuỳ chọn. Audit "retro.reopen". */
+	/**
+	 * Mở lại phiên đã đóng (chưa có vote), hạn mới tuỳ chọn. Phiên chưa từng có tin trên Discord (message_id NULL) thì không mở lại được:
+	 * phải đăng lại tin của phiên trước. Bảng tổng hợp lần đóng sau được đăng lại. Audit "retro.reopen".
+	 */
 	reopen(guildId: string, sessionId: number, actorId: string, durationHours: number | null): RetroSession;
 	/** Đặt hạn mới cho phiên đang mở: sau `durationHours` giờ kể từ bây giờ. Audit "retro.extend". */
 	extend(guildId: string, sessionId: number, actorId: string, durationHours: number): RetroSession;
-	/** Xoá một ý (một ô của một phiếu). Audit "retro.idea_delete" (không ghi người viết). */
-	deleteIdea(guildId: string, sessionId: number, entryId: number, field: RetroField, actorId: string): RetroSession;
+	/**
+	 * Xoá một ý không phù hợp. Cột chữ: xoá đúng ô đó. Cột tên sprint: xoá tên đó ở mọi phiếu đã đề xuất (chặn khi phiên đang vote tên).
+	 * Audit "retro.idea_delete" chỉ với mã phiên, tiêu đề và cột: không có mã phiếu hay người viết.
+	 */
+	deleteIdea(input: RetroIdeaDelete): RetroSession;
 	/**
 	 * Xoá hẳn chữ của mọi phiếu trong phiên (giữ phiên, người đã điền và XP đã cộng). Chỉ khi phiên đã đóng và không còn vote đang
 	 * chờ. Audit "retro.content_delete".
@@ -293,6 +316,13 @@ export interface RetroServiceApi
 	pickableNames(guildId: string, sessionId: number): string[];
 	/** Lưu kết quả lần ghi Confluence. */
 	recordDocResult(guildId: string, sessionId: number, result: RetroDocResult): RetroSession;
+	/** Ghi nhận đã đăng bảng tổng hợp của phiên (sau khi bot đăng được tin). */
+	markSummaryPosted(guildId: string, sessionId: number): RetroSession;
+	/**
+	 * Phiên đã đóng mà chưa đăng được bảng tổng hợp (mọi guild): đã có tin trên Discord, còn nội dung, đóng từ `closedSince` trở về sau.
+	 * Lịch quét đăng lại, để bot khởi động lại hay Discord lỗi ngay sau khi đóng không làm mất bảng.
+	 */
+	pendingSummaries(closedSince: number): RetroSession[];
 	getConfig(guildId: string): RetroConfig;
 	/** Lưu các mục XP/thời hạn trong `patch`. Audit "retro.config" với đúng các mục đó. */
 	updateConfig(guildId: string, patch: Partial<Record<RetroConfigKey, number>>, actorId: string): RetroConfig;

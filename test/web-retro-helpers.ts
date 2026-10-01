@@ -41,10 +41,13 @@ export async function flashAfter(harness: WebHarness, auth: LoggedIn, response: 
 	return { kind: match[1] ?? "", text: match[2] ?? "", location, body: page.body };
 }
 
-/** Tạo phiên bằng service (như lệnh /retro create của admin), mặc định ở CHANNEL_CHAT, không link, không team, không hạn. */
+/**
+ * Tạo phiên bằng service (như lệnh /retro create của admin, kể cả đã đăng tin có nút điền), mặc định ở CHANNEL_CHAT, không link, không
+ * team, không hạn.
+ */
 export function createSession(harness: WebHarness, overrides: Partial<CreateRetroInput> = {}): RetroSession
 {
-	const session = harness.services.retro.create({
+	const created = harness.services.retro.create({
 		guildId: GUILD,
 		channelId: CHANNEL_CHAT,
 		title: "Retrospective PMS Sprint 24",
@@ -54,8 +57,17 @@ export function createSession(harness: WebHarness, overrides: Partial<CreateRetr
 		createdBy: ADMIN_USER,
 		...overrides,
 	});
+	harness.services.retro.attachMessage(GUILD, created.id, String(690000000000000000n + BigInt(created.id)));
 	harness.clock.advance(1000);
+	const session = harness.services.retro.get(GUILD, created.id);
+	assert.ok(session);
 	return session;
+}
+
+/** Đóng phiên bằng service (như /retro close, không đăng gì lên Discord). */
+export function closeSession(harness: WebHarness, sessionId: number): RetroSession
+{
+	return harness.services.retro.close(GUILD, sessionId, ADMIN_USER);
 }
 
 /** Một người điền phiếu (ô không nêu là trống). */

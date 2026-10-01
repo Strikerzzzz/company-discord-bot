@@ -545,7 +545,6 @@ const DETAIL_LABELS = new Map<string, string>([
 	["docUrl", "Link tài liệu"],
 	["closesAt", "Hạn"],
 	["options", "Số lựa chọn"],
-	["entryId", "Mã phiếu"],
 	["field", "Ô"],
 	["entries", "Số phiếu"],
 	["fillXp", "XP khi điền retro"],

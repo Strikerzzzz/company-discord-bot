@@ -28,7 +28,15 @@ export interface ConfluenceConfig
 	baseUrl: string;
 	/** Personal Access Token (header Bearer). Bí mật: không bao giờ log hay đưa vào thông báo lỗi. */
 	token: string;
+	/**
+	 * Khoá các space bot được ghi (CONFLUENCE_SPACE_KEYS, ví dụ ["P2"]); trước khi ghi, bot đọc space của trang và từ chối nếu không có
+	 * trong danh sách (so không phân biệt hoa thường). Rỗng: bot từ chối mọi lần ghi.
+	 */
+	spaceKeys: string[];
 }
+
+/** Khoá space của Confluence: chữ, số, `_`, `-`, `.`; space cá nhân bắt đầu bằng `~` (có thể có `@`). */
+const SPACE_KEY = /^~?[A-Za-z0-9_.@-]{1,255}$/u;
 
 /** Cấu hình trang web quản trị (DEC-039). */
 export interface WebConfig
@@ -78,7 +86,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig
 
 /**
  * Cấu hình ghi Confluence (DEC-049): không đặt cả CONFLUENCE_BASE_URL lẫn CONFLUENCE_TOKEN thì trả về null (tắt; retro vẫn chạy,
- * chỉ bỏ bước ghi). Đặt một trong hai thì bắt buộc đủ cả hai. Lỗi không bao giờ chứa giá trị token.
+ * chỉ bỏ bước ghi). Đặt một trong hai thì bắt buộc đủ cả hai. CONFLUENCE_SPACE_KEYS là danh sách space được ghi; bỏ trống thì vẫn
+ * khởi động được nhưng mọi lần ghi bị từ chối (selfcheck cảnh báo). Lỗi không bao giờ chứa giá trị token.
  */
 export function loadConfluenceConfig(env: NodeJS.ProcessEnv = process.env): ConfluenceConfig | null
 {
@@ -88,7 +97,21 @@ export function loadConfluenceConfig(env: NodeJS.ProcessEnv = process.env): Conf
 	if (rawBase === undefined) throw new Error("Có CONFLUENCE_TOKEN nhưng thiếu CONFLUENCE_BASE_URL. Chạy lại deploy/enable-confluence.sh, hoặc xoá cả hai để tắt ghi Confluence.");
 	if (token === undefined) throw new Error("Có CONFLUENCE_BASE_URL nhưng thiếu CONFLUENCE_TOKEN. Chạy lại deploy/enable-confluence.sh, hoặc xoá cả hai để tắt ghi Confluence.");
 	if (/\s/u.test(token)) throw new Error("CONFLUENCE_TOKEN có khoảng trắng hoặc xuống dòng ở giữa. Dán lại trên một dòng.");
-	return { baseUrl: parseConfluenceBaseUrl(rawBase), token };
+	return { baseUrl: parseConfluenceBaseUrl(rawBase), token, spaceKeys: parseSpaceKeys(optionalEnv(env, "CONFLUENCE_SPACE_KEYS") ?? "") };
+}
+
+/** CONFLUENCE_SPACE_KEYS: khoá space cách nhau bằng dấu phẩy (bỏ khoảng trắng, mục rỗng và mục trùng không phân biệt hoa thường). */
+export function parseSpaceKeys(raw: string): string[]
+{
+	const keys: string[] = [];
+	for (const part of raw.split(","))
+	{
+		const key = part.trim();
+		if (key.length === 0) continue;
+		if (!SPACE_KEY.test(key)) throw new Error(`CONFLUENCE_SPACE_KEYS có khoá space không hợp lệ: "${key}". Ví dụ đúng: P2 hoặc P2,PMS.`);
+		if (!keys.some(existing => existing.toUpperCase() === key.toUpperCase())) keys.push(key);
+	}
+	return keys;
 }
 
 /** https://host[:port][/đường-dẫn-gốc], không query, hash hay tài khoản; bỏ "/" ở cuối. */

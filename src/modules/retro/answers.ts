@@ -10,10 +10,27 @@ export const NUMERIC_SPRINT_NAME = "Tên sprint không được chỉ là số (
 const NUMBER_SEPARATORS = /[\s.,:;#/_-]/gu;
 const DIGITS_ONLY = /^\p{Nd}+$/u;
 const WHITESPACE = /\s+/gu;
+const graphemes = new Intl.Segmenter("vi", { granularity: "grapheme" });
 
 function codePoints(text: string): number
 {
 	return Array.from(text).length;
+}
+
+/**
+ * Cắt `text` còn tối đa `max` đơn vị UTF-16 (`.length`, cách Discord và PollService đếm), không cắt giữa một ký tự (emoji, chữ có
+ * dấu tổ hợp) và không thêm dấu "…". Dùng khi điền sẵn form hay dựng câu hỏi vote, để không bỏ trống ô hay vượt giới hạn.
+ */
+export function cutText(text: string, max: number): string
+{
+	if (text.length <= max) return text;
+	let end = 0;
+	for (const { segment } of graphemes.segment(text))
+	{
+		if (end + segment.length > max) break;
+		end += segment.length;
+	}
+	return text.slice(0, end);
 }
 
 /** Tên sprint một dòng: NFC, bỏ khoảng trắng hai đầu, gộp mọi khoảng trắng (kể cả xuống dòng) thành một dấu cách. */
@@ -43,7 +60,7 @@ function answerText(field: RetroField, raw: string): string | null
 	if (field === "sprintName")
 	{
 		const name = displaySprintName(text);
-		if (codePoints(name) > RETRO_LIMITS.sprintNameMax)
+		if (name.length > RETRO_LIMITS.sprintNameMax)
 		{
 			throw new UserError(`Tên sprint tối đa ${RETRO_LIMITS.sprintNameMax} ký tự.`);
 		}

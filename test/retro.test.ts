@@ -1,18 +1,26 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { openDatabase } from "../src/db/connection";
+import { runMigrations } from "../src/db/migrations";
 import { formatAuditEntry } from "../src/discord/views/admin";
-import { displaySprintName, isNumericOnlyName, normalizeAnswers, sprintNameKey } from "../src/modules/retro/answers";
+import { cutText, displaySprintName, isNumericOnlyName, normalizeAnswers, sprintNameKey } from "../src/modules/retro/answers";
 import { confluencePageId, parseDocLink } from "../src/modules/retro/docLink";
 import { canCreateRetro, canManageRetro } from "../src/modules/retro/permissions";
-import { RetroService } from "../src/modules/retro/RetroService";
-import { DEFAULT_RETRO_CONFIG, RETRO_LIMITS, RetroAnswersInput, RetroField, RetroSession } from "../src/modules/retro/types";
+import { RETRO_NAME_IN_VOTE, RETRO_NEVER_POSTED, RetroService } from "../src/modules/retro/RetroService";
+import { DEFAULT_RETRO_CONFIG, RETRO_IDEA_FIELDS, RETRO_LIMITS, RetroAnswersInput, RetroColumns, RetroField, RetroSession } from "../src/modules/retro/types";
 import { PollService } from "../src/modules/poll/PollService";
+import { createServices } from "../src/services";
 import { UserError } from "../src/shared/errors";
 import {
 	ADMIN,
 	CHANNEL_BOT,
 	CHANNEL_GENERAL,
 	createTestContext,
+	FakeClock,
 	GUILD,
 	OTHER_GUILD,
 	ROLE_BACKEND,
@@ -37,21 +45,37 @@ interface Setup extends TestContext
 	retro: RetroService;
 }
 
-function setup(base: string | null = BASE): Setup
+function setup(base: string | null = BASE, orderKey?: () => string): Setup
 {
 	const context = createTestContext();
 	const polls = new PollService(context.db, context.deps);
-	return { ...context, polls, retro: new RetroService(context.db, context.deps, polls, base) };
+	return { ...context, polls, retro: new RetroService(context.db, context.deps, polls, base, orderKey) };
 }
+
+/** Dãy khoá thứ tự cố định cho test: lần lượt trả các khoá trong `keys`. */
+function keySequence(keys: readonly string[]): () => string
+{
+	let next = 0;
+	return () =>
+	{
+		const key = keys[next];
+		next++;
+		assert.ok(key !== undefined, "hết khoá thứ tự giả");
+		return key;
+	};
+}
+
+const NO_COLUMNS: RetroColumns = { learned: [], improve: [], ideas: [], kudos: [], sprintName: [] };
 
 function answers(overrides: Partial<Record<RetroField, string>> = {}): RetroAnswersInput
 {
 	return { learned: "", improve: "", ideas: "", kudos: "", sprintName: "", ...overrides };
 }
 
+/** Tạo phiên như /retro create (kể cả đã đăng tin có nút điền: message_id có giá trị). */
 function createSession(s: Setup, overrides: Partial<Parameters<RetroService["create"]>[0]> = {}): RetroSession
 {
-	return s.retro.create({
+	const created = s.retro.create({
 		guildId: GUILD,
 		channelId: CHANNEL_GENERAL,
 		title: "Retrospective PMS Sprint 24",
@@ -61,6 +85,8 @@ function createSession(s: Setup, overrides: Partial<Parameters<RetroService["cre
 		createdBy: ADMIN,
 		...overrides,
 	});
+	s.retro.attachMessage(created.guildId, created.id, String(600000000000000000n + BigInt(created.id)));
+	return s.retro.get(created.guildId, created.id) ?? created;
 }
 
 function submit(s: Setup, sessionId: number, userId: string, overrides: Partial<Record<RetroField, string>>, roleIds: string[] = []): ReturnType<RetroService["submit"]>
@@ -266,7 +292,7 @@ describe("retro: điền phiếu", () =>
 
 describe("retro: đọc nội dung ẩn danh", () =>
 {
-	test("người đã điền sắp theo ID; nội dung ẩn danh không có người viết, thứ tự trộn cố định và không theo thứ tự gửi", () =>
+	test("người đã điền sắp theo ID; nội dung ẩn danh theo cột, không có người viết hay mã phiếu, thứ tự ổn định và không theo thứ tự gửi", () =>
 	{
 		const s = setup();
 		const session = createSession(s);
@@ -275,18 +301,76 @@ describe("retro: đọc nội dung ẩn danh", () =>
 		submit(s, session.id, USER_A, { kudos: "Cảm ơn" });
 
 		assert.deepEqual(s.retro.participants(GUILD, session.id), [...users, USER_A].sort());
-		const entries = s.retro.anonymousEntries(GUILD, session.id);
-		assert.equal(entries.length, 13);
-		for (const entry of entries) assert.deepEqual(Object.keys(entry).sort(), ["id", "ideas", "improve", "kudos", "learned", "sprintName"]);
-		assert.deepEqual(s.retro.anonymousEntries(GUILD, session.id), entries, "gọi lại cùng thứ tự");
-		const submitted = entries.map(entry => entry.learned).filter(text => text !== null);
-		assert.notDeepEqual(submitted, users.map((_, index) => `ý số ${index}`), "không lộ thứ tự gửi");
-
 		const columns = s.retro.columns(GUILD, session.id);
+		assert.deepEqual(Object.keys(columns).sort(), ["ideas", "improve", "kudos", "learned", "sprintName"]);
 		assert.equal(columns.learned.length, 12);
+		assert.ok(columns.learned.every(text => typeof text === "string"), "chỉ có chữ, không có mã phiếu hay người viết");
+		assert.deepEqual(s.retro.columns(GUILD, session.id), columns, "gọi lại cùng thứ tự (khoá lưu trong DB)");
+		assert.notDeepEqual(columns.learned, users.map((_, index) => `ý số ${index}`), "không lộ thứ tự gửi");
 		assert.deepEqual(columns.kudos, ["Cảm ơn"]);
 		assert.deepEqual(columns.improve, []);
 		assert.deepEqual(s.retro.participants(OTHER_GUILD, session.id), []);
+		assert.deepEqual(s.retro.columns(OTHER_GUILD, session.id), NO_COLUMNS);
+	});
+
+	test("thứ tự mỗi cột theo khoá ngẫu nhiên lưu trong DB (randomBytes): không tính lại được từ mã phiếu hay mã phiên, khác giữa hai phiên giống hệt", () =>
+	{
+		const s = setup();
+		const sessions = [createSession(s), createSession(s, { channelId: CHANNEL_BOT })];
+		const texts = Array.from({ length: 12 }, (_, index) => `ý ${String(index).padStart(2, "0")}`);
+		for (const session of sessions)
+		{
+			texts.forEach((text, index) => submit(s, session.id, `3300000000000000${String(index).padStart(2, "0")}`, { learned: text }));
+		}
+		const rows = s.db.prepare<[], { id: number; session_id: number; learned: string; order_keys: string }>(
+			"SELECT id, session_id, learned, order_keys FROM retro_entries ORDER BY id").all();
+		for (const row of rows)
+		{
+			const keys = JSON.parse(row.order_keys) as Record<string, string>;
+			assert.deepEqual(Object.keys(keys).sort(), ["ideas", "improve", "kudos", "learned"], "mỗi ô chữ một khoá riêng");
+			for (const key of Object.values(keys)) assert.match(key, /^[0-9a-f]{32}$/u, "khoá 128 bit ngẫu nhiên");
+			assert.equal(new Set(Object.values(keys)).size, 4, "4 ô của cùng một phiếu có 4 khoá khác nhau");
+		}
+		const [first, second] = sessions.map(session => s.retro.columns(GUILD, session.id).learned);
+		assert.notDeepEqual(first, second, "hai phiên cùng nội dung, cùng thứ tự gửi vẫn trộn khác nhau");
+
+		const oldShuffle = (sessionId: number): string[] => rows
+			.filter(row => row.session_id === sessionId)
+			.map(row => ({ text: row.learned, key: createHash("sha256").update(`retro:${sessionId}:${row.id}`).digest("hex") }))
+			.sort((a, b) => (a.key < b.key ? -1 : 1))
+			.map(item => item.text);
+		assert.notDeepEqual(first, oldShuffle(sessions[0].id), "không còn là sha256(phiên, mã phiếu): ai biết mã phiếu cũng không tính lại được");
+		assert.notDeepEqual(first, texts, "không theo mã phiếu tăng dần");
+	});
+
+	test("mỗi cột trộn độc lập: một hàng của bảng không phải toàn bộ câu trả lời của một người; sửa một ô chỉ đổi vị trí ô đó", () =>
+	{
+		const keys = [
+			"a1", "z1", "m1", "z9",
+			"z2", "a2", "m2", "a9",
+			"m3", "m4", "a3", "m9",
+		];
+		const s = setup(BASE, keySequence([...keys, "b0"]));
+		const session = createSession(s);
+		submit(s, session.id, USER_A, { learned: "A học", improve: "A thiếu", ideas: "A ý tưởng", kudos: "A cảm ơn" });
+		submit(s, session.id, USER_B, { learned: "B học", improve: "B thiếu", ideas: "B ý tưởng", kudos: "B cảm ơn" });
+		submit(s, session.id, USER_C, { learned: "C học", improve: "C thiếu", ideas: "C ý tưởng", kudos: "C cảm ơn" });
+
+		const columns = s.retro.columns(GUILD, session.id);
+		assert.deepEqual(columns.learned, ["A học", "C học", "B học"]);
+		assert.deepEqual(columns.improve, ["B thiếu", "C thiếu", "A thiếu"]);
+		assert.deepEqual(columns.ideas, ["C ý tưởng", "A ý tưởng", "B ý tưởng"]);
+		assert.deepEqual(columns.kudos, ["B cảm ơn", "C cảm ơn", "A cảm ơn"]);
+		for (let row = 0; row < 3; row++)
+		{
+			const authors = new Set(RETRO_IDEA_FIELDS.map(field => columns[field][row].charAt(0)));
+			assert.ok(authors.size > 1, `hàng ${row} gom ý của nhiều người, không phải phiếu của một người`);
+		}
+
+		submit(s, session.id, USER_A, { learned: "A học", improve: "A thiếu (sửa)", ideas: "A ý tưởng", kudos: "A cảm ơn" });
+		const after = s.retro.columns(GUILD, session.id);
+		assert.deepEqual(after.learned, columns.learned, "ô không đổi giữ vị trí");
+		assert.deepEqual(after.improve, ["B thiếu", "A thiếu (sửa)", "C thiếu"], "ô vừa sửa nhận khoá mới (b0)");
 	});
 
 	test("ứng viên tên sprint: bỏ trùng (NFC, khoảng trắng, hoa thường), giữ cách viết gửi sớm nhất, nhớ mọi người đề xuất, bỏ tên chỉ toàn số", () =>
@@ -384,26 +468,58 @@ describe("retro: đóng, mở lại, gia hạn", () =>
 
 describe("retro: xoá ý và xoá nội dung", () =>
 {
-	test("xoá một ý: ô về null, audit ghi mã phiếu và ô nhưng không ghi người viết; phiếu không còn chữ thì không hiện", () =>
+	test("xoá một ý theo cột và vị trí (đúng chữ): ô về null; audit chỉ có mã phiên, tiêu đề và cột (không mã phiếu, không người viết)", () =>
 	{
 		const s = setup();
 		const session = createSession(s);
 		submit(s, session.id, USER_A, { learned: "Nội dung không phù hợp", kudos: "Cảm ơn" });
-		const [entry] = s.retro.anonymousEntries(GUILD, session.id);
+		submit(s, session.id, USER_B, { learned: "Ý tốt" });
+		const index = s.retro.columns(GUILD, session.id).learned.indexOf("Nội dung không phù hợp");
+		const del = (field: RetroField, at: number, text: string): RetroSession =>
+			s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field, index: at, text, actorId: ADMIN });
 
-		s.retro.deleteIdea(GUILD, session.id, entry.id, "learned", ADMIN);
+		assertUserError(() => del("learned", index, "chữ khác"), /Không tìm thấy ý này/);
+		del("learned", index, "Nội dung không phù hợp");
 		assert.deepEqual(s.retro.getAnswers(GUILD, session.id, USER_A), { learned: null, improve: null, ideas: null, kudos: "Cảm ơn", sprintName: null });
+		assert.deepEqual(s.retro.columns(GUILD, session.id).learned, ["Ý tốt"]);
 		const [audit] = s.deps.audit.list(GUILD, 1);
 		assert.equal(audit.action, "retro.idea_delete");
 		assert.equal(audit.targetId, CHANNEL_GENERAL);
-		assert.deepEqual(audit.details, { sessionId: session.id, title: session.title, entryId: entry.id, field: "learned" });
+		assert.deepEqual(audit.details, { sessionId: session.id, title: session.title, field: "learned" }, "không có entryId hay gì ghép được người với ý");
 		assert.ok(!JSON.stringify(audit).includes(USER_A), "audit không lộ người viết");
+		assert.ok(!formatAuditEntry(audit).includes("Mã phiếu"), "nhật ký không hiện mã phiếu");
 
-		assertUserError(() => s.retro.deleteIdea(GUILD, session.id, entry.id, "learned", ADMIN), /Không tìm thấy ý này/);
-		assertUserError(() => s.retro.deleteIdea(GUILD, session.id, 9999, "kudos", ADMIN), /Không tìm thấy ý này/);
-		s.retro.deleteIdea(GUILD, session.id, entry.id, "kudos", ADMIN);
-		assert.deepEqual(s.retro.anonymousEntries(GUILD, session.id), []);
-		assert.equal(s.retro.get(GUILD, session.id)?.participants, 1, "vẫn tính là đã điền");
+		assertUserError(() => del("learned", 5, "Ý tốt"), /Không tìm thấy ý này/);
+		assertUserError(() => del("learned", -1, "Ý tốt"), /Không tìm thấy ý này/);
+		del("kudos", 0, "Cảm ơn");
+		assert.deepEqual(s.retro.columns(GUILD, session.id).kudos, []);
+		assert.equal(s.retro.get(GUILD, session.id)?.participants, 2, "vẫn tính là đã điền");
+	});
+
+	test("xoá tên sprint: xoá tên đó ở mọi phiếu đã đề xuất (mọi cách viết); đang vote (kể cả chờ chọn khi hoà) thì chặn; đã chốt thì xoá được", () =>
+	{
+		const s = setup();
+		const session = createSession(s);
+		submit(s, session.id, USER_A, { sprintName: "Tên Xấu", learned: "a" });
+		submit(s, session.id, USER_B, { sprintName: "tên  xấu" });
+		submit(s, session.id, USER_C, { sprintName: "Rồng Lửa" });
+		submit(s, session.id, USER_D, { sprintName: "Bão Tố" });
+		s.retro.close(GUILD, session.id, ADMIN);
+		assert.deepEqual(s.retro.columns(GUILD, session.id).sprintName, ["Bão Tố", "Rồng Lửa", "Tên Xấu"], "đã bỏ trùng, theo chữ cái");
+
+		s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field: "sprintName", index: 2, text: "Tên Xấu", actorId: ADMIN });
+		assert.deepEqual(s.retro.columns(GUILD, session.id).sprintName, ["Bão Tố", "Rồng Lửa"]);
+		assert.equal(s.retro.getAnswers(GUILD, session.id, USER_B)?.sprintName, null);
+		assert.equal(s.retro.getAnswers(GUILD, session.id, USER_A)?.learned, "a");
+
+		const { poll } = s.retro.startVote({ guildId: GUILD, sessionId: session.id, actorId: ADMIN });
+		assertUserError(() => s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field: "sprintName", index: 0, text: "Bão Tố", actorId: ADMIN }), RETRO_NAME_IN_VOTE);
+		s.polls.close({ guildId: GUILD, pollId: poll.id, actorId: ADMIN, actorIsAdmin: true });
+		assert.equal(s.retro.finalizeVote(GUILD, session.id, BOT).kind, "tie");
+		assertUserError(() => s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field: "sprintName", index: 0, text: "Bão Tố", actorId: ADMIN }), RETRO_NAME_IN_VOTE);
+		s.retro.pickName({ guildId: GUILD, sessionId: session.id, name: "Rồng Lửa", actorId: ADMIN, systemActorId: BOT });
+		s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field: "sprintName", index: 0, text: "Bão Tố", actorId: ADMIN });
+		assert.deepEqual(s.retro.columns(GUILD, session.id).sprintName, ["Rồng Lửa"]);
 	});
 
 	test("xoá nội dung phiên: chỉ khi đã đóng và không còn vote chờ; xoá hẳn chữ, giữ người đã điền và XP; không xoá lần hai", () =>
@@ -672,8 +788,7 @@ describe("retro: Confluence, cấu hình, quyền", () =>
 		const s = setup();
 		const session = createSession(s, { durationHours: 2 });
 		submit(s, session.id, USER_A, { learned: "xoá tôi", kudos: "giữ" });
-		const [entry] = s.retro.anonymousEntries(GUILD, session.id);
-		s.retro.deleteIdea(GUILD, session.id, entry.id, "learned", ADMIN);
+		s.retro.deleteIdea({ guildId: GUILD, sessionId: session.id, field: "learned", index: 0, text: "xoá tôi", actorId: ADMIN });
 		s.retro.changeManagerRoles(GUILD, { add: [ROLE_BACKEND] }, ADMIN);
 
 		const byAction = new Map(s.deps.audit.list(GUILD, 10).map(item => [item.action, formatAuditEntry(item)]));
@@ -684,8 +799,99 @@ describe("retro: Confluence, cấu hình, quyền", () =>
 		assert.ok(created.includes(`Hạn: <t:${Math.floor((session.closesAt ?? 0) / 1000)}:f>`), created);
 		const idea = byAction.get("retro.idea_delete") ?? "";
 		assert.ok(idea.includes("Ô: 📚 Learned"), idea);
-		assert.ok(!idea.includes(USER_A), idea);
+		assert.ok(!idea.includes(USER_A) && !idea.includes("Mã phiếu"), idea);
 		const config = byAction.get("retro.config") ?? "";
 		assert.ok(config.includes(`Role quản lý retro: <@&${ROLE_BACKEND}>`), config);
+	});
+});
+
+describe("retro: sửa sau review Phase 19", () =>
+{
+	test("độ dài tên sprint và tiêu đề đếm theo UTF-16 như Discord và PollService; cutText cắt an toàn không tách emoji", () =>
+	{
+		const s = setup();
+		assert.equal(createSession(s, { title: "😀".repeat(50) }).title.length, 100);
+		assertUserError(() => createSession(s, { channelId: CHANNEL_BOT, title: "😀".repeat(51) }), /từ 3 đến 100 ký tự/);
+		const session = createSession(s, { channelId: "400000000000000077" });
+		assert.equal(submit(s, session.id, USER_A, { sprintName: "😀".repeat(40) }).answers.sprintName?.length, 80);
+		assertUserError(() => submit(s, session.id, USER_B, { sprintName: "😀".repeat(41) }), /Tên sprint tối đa 80 ký tự/);
+
+		assert.equal(cutText("abc", 5), "abc");
+		assert.equal(cutText("ab😀c", 3), "ab", "không để lại nửa emoji");
+		assert.equal(cutText("👨‍👩‍👧x", 8), "👨‍👩‍👧", "giữ nguyên cụm emoji");
+		assert.equal(cutText("éé", 3), "é", "không tách dấu tổ hợp");
+	});
+
+	test("tạo vote: tên dài quá một lựa chọn vote (dữ liệu cũ) thì báo đúng tên đó, không tạo vote", () =>
+	{
+		const s = setup();
+		const session = createSession(s);
+		submit(s, session.id, USER_A, { sprintName: "Ngắn" });
+		submit(s, session.id, USER_B, { sprintName: "Tên khác" });
+		const long = `${"😀".repeat(41)}`;
+		s.db.prepare("UPDATE retro_entries SET sprint_name = ? WHERE user_id = ?").run(long, USER_B);
+		s.retro.close(GUILD, session.id, ADMIN);
+		assertUserError(() => s.retro.startVote({ guildId: GUILD, sessionId: session.id, actorId: ADMIN }), new RegExp(`dài quá 80 ký tự.*"${long}"`, "u"));
+		assert.equal(s.retro.get(GUILD, session.id)?.status, "closed");
+		assert.equal(s.polls.listOpen(GUILD).length, 0);
+	});
+
+	test("mở lại: phiên chưa từng có tin trên Discord thì chặn (phải đăng lại tin trước); mở lại thì bảng tổng hợp lần đóng sau được đăng lại", () =>
+	{
+		const s = setup();
+		const raw = s.retro.create({ guildId: GUILD, channelId: CHANNEL_GENERAL, title: "Retro chưa đăng", docUrl: null, teamRoleId: null, durationHours: null, createdBy: ADMIN });
+		s.retro.close(GUILD, raw.id, ADMIN);
+		assertUserError(() => s.retro.reopen(GUILD, raw.id, ADMIN, null), RETRO_NEVER_POSTED);
+		s.retro.attachMessage(GUILD, raw.id, "600000000000000999");
+		s.retro.markSummaryPosted(GUILD, raw.id);
+		assert.notEqual(s.retro.get(GUILD, raw.id)?.summaryPostedAt, null);
+		const reopened = s.retro.reopen(GUILD, raw.id, ADMIN, null);
+		assert.equal(reopened.status, "open");
+		assert.equal(reopened.summaryPostedAt, null, "lần đóng sau đăng bảng tổng hợp mới");
+	});
+
+	test("bảng tổng hợp chờ đăng: phiên đã đóng, có tin, còn nội dung, trong khoảng thời gian; đăng rồi thì thôi", () =>
+	{
+		const s = setup();
+		const closedNow = createSession(s);
+		const openOne = createSession(s, { channelId: CHANNEL_BOT });
+		const neverPosted = s.retro.create({ guildId: GUILD, channelId: "400000000000000071", title: "Không có tin", docUrl: null, teamRoleId: null, durationHours: null, createdBy: ADMIN });
+		const deleted = createSession(s, { channelId: "400000000000000072" });
+		s.retro.close(GUILD, closedNow.id, ADMIN);
+		s.retro.close(GUILD, neverPosted.id, ADMIN);
+		s.retro.close(GUILD, deleted.id, ADMIN);
+		s.retro.deleteContent(GUILD, deleted.id, ADMIN);
+		const since = s.clock.now() - HOUR;
+		assert.deepEqual(s.retro.pendingSummaries(since).map(session => session.id), [closedNow.id]);
+		assert.equal(s.retro.get(GUILD, openOne.id)?.summaryPostedAt, null);
+
+		s.clock.advance(2 * HOUR);
+		assert.deepEqual(s.retro.pendingSummaries(s.clock.now() - HOUR), [], "đóng quá lâu thì không tự đăng bù nữa");
+		assert.deepEqual(s.retro.pendingSummaries(since).map(session => session.id), [closedNow.id]);
+		assert.equal(s.retro.markSummaryPosted(GUILD, closedNow.id).summaryPostedAt, s.clock.now());
+		assert.deepEqual(s.retro.pendingSummaries(since), []);
+	});
+
+	test("xoá nội dung phiên: file database bật secure_delete và WAL được checkpoint, cắt về 0 byte ngay sau khi xoá", () =>
+	{
+		const dir = mkdtempSync(path.join(tmpdir(), "retro-wal-"));
+		const db = openDatabase(path.join(dir, "bot.db"));
+		try
+		{
+			runMigrations(db);
+			assert.equal(db.pragma("secure_delete", { simple: true }), 1, "secure_delete bật cho kết nối của bot");
+			const services = createServices(db, { clock: new FakeClock(), backupDir: path.join(dir, "backups"), backupKeep: 1 });
+			const session = services.retro.create({ guildId: GUILD, channelId: CHANNEL_GENERAL, title: "Retro WAL", docUrl: null, teamRoleId: null, durationHours: null, createdBy: ADMIN });
+			services.retro.submit({ guildId: GUILD, sessionId: session.id, userId: USER_A, roleIds: [], answers: answers({ learned: "chữ riêng tư".repeat(80) }), systemActorId: BOT });
+			services.retro.close(GUILD, session.id, ADMIN);
+			assert.ok(statSync(path.join(dir, "bot.db-wal")).size > 0, "đã có dữ liệu trong WAL trước khi xoá");
+			services.retro.deleteContent(GUILD, session.id, ADMIN);
+			assert.equal(statSync(path.join(dir, "bot.db-wal")).size, 0, "WAL không còn bản cũ của trang chứa chữ");
+		}
+		finally
+		{
+			db.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

@@ -9,7 +9,7 @@ import type { AdminActions } from "../src/discord/adminOps";
 import type { LiveBoardActions } from "../src/discord/configOps";
 import type { RetroActions } from "../src/discord/retroOps";
 import { ConfluenceError } from "../src/integrations/confluence";
-import type { RetroDocSection, RetroDocWriter } from "../src/integrations/confluence";
+import type { RetroDocSection, RetroDocWriter, RetroDocWriteResult } from "../src/integrations/confluence";
 import { UNKNOWN_MEMBER_NAME } from "../src/discord/memberDirectory";
 import type { MemberDisplay } from "../src/discord/memberDirectory";
 import type { TierRoleSyncResult } from "../src/discord/roleSync";
@@ -79,6 +79,8 @@ export interface FakeRoleSpec
 	managed?: boolean;
 	position?: number;
 	color?: number;
+	/** Role cho phép mọi người mention (mặc định false). */
+	mentionable?: boolean;
 }
 
 export interface WebWorld
@@ -118,6 +120,7 @@ export function addRole(world: WebWorld, spec: FakeRoleSpec): void
 		position: spec.position ?? 1,
 		rawPosition: spec.position ?? 1,
 		color: spec.color ?? 0,
+		mentionable: spec.mentionable ?? false,
 		hexColor: `#${(spec.color ?? 0).toString(16).padStart(6, "0")}`,
 		permissions: new PermissionsBitField([]),
 		guild: world.guild,
@@ -191,7 +194,7 @@ export function createWorld(): WebWorld
 
 	addRole(world, { id: GUILD, name: "@everyone", position: 0 });
 	addRole(world, { id: ROLE_ADMIN_BOT, name: "Admin bot", position: 5 });
-	addRole(world, { id: ROLE_TEAM_A, name: "Backend", position: 3, color: 0x3498db });
+	addRole(world, { id: ROLE_TEAM_A, name: "Backend", position: 3, color: 0x3498db, mentionable: true });
 	addRole(world, { id: ROLE_TEAM_B, name: "Frontend", position: 2 });
 	addRole(world, { id: ROLE_MANAGED, name: "Bot khác", managed: true, position: 4 });
 	addChannel(world, { id: CATEGORY_MAIN, name: "Chung", type: ChannelType.GuildCategory, position: 0 });
@@ -206,7 +209,7 @@ export function createWorld(): WebWorld
 	setMember(world, {
 		id: BOT_ID,
 		displayName: "ezOne Bot",
-		permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageRoles],
+		permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.ManageRoles],
 		roleIds: [],
 		bot: true,
 	});
@@ -252,11 +255,11 @@ export class FakeRetroDoc implements RetroDocWriter
 	/** Khác null: lần ghi ném ConfluenceError với thông báo này. */
 	error: string | null = null;
 
-	writeRetroSection(docUrl: string, section: RetroDocSection): Promise<void>
+	writeRetroSection(docUrl: string, section: RetroDocSection): Promise<RetroDocWriteResult>
 	{
 		if (this.error !== null) return Promise.reject(new ConfluenceError(this.error));
 		this.writes.push({ docUrl, section });
-		return Promise.resolve();
+		return Promise.resolve("written");
 	}
 }
 
@@ -360,13 +363,13 @@ export function createWebHarness(modules?: readonly PageModule[]): WebHarness
 		refreshSessionMessage: (_client, session) =>
 		{
 			retroCalls.push(`refreshSession:${session.id}`);
-			return Promise.resolve(session.messageId !== null);
+			return Promise.resolve(session.messageId === null ? "none" : "ok");
 		},
 		post: (_client, channelId, payload) =>
 		{
 			retroCalls.push(`post:${channelId}`);
 			retroPosts.push({ channelId, payload });
-			return Promise.resolve({ channelId, messageId: String(700000000000000000n + BigInt(retroPosts.length)) });
+			return Promise.resolve({ ok: true, channelId, messageId: String(700000000000000000n + BigInt(retroPosts.length)) });
 		},
 	};
 	const deps: WebDeps = {

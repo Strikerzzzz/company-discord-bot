@@ -1,13 +1,12 @@
-import { createHash } from "crypto";
-import { Db } from "../../db/connection";
+import { createHash, randomBytes } from "crypto";
+import { Db, truncateWal } from "../../db/connection";
 import { UserError } from "../../shared/errors";
 import { ListPage, pageWindow } from "../../shared/paging";
 import { ServiceDeps } from "../deps";
-import { Poll, PollServiceApi } from "../poll/types";
-import { displaySprintName, hasContent, isNumericOnlyName, normalizeAnswers, sprintNameKey } from "./answers";
+import { Poll, POLL_LIMITS, PollServiceApi } from "../poll/types";
+import { cutText, displaySprintName, isNumericOnlyName, normalizeAnswers, sprintNameKey } from "./answers";
 import { parseDocLink } from "./docLink";
 import {
-	AnonymousRetroEntry,
 	CreateRetroInput,
 	DEFAULT_RETRO_CONFIG,
 	isRetroField,
@@ -16,6 +15,7 @@ import {
 	ManagerRoleResult,
 	RETRO_CONFIG_KEYS,
 	RETRO_CONFIG_LIMITS,
+	RETRO_IDEA_FIELDS,
 	RETRO_LIMITS,
 	RetroAnswers,
 	RetroColumns,
@@ -23,6 +23,8 @@ import {
 	RetroConfigKey,
 	RetroDocResult,
 	RetroField,
+	RetroIdeaDelete,
+	RetroIdeaField,
 	RetroListQuery,
 	RetroServiceApi,
 	RetroSession,
@@ -40,6 +42,11 @@ export const RETRO_NOT_FOUND = "Không tìm thấy phiên retro này.";
 export const RETRO_NOT_ACCEPTING = "Phiên retro này đã đóng, không điền hay sửa câu trả lời được nữa.";
 export const RETRO_CONTENT_DELETED = "Nội dung của phiên retro này đã bị xoá.";
 export const RETRO_NO_SPRINT_NAME = "Chưa có ai đề xuất tên sprint trong phiên này.";
+export const RETRO_IDEA_NOT_FOUND = "Không tìm thấy ý này (có thể đã bị xoá hoặc vừa thay đổi).";
+export const RETRO_NAME_IN_VOTE = "Phiên đang vote tên sprint (hoặc chờ chọn tên khi hoà) nên không xoá được tên lúc này: tên có thể đang nằm "
+	+ "trong vote. Hãy chốt tên xong rồi mới xoá.";
+export const RETRO_NEVER_POSTED = "Phiên này chưa từng có tin trên Discord (bot không đăng được tin có nút 📝 Điền retro), nên chưa mở lại được. "
+	+ "Hãy đăng lại tin của phiên trước (/retro repost, hoặc nút “Đăng lại tin của phiên” trên web), hoặc tạo phiên mới.";
 
 /** Tên cột trong bảng retro_entries của từng ô (hằng số trong code, được phép ghép vào SQL). */
 const FIELD_COLUMNS: Readonly<Record<RetroField, string>> = {
@@ -71,6 +78,7 @@ interface SessionRow
 	confluence_written_at: number | null;
 	confluence_error: string | null;
 	content_deleted_at: number | null;
+	summary_posted_at: number | null;
 	participants: number;
 }
 
@@ -84,6 +92,7 @@ interface EntryRow
 	kudos: string | null;
 	sprint_name: string | null;
 	team_role_ids: string;
+	order_keys: string;
 	submitted_at: number;
 }
 
@@ -93,6 +102,15 @@ interface ConfigRow
 	proposer_bonus_xp: number;
 	vote_minutes: number;
 }
+
+/** Một ý trong một cột chữ, kèm mã phiếu: chỉ dùng trong service để xoá đúng ô, không bao giờ trả ra ngoài. */
+interface ColumnIdea
+{
+	entryId: number;
+	text: string;
+}
+
+type OrderKeys = Partial<Record<RetroIdeaField, string>>;
 
 const SESSION_COLUMNS = "s.*, (SELECT COUNT(*) FROM retro_entries e WHERE e.session_id = s.id) AS participants";
 
@@ -121,11 +139,53 @@ function parseStringArray(text: string | null): string[] | null
 	}
 }
 
+/** Khoá ngẫu nhiên mới cho thứ tự hiển thị của một ô: 128 bit, không suy ra được từ mã phiếu, người viết hay thời điểm gửi. */
+export function randomOrderKey(): string
+{
+	return randomBytes(16).toString("hex");
+}
+
+/** Khoá thứ tự đã lưu của các ô chữ (cột order_keys); giá trị lạ thì bỏ qua. */
+function parseOrderKeys(text: string): OrderKeys
+{
+	const keys: OrderKeys = {};
+	let value: unknown;
+	try
+	{
+		value = JSON.parse(text);
+	}
+	catch
+	{
+		return keys;
+	}
+	if (typeof value !== "object" || value === null) return keys;
+	for (const field of RETRO_IDEA_FIELDS)
+	{
+		const key: unknown = Reflect.get(value, field);
+		if (typeof key === "string" && key.length > 0) keys[field] = key;
+	}
+	return keys;
+}
+
+/**
+ * Khoá thứ tự của một ô: khoá ngẫu nhiên đã lưu; thiếu (dữ liệu lạ) thì băm chữ của ô, để thứ tự vẫn không phụ thuộc người viết, mã
+ * phiếu hay thứ tự gửi.
+ */
+function orderKeyOf(keys: OrderKeys, field: RetroIdeaField, text: string): string
+{
+	return keys[field] ?? createHash("sha256").update(`${field}:${text}`).digest("hex");
+}
+
+function compareText(a: string, b: string): number
+{
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Tiêu đề một dòng; độ dài đếm theo UTF-16 như option `ten` của /retro create và PollService. */
 function validateTitle(raw: string): string
 {
 	const title = raw.normalize("NFC").replace(/\s+/gu, " ").trim();
-	const length = Array.from(title).length;
-	if (length < RETRO_LIMITS.titleMin || length > RETRO_LIMITS.titleMax)
+	if (title.length < RETRO_LIMITS.titleMin || title.length > RETRO_LIMITS.titleMax)
 	{
 		throw new UserError(`Tên phiên retro phải dài từ ${RETRO_LIMITS.titleMin} đến ${RETRO_LIMITS.titleMax} ký tự.`);
 	}
@@ -150,16 +210,12 @@ function validateConfigNumber(key: RetroConfigKey, value: number): void
 	}
 }
 
-/** Thứ tự trộn cố định của một phiếu trong phiên: không lộ thứ tự gửi, nhưng ghi lại Confluence nhiều lần vẫn cùng thứ tự. */
-function shuffleKey(sessionId: number, entryId: number): string
-{
-	return createHash("sha256").update(`retro:${sessionId}:${entryId}`).digest("hex");
-}
-
 /**
  * Retro sprint theo team (DEC-049):
  * - phiên gắn với một kênh/thread, tuỳ chọn một role team; mỗi người một phiếu 5 ô, sửa được tới khi đóng;
- * - lưu người điền để admin theo dõi, nhưng nội dung chỉ trả về ẩn danh;
+ * - lưu người điền để admin theo dõi, nhưng nội dung chỉ trả về ẩn danh, theo từng cột: mỗi ô có khoá ngẫu nhiên riêng (randomBytes,
+ *   lưu trong order_keys) và mỗi cột xếp theo khoá của nó, nên thứ tự không suy ra được từ mã phiếu hay thứ tự gửi, và một hàng của
+ *   bảng không phải câu trả lời của một người;
  * - XP (điền retro, người đề xuất tên thắng) ghi qua xpLedger với nguồn "admin" và người thao tác là ID hệ thống;
  * - vote tên sprint dùng PollService có sẵn; hoà thì người quản lý chọn.
  * Mọi thao tác ghi nhiều bước nằm trong một transaction.
@@ -172,6 +228,8 @@ export class RetroService implements RetroServiceApi
 		private readonly polls: PollServiceApi,
 		/** CONFLUENCE_BASE_URL đã chuẩn hoá, hoặc null nếu chưa cấu hình (link tài liệu vẫn lưu, không kiểm tra host). */
 		private readonly confluenceBaseUrl: string | null = null,
+		/** Sinh khoá thứ tự hiển thị của một ô; test thay bằng dãy cố định. */
+		private readonly newOrderKey: () => string = randomOrderKey,
 	)
 	{}
 
@@ -274,14 +332,15 @@ export class RetroService implements RetroServiceApi
 			}
 
 			const teams = JSON.stringify(this.deps.teams.resolveTeams(guildId, input.roleIds));
-			const existing = this.db.prepare<[number, string], { id: number }>("SELECT id FROM retro_entries WHERE session_id = ? AND user_id = ?")
+			const existing = this.db.prepare<[number, string], EntryRow>("SELECT * FROM retro_entries WHERE session_id = ? AND user_id = ?")
 				.get(row.id, userId);
 			if (existing)
 			{
+				const keys = JSON.stringify(this.orderKeys(answers, existing));
 				this.db.prepare(`
-					UPDATE retro_entries SET learned = ?, improve = ?, ideas = ?, kudos = ?, sprint_name = ?, team_role_ids = ?, updated_at = ?
+					UPDATE retro_entries SET learned = ?, improve = ?, ideas = ?, kudos = ?, sprint_name = ?, team_role_ids = ?, order_keys = ?, updated_at = ?
 					WHERE id = ?`,
-				).run(answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams, now, existing.id);
+				).run(answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams, keys, now, existing.id);
 				return { session: this.load(row.id), answers, firstSubmit: false, xpAwarded: 0 };
 			}
 
@@ -301,10 +360,11 @@ export class RetroService implements RetroServiceApi
 				}).id;
 			}
 			this.db.prepare(`
-				INSERT INTO retro_entries (session_id, guild_id, user_id, learned, improve, ideas, kudos, sprint_name, team_role_ids, fill_xp_event_id,
-					submitted_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			).run(row.id, guildId, userId, answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams, eventId, now, now);
+				INSERT INTO retro_entries (session_id, guild_id, user_id, learned, improve, ideas, kudos, sprint_name, team_role_ids, order_keys,
+					fill_xp_event_id, submitted_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			).run(row.id, guildId, userId, answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams,
+				JSON.stringify(this.orderKeys(answers, null)), eventId, now, now);
 			return { session: this.load(row.id), answers, firstSubmit: true, xpAwarded: eventId === null ? 0 : fillXp };
 		})();
 	}
@@ -326,28 +386,18 @@ export class RetroService implements RetroServiceApi
 			.map(entry => entry.user_id);
 	}
 
-	anonymousEntries(guildId: string, sessionId: number): AnonymousRetroEntry[]
-	{
-		const row = this.findRow(guildId, sessionId);
-		if (!row) return [];
-		return this.entryRows(row.id)
-			.map(entry => ({ id: entry.id, ...answersOf(entry) }))
-			.filter(hasContent)
-			.map(entry => ({ entry, key: shuffleKey(row.id, entry.id) }))
-			.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-			.map(({ entry }) => entry);
-	}
-
 	columns(guildId: string, sessionId: number): RetroColumns
 	{
-		const entries = this.anonymousEntries(guildId, sessionId);
-		const texts = (field: RetroField): string[] => entries.map(entry => entry[field]).filter((text): text is string => text !== null);
+		const row = this.findRow(guildId, sessionId);
+		if (!row) return { learned: [], improve: [], ideas: [], kudos: [], sprintName: [] };
+		const entries = this.entryRows(row.id);
+		const texts = (field: RetroIdeaField): string[] => this.ideaColumn(entries, field).map(idea => idea.text);
 		return {
 			learned: texts("learned"),
 			improve: texts("improve"),
 			ideas: texts("ideas"),
 			kudos: texts("kudos"),
-			sprintName: this.sprintNameCandidates(guildId, sessionId).map(candidate => candidate.name),
+			sprintName: this.candidates(row.id).map(candidate => candidate.name),
 		};
 	}
 
@@ -391,12 +441,14 @@ export class RetroService implements RetroServiceApi
 			if (row.status === "open") throw new UserError("Phiên retro này đang mở.");
 			if (row.status !== "closed") throw new UserError("Phiên retro này đã có vote tên sprint nên không mở lại được.");
 			if (row.content_deleted_at !== null) throw new UserError(`${RETRO_CONTENT_DELETED} Không mở lại được.`);
+			if (row.message_id === null) throw new UserError(RETRO_NEVER_POSTED);
 			const open = this.findOpenRow(guildId, row.channel_id);
 			if (open) throw new UserError(`Kênh này đang có phiên retro #${open.id} "${open.title}" mở. Hãy đóng phiên đó trước.`);
 
 			const now = this.deps.clock.now();
 			const closesAt = durationHours === null ? null : now + durationHours * MS_PER_HOUR;
-			this.db.prepare("UPDATE retro_sessions SET status = 'open', closed_at = NULL, closes_at = ? WHERE id = ?").run(closesAt, row.id);
+			this.db.prepare("UPDATE retro_sessions SET status = 'open', closed_at = NULL, closes_at = ?, summary_posted_at = NULL WHERE id = ?")
+				.run(closesAt, row.id);
 			this.deps.audit.record(guildId, actorId, "retro.reopen", row.channel_id, { sessionId: row.id, title: row.title, closesAt });
 			return this.load(row.id);
 		})();
@@ -416,26 +468,40 @@ export class RetroService implements RetroServiceApi
 		})();
 	}
 
-	deleteIdea(guildId: string, sessionId: number, entryId: number, field: RetroField, actorId: string): RetroSession
+	deleteIdea(input: RetroIdeaDelete): RetroSession
 	{
+		const { guildId, field, index, text, actorId } = input;
 		if (!isRetroField(field)) throw new UserError("Ô cần xoá không hợp lệ.");
+		if (!Number.isSafeInteger(index) || index < 0) throw new UserError(RETRO_IDEA_NOT_FOUND);
 		return this.db.transaction((): RetroSession =>
 		{
-			const row = this.requireRow(guildId, sessionId);
-			const column = FIELD_COLUMNS[field];
-			const entry = Number.isSafeInteger(entryId)
-				? this.db.prepare<[number, number], EntryRow>("SELECT * FROM retro_entries WHERE id = ? AND session_id = ?").get(entryId, row.id)
-				: undefined;
-			if (!entry || answersOf(entry)[field] === null) throw new UserError("Không tìm thấy ý này (có thể đã bị xoá).");
-			this.db.prepare(`UPDATE retro_entries SET ${column} = NULL WHERE id = ?`).run(entry.id);
-			this.deps.audit.record(guildId, actorId, "retro.idea_delete", row.channel_id, { sessionId: row.id, title: row.title, entryId: entry.id, field });
+			const row = this.requireRow(guildId, input.sessionId);
+			const entries = this.entryRows(row.id);
+			if (field === "sprintName")
+			{
+				if (row.status === "voting") throw new UserError(RETRO_NAME_IN_VOTE);
+				const candidate = this.candidates(row.id).at(index);
+				if (!candidate || candidate.name !== text) throw new UserError(RETRO_IDEA_NOT_FOUND);
+				const clear = this.db.prepare("UPDATE retro_entries SET sprint_name = NULL WHERE id = ?");
+				for (const entry of entries)
+				{
+					if (entry.sprint_name !== null && sprintNameKey(entry.sprint_name) === candidate.key) clear.run(entry.id);
+				}
+			}
+			else
+			{
+				const idea = this.ideaColumn(entries, field).at(index);
+				if (!idea || idea.text !== text) throw new UserError(RETRO_IDEA_NOT_FOUND);
+				this.db.prepare(`UPDATE retro_entries SET ${FIELD_COLUMNS[field]} = NULL WHERE id = ?`).run(idea.entryId);
+			}
+			this.deps.audit.record(guildId, actorId, "retro.idea_delete", row.channel_id, { sessionId: row.id, title: row.title, field });
 			return this.load(row.id);
 		})();
 	}
 
 	deleteContent(guildId: string, sessionId: number, actorId: string): RetroSession
 	{
-		return this.db.transaction((): RetroSession =>
+		const session = this.db.transaction((): RetroSession =>
 		{
 			const row = this.requireRow(guildId, sessionId);
 			if (row.content_deleted_at !== null) throw new UserError("Nội dung của phiên retro này đã được xoá trước đó.");
@@ -449,6 +515,8 @@ export class RetroService implements RetroServiceApi
 			this.deps.audit.record(guildId, actorId, "retro.content_delete", row.channel_id, { sessionId: row.id, title: row.title, entries });
 			return this.load(row.id);
 		})();
+		truncateWal(this.db);
+		return session;
 	}
 
 	startVote(input: { guildId: string; sessionId: number; actorId: string; names?: readonly string[] }): { session: RetroSession; poll: Poll }
@@ -467,7 +535,7 @@ export class RetroService implements RetroServiceApi
 			const poll = this.polls.create({
 				guildId,
 				creatorId: actorId,
-				question: `🍀 Đặt tên sprint · Retro ${row.title}`,
+				question: cutText(`🍀 Đặt tên sprint · Retro ${row.title}`, POLL_LIMITS.questionMax),
 				options: names,
 				multiSelect: false,
 				xpReward: this.deps.guildConfig.getSettings(guildId).defaultPollXp,
@@ -568,6 +636,27 @@ export class RetroService implements RetroServiceApi
 		})();
 	}
 
+	markSummaryPosted(guildId: string, sessionId: number): RetroSession
+	{
+		return this.db.transaction((): RetroSession =>
+		{
+			const row = this.requireRow(guildId, sessionId);
+			this.db.prepare("UPDATE retro_sessions SET summary_posted_at = ? WHERE id = ?").run(this.deps.clock.now(), row.id);
+			return this.load(row.id);
+		})();
+	}
+
+	pendingSummaries(closedSince: number): RetroSession[]
+	{
+		return this.db.prepare<[number], SessionRow>(`
+			SELECT ${SESSION_COLUMNS}
+			FROM retro_sessions s
+			WHERE s.status <> 'open' AND s.closed_at IS NOT NULL AND s.closed_at >= ? AND s.summary_posted_at IS NULL
+				AND s.message_id IS NOT NULL AND s.content_deleted_at IS NULL
+			ORDER BY s.closed_at, s.id`,
+		).all(closedSince).map(row => this.toSession(row));
+	}
+
 	getConfig(guildId: string): RetroConfig
 	{
 		const row = this.db.prepare<[string], ConfigRow>("SELECT fill_xp, proposer_bonus_xp, vote_minutes FROM retro_config WHERE guild_id = ?").get(guildId);
@@ -643,6 +732,35 @@ export class RetroService implements RetroServiceApi
 
 	// ---------- Nội bộ ----------
 
+	/**
+	 * Khoá thứ tự của các ô chữ sau khi lưu `answers`: ô đổi chữ (hay phiếu mới) nhận khoá ngẫu nhiên mới, ô giữ nguyên chữ giữ khoá cũ
+	 * (sửa một ô không làm đảo thứ tự các cột khác).
+	 */
+	private orderKeys(answers: RetroAnswers, existing: EntryRow | null): OrderKeys
+	{
+		const previous = existing ? parseOrderKeys(existing.order_keys) : {};
+		const keys: OrderKeys = {};
+		for (const field of RETRO_IDEA_FIELDS)
+		{
+			const kept = existing !== null && answersOf(existing)[field] === answers[field] ? previous[field] : undefined;
+			keys[field] = kept ?? this.newOrderKey();
+		}
+		return keys;
+	}
+
+	/** Các ý của một cột chữ, xếp theo khoá ngẫu nhiên riêng của từng ô (trùng khoá thì theo chữ). */
+	private ideaColumn(entries: readonly EntryRow[], field: RetroIdeaField): ColumnIdea[]
+	{
+		return entries
+			.flatMap(entry =>
+			{
+				const text = answersOf(entry)[field];
+				return text === null ? [] : [{ entryId: entry.id, text, key: orderKeyOf(parseOrderKeys(entry.order_keys), field, text) }];
+			})
+			.sort((a, b) => compareText(a.key, b.key) || compareText(a.text, b.text))
+			.map(({ entryId, text }) => ({ entryId, text }));
+	}
+
 	/** Chốt tên `name` (đúng cách viết của ứng viên): cộng XP cho mọi người đề xuất tên đó, phiên sang "done". Gọi trong transaction. */
 	private decide(row: SessionRow, name: string, systemActorId: string): RetroVoteOutcome
 	{
@@ -681,12 +799,16 @@ export class RetroService implements RetroServiceApi
 		return [];
 	}
 
-	/** Danh sách tên đưa vào vote: toàn bộ ứng viên, hoặc danh sách rút gọn (mỗi tên phải là ứng viên); 2–10 tên. */
+	/**
+	 * Danh sách tên đưa vào vote: toàn bộ ứng viên, hoặc danh sách rút gọn (mỗi tên phải là ứng viên); 2–10 tên, mỗi tên không dài quá
+	 * một lựa chọn vote (UTF-16, như PollService) để lỗi nêu đúng tên cần bỏ.
+	 */
 	private voteNames(candidates: readonly SprintNameCandidate[], shortlist: readonly string[]): string[]
 	{
 		if (candidates.length === 0) throw new UserError(RETRO_NO_SPRINT_NAME);
 		const max = RETRO_LIMITS.voteOptionsMax;
 		const picked = shortlist.map(name => name.trim()).filter(name => name.length > 0);
+		let names: string[];
 		if (picked.length === 0)
 		{
 			if (candidates.length === 1)
@@ -698,18 +820,26 @@ export class RetroService implements RetroServiceApi
 				throw new UserError(`Có ${candidates.length} tên được đề xuất, nhưng một vote chỉ có tối đa ${max} lựa chọn. Hãy chọn danh sách `
 					+ `rút gọn từ 2 đến ${max} tên (trang Retro của web quản trị, hoặc option rut-gon của /retro vote).`);
 			}
-			return candidates.map(candidate => candidate.name);
+			names = candidates.map(candidate => candidate.name);
 		}
-
-		const byKey = new Map(candidates.map(candidate => [candidate.key, candidate.name]));
-		const names: string[] = [];
-		for (const raw of picked)
+		else
 		{
-			const name = byKey.get(sprintNameKey(raw));
-			if (name === undefined) throw new UserError(`"${displaySprintName(raw)}" không có trong các tên được đề xuất.`);
-			if (!names.includes(name)) names.push(name);
+			const byKey = new Map(candidates.map(candidate => [candidate.key, candidate.name]));
+			names = [];
+			for (const raw of picked)
+			{
+				const name = byKey.get(sprintNameKey(raw));
+				if (name === undefined) throw new UserError(`"${displaySprintName(raw)}" không có trong các tên được đề xuất.`);
+				if (!names.includes(name)) names.push(name);
+			}
+			if (names.length < 2 || names.length > max) throw new UserError(`Danh sách rút gọn phải có từ 2 đến ${max} tên khác nhau.`);
 		}
-		if (names.length < 2 || names.length > max) throw new UserError(`Danh sách rút gọn phải có từ 2 đến ${max} tên khác nhau.`);
+		const tooLong = names.filter(name => name.length > POLL_LIMITS.optionLabelMax);
+		if (tooLong.length > 0)
+		{
+			throw new UserError(`Tên sprint dài quá ${POLL_LIMITS.optionLabelMax} ký tự (giới hạn một lựa chọn vote) nên không đưa vào vote được: `
+				+ `${tooLong.map(name => `"${name}"`).join(", ")}. Hãy xoá tên đó trên trang Retro của web, hoặc chọn danh sách rút gọn không có tên đó.`);
+		}
 		return names;
 	}
 
@@ -727,10 +857,10 @@ export class RetroService implements RetroServiceApi
 			if (found) found.proposerIds.push(entry.user_id);
 			else byKey.set(key, { name, key, proposerIds: [entry.user_id] });
 		}
-		return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+		return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name, "vi") || compareText(a.key, b.key));
 	}
 
-	/** Phiếu của phiên theo thứ tự gửi. */
+	/** Phiếu của phiên theo thứ tự gửi (chỉ dùng nội bộ; nội dung trả ra ngoài luôn đã trộn hoặc xếp theo tên). */
 	private entryRows(sessionId: number): EntryRow[]
 	{
 		return this.db.prepare<[number], EntryRow>("SELECT * FROM retro_entries WHERE session_id = ? ORDER BY submitted_at, id").all(sessionId);
@@ -795,6 +925,7 @@ export class RetroService implements RetroServiceApi
 			confluenceWrittenAt: row.confluence_written_at,
 			confluenceError: row.confluence_error,
 			contentDeletedAt: row.content_deleted_at,
+			summaryPostedAt: row.summary_posted_at,
 			participants: row.participants,
 			acceptingAnswers: accepting(row, this.deps.clock.now()),
 		};

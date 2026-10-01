@@ -117,7 +117,7 @@ function rolesCard(ctx: GuildPageContext, config: RetroConfig): RawHtml
 <thead><tr><th>Role</th><th>Quản lý retro</th><th>Ghi chú</th></tr></thead>
 <tbody>${rows.map(row => roleRow(ctx, row))}</tbody></table></div>`;
 	return html`<section class="card"><h2>🛡️ Role quản lý retro: ${config.managerRoleIds.length}/${RETRO_LIMITS.managerRolesMax}</h2>
-<p class="muted rt-hint">Người có ít nhất một role trong danh sách tạo được phiên retro (bot đăng tin thay họ) và quản lý mọi phiên: đóng, mở lại, gia hạn,
+<p class="muted rs-hint">Người có ít nhất một role trong danh sách tạo được phiên retro (bot đăng tin thay họ) và quản lý mọi phiên: đóng, mở lại, gia hạn,
 nhắc, tạo vote tên sprint, chọn tên khi hoà, ghi lại Confluence. Họ không xem được danh sách người đã điền: chỉ admin bot thấy. Bảng này không có
 "Chọn tất cả" để không lỡ tay biến mọi role thành người quản lý.</p>
 ${current}
@@ -233,7 +233,7 @@ export const retroSettingsPage: PageModule = {
 		{ method: "POST", path: ROLES_PATH, handler: saveRoles },
 	],
 	css: `
-.rt-hint { font-size: 13px; margin: 0 0 8px; }
+.rs-hint { font-size: 13px; margin: 0 0 8px; }
 .rt-chips .chip { margin: 2px 6px 2px 0; }
 .rt-scroll { overflow-x: auto; }
 .rt-roles td label { cursor: pointer; }

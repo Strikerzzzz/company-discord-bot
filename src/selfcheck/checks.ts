@@ -193,7 +193,13 @@ export function checkConfluenceConfig(env: NodeJS.ProcessEnv): CheckResult
 	const confluence = attempt(() => loadConfluenceConfig(env));
 	if (!confluence.ok) return fail("config", `Ghi retro vào Confluence: ${confluence.error}`);
 	if (confluence.value === null) return ok("config", "Ghi retro vào Confluence: tắt (không đặt CONFLUENCE_BASE_URL, CONFLUENCE_TOKEN). Retro vẫn chạy, chỉ bỏ bước ghi.");
-	return ok("config", `Ghi retro vào Confluence: bật, địa chỉ ${confluence.value.baseUrl}; CONFLUENCE_TOKEN: có.`);
+	const { baseUrl, spaceKeys } = confluence.value;
+	if (spaceKeys.length === 0)
+	{
+		return warn("config", `Ghi retro vào Confluence: bật, địa chỉ ${baseUrl}; CONFLUENCE_TOKEN: có; nhưng chưa đặt CONFLUENCE_SPACE_KEYS (danh sách `
+			+ "space được ghi) nên bot sẽ từ chối mọi lần ghi. Chạy lại deploy/enable-confluence.sh, hoặc thêm CONFLUENCE_SPACE_KEYS=P2 vào .env.");
+	}
+	return ok("config", `Ghi retro vào Confluence: bật, địa chỉ ${baseUrl}; CONFLUENCE_TOKEN: có; space được ghi: ${spaceKeys.join(", ")}.`);
 }
 
 /**

@@ -387,6 +387,8 @@ export const MIGRATIONS: readonly Migration[] = [
 			-- role team. status: 'open' (đang nhận câu trả lời), 'closed' (đã đóng), 'voting' (đang vote tên sprint), 'done' (đã chốt
 			-- tên). tie_names: JSON mảng tên hoà khi vote đóng mà hoà (chờ người quản lý chọn); NULL = không có hoà đang chờ.
 			-- confluence_*: kết quả lần ghi Confluence gần nhất. content_deleted_at: admin đã xoá nội dung (chữ) của phiên.
+			-- summary_posted_at: lúc bot đăng được bảng tổng hợp của lần đóng gần nhất; NULL = chưa đăng (lịch quét thử lại, mở lại thì
+			-- về NULL).
 			CREATE TABLE retro_sessions (
 				id INTEGER PRIMARY KEY,
 				guild_id TEXT NOT NULL,
@@ -406,7 +408,8 @@ export const MIGRATIONS: readonly Migration[] = [
 				winner_name TEXT,
 				confluence_written_at INTEGER,
 				confluence_error TEXT,
-				content_deleted_at INTEGER
+				content_deleted_at INTEGER,
+				summary_posted_at INTEGER
 			);
 			CREATE INDEX idx_retro_sessions_guild ON retro_sessions (guild_id, created_at);
 			CREATE INDEX idx_retro_sessions_channel ON retro_sessions (guild_id, channel_id, created_at);
@@ -419,6 +422,8 @@ export const MIGRATIONS: readonly Migration[] = [
 			-- danh; admin xoá nội dung thì các cột chữ về NULL (xoá hẳn, ngoại lệ có chủ ý của DEC-027), dòng giữ lại để biết ai đã
 			-- điền. team_role_ids: JSON role team của người điền lúc gửi lần gần nhất (snapshot cho XP người đề xuất tên thắng).
 			-- fill_xp_event_id: event XP "điền retro" (một lần mỗi phiên), NULL nếu XP điền retro là 0.
+			-- order_keys: JSON khoá ngẫu nhiên (randomBytes) của từng ô chữ, sinh lại khi ô đổi; mỗi cột được xếp theo khoá riêng của
+			-- nó khi hiển thị, nên thứ tự không suy ra được từ mã phiếu hay thứ tự gửi, và một hàng không gom câu trả lời của một người.
 			CREATE TABLE retro_entries (
 				id INTEGER PRIMARY KEY,
 				session_id INTEGER NOT NULL REFERENCES retro_sessions (id),
@@ -430,6 +435,7 @@ export const MIGRATIONS: readonly Migration[] = [
 				kudos TEXT,
 				sprint_name TEXT,
 				team_role_ids TEXT NOT NULL DEFAULT '[]',
+				order_keys TEXT NOT NULL DEFAULT '{}',
 				fill_xp_event_id INTEGER REFERENCES xp_events (id),
 				submitted_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL,

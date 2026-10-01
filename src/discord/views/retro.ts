@@ -14,6 +14,7 @@ import {
 	TextInputBuilder,
 	TextInputStyle,
 } from "discord.js";
+import { cutText } from "../../modules/retro/answers";
 import { RETRO_FIELD_TITLES, RETRO_FIELDS, RETRO_LIMITS, RetroAnswers, RetroColumns, RetroField, RetroSession } from "../../modules/retro/types";
 import { UserError } from "../../shared/errors";
 import { channelMention, COLORS, dateTime, disableMaskedLinks, fitLines, formatNumber, relativeTime, roleMention, truncate, userMention } from "../format";
@@ -29,6 +30,8 @@ export const RETRO_NAMESPACE = "retro";
 export const INVALID_RETRO_COMPONENT = "Nút hoặc form retro này không hợp lệ.";
 /** Discord giới hạn tổng số ký tự của mọi TextDisplay trong một message Components V2. */
 export const RETRO_TEXT_MAX = 4000;
+/** Discord giới hạn nội dung một tin (content) 2000 ký tự. */
+export const MESSAGE_CONTENT_MAX = 2000;
 
 /** "fill": nút mở form; "form": form 5 ô. Cả hai mang mã phiên. */
 export type RetroComponentAction = "fill" | "form";
@@ -39,7 +42,8 @@ const LABEL_MAX = 45;
 const IDEA_DISPLAY_MAX = 300;
 const TITLE_DISPLAY_MAX = 100;
 const NAME_LIST_MAX = 1500;
-const PARTICIPANT_LIST_MAX = 1500;
+/** Dòng tình trạng Confluence trong `/retro status` (lỗi Confluence lưu tối đa 300 ký tự; sau khi escape có thể dài hơn). */
+const DOC_STATUS_MAX = 400;
 
 /** customId của từng ô trong form (ổn định, không phụ thuộc thứ tự). */
 export const RETRO_INPUT_IDS: Readonly<Record<RetroField, string>> = {
@@ -170,7 +174,10 @@ export function retroSessionMessage(session: RetroSession): RetroComponentsPaylo
 	return { components: [container], flags: MessageFlags.IsComponentsV2, allowedMentions: NO_MENTIONS };
 }
 
-/** Form 5 ô (không bắt buộc), điền sẵn câu trả lời cũ nếu có. customId `retro:form:<id>`. */
+/**
+ * Form 5 ô (không bắt buộc), điền sẵn câu trả lời cũ nếu có. customId `retro:form:<id>`. Câu cũ dài hơn giới hạn của ô (Discord đếm
+ * theo UTF-16) thì được cắt gọn an toàn thay vì bỏ trống, để gửi lại form không làm mất cả ô.
+ */
 export function retroModal(session: RetroSession, answers: RetroAnswers | null): ModalBuilder
 {
 	const modal = new ModalBuilder()
@@ -186,7 +193,7 @@ export function retroModal(session: RetroSession, answers: RetroAnswers | null):
 			.setRequired(false)
 			.setMaxLength(max);
 		const value = answers?.[field] ?? null;
-		if (value !== null && value.length <= max) input.setValue(value);
+		if (value !== null) input.setValue(cutText(value, max));
 		modal.addLabelComponents(new LabelBuilder()
 			.setLabel(truncate(RETRO_FIELD_TITLES[field], LABEL_MAX))
 			.setDescription(FIELD_HINTS[field])
@@ -234,7 +241,7 @@ function columnHeading(field: RetroField, count: number): string
  */
 export function retroSummaryMessage(session: RetroSession, columns: RetroColumns): RetroComponentsPayload
 {
-	const header = `## 📋 Tổng hợp retro: ${retroTitle(session)}\n-# Ẩn danh · ${formatNumber(session.participants)} người đã điền`;
+	const header = `## 📋 Tổng hợp retro: ${retroTitle(session)}\n-# Ẩn danh · ${formatNumber(session.participants)} người đã điền · thứ tự trong mỗi cột không theo người viết`;
 	const footer = session.docUrl === null ? null : `📄 Xem đầy đủ trên Confluence: <${session.docUrl}>`;
 	const filled = RETRO_FIELDS.filter(field => columns[field].length > 0);
 	const container = new ContainerBuilder().setAccentColor(COLORS.success).addTextDisplayComponents(new TextDisplayBuilder().setContent(header));
@@ -308,31 +315,33 @@ export interface RetroStatusAudience
 
 export const PARTICIPANTS_ADMIN_ONLY = "-# Danh sách người đã điền chỉ admin bot xem được (`/retro status` của admin, hoặc trang Retro của web quản trị).";
 
-/** Trả lời riêng của `/retro status`: trạng thái, kênh, số người đã điền; thêm phần theo `audience`. */
+/**
+ * Trả lời riêng của `/retro status`: trạng thái, kênh, số người đã điền; thêm phần theo `audience`. Danh sách người đã điền được cắt
+ * gọn ("và N người khác") để cả tin không vượt 2000 ký tự của Discord.
+ */
 export function retroStatusText(session: RetroSession, audience: RetroStatusAudience, docEnabled: boolean): string
 {
 	const { participants } = audience;
-	const lines = [
+	const head = [
 		`**🔁 Retro #${session.id}: ${retroTitle(session)}**`,
 		`Trạng thái: ${retroStatusLabel(session)}`,
 		`Kênh: ${channelMention(session.channelId)}`,
 		deadlineLine(session),
 		`✍️ Đã điền: **${formatNumber(session.participants)}** người`,
 	].filter((line): line is string => line !== null);
-	if (participants !== null)
-	{
-		lines.push(participants.length === 0
-			? "Người đã điền: chưa có ai."
-			: `Người đã điền: ${fitLines(participants.map(userMention), PARTICIPANT_LIST_MAX, hidden => `và ${hidden} người khác`, { separator: ", " })}`);
-	}
-	else if (audience.manager)
-	{
-		lines.push(PARTICIPANTS_ADMIN_ONLY);
-	}
+	const tail: string[] = [];
+	if (participants === null && audience.manager) tail.push(PARTICIPANTS_ADMIN_ONLY);
 	if (audience.manager || participants !== null)
 	{
-		lines.push(retroDocStatusLine(session, docEnabled));
-		if (session.contentDeletedAt !== null) lines.push("🗑️ Nội dung phiên đã bị xoá.");
+		tail.push(truncate(retroDocStatusLine(session, docEnabled), DOC_STATUS_MAX));
+		if (session.contentDeletedAt !== null) tail.push("🗑️ Nội dung phiên đã bị xoá.");
 	}
-	return lines.join("\n");
+	if (participants === null) return [...head, ...tail].join("\n");
+
+	const prefix = "Người đã điền: ";
+	const used = [...head, ...tail].reduce((sum, line) => sum + line.length + 1, 0) + prefix.length;
+	const list = participants.length === 0
+		? "chưa có ai."
+		: fitLines(participants.map(userMention), MESSAGE_CONTENT_MAX - used, hidden => `và ${formatNumber(hidden)} người khác`, { separator: ", " });
+	return [...head, `${prefix}${list}`, ...tail].join("\n");
 }

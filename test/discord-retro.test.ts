@@ -19,10 +19,24 @@ import type DiscordClient from "../src/classes/DiscordClient";
 import { openDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
 import { afterPollClosed, runPollSweep } from "../src/discord/pollScheduler";
-import { PostedRef, REMIND_COOLDOWN_MS, RetroActions, SUMMARY_NOT_POSTED, VOTE_NOT_POSTED } from "../src/discord/retroOps";
-import { runRetroSweep } from "../src/discord/retroScheduler";
+import {
+	DOC_WRITE_COOLDOWN_MS,
+	REMIND_COOLDOWN_MS,
+	RetroActions,
+	RetroMessageFailure,
+	RetroPostResult,
+	RetroRefreshResult,
+	SESSION_MESSAGE_ARCHIVED,
+	SESSION_MESSAGE_MISSING,
+	SUMMARY_ARCHIVED,
+	SUMMARY_NOT_POSTED,
+	VOTE_ARCHIVED,
+	VOTE_NOT_POSTED,
+} from "../src/discord/retroOps";
+import { runRetroSweep, SUMMARY_RETRY_DELAY_MS } from "../src/discord/retroScheduler";
 import { otherRoleUsage } from "../src/discord/tierRoleSetup";
 import {
+	MESSAGE_CONTENT_MAX,
 	PARTICIPANTS_ADMIN_ONLY,
 	parseRetroComponentId,
 	plainText,
@@ -30,11 +44,12 @@ import {
 	retroComponentId,
 	retroModal,
 	retroSessionMessage,
+	retroStatusText,
 	retroSummaryMessage,
 	shareBudget,
 } from "../src/discord/views/retro";
-import RetroCmd, { NO_SESSION_HERE, RETRO_CREATE_DENIED, RETRO_NOT_MANAGER } from "../src/interactions/commands/retro";
-import { ConfluenceError, RetroDocSection, RetroDocWriter } from "../src/integrations/confluence";
+import RetroCmd, { NO_SESSION_HERE, RETRO_CREATE_DENIED, RETRO_NOT_MANAGER, RETRO_WRONG_CHANNEL } from "../src/interactions/commands/retro";
+import { ConfluenceError, RetroDocSection, RetroDocWriter, RetroDocWriteResult } from "../src/integrations/confluence";
 import { Ledger } from "../src/modules/ledger/Ledger";
 import { RetroSession } from "../src/modules/retro/types";
 import { AppServices, createServices } from "../src/services";
@@ -61,12 +76,23 @@ class FakeDoc implements RetroDocWriter
 	readonly baseUrl = BASE;
 	writes: { docUrl: string; section: RetroDocSection }[] = [];
 	error: string | null = null;
+	/** Khác null: lần ghi chờ tới khi promise này xong (giả lập Confluence chậm). */
+	gate: Promise<void> | null = null;
 
-	writeRetroSection(docUrl: string, section: RetroDocSection): Promise<void>
+	writeRetroSection(docUrl: string, section: RetroDocSection): Promise<RetroDocWriteResult>
 	{
 		if (this.error !== null) return Promise.reject(new ConfluenceError(this.error));
+		const gate = this.gate;
+		if (gate !== null)
+		{
+			return gate.then(() =>
+			{
+				this.writes.push({ docUrl, section });
+				return "written";
+			});
+		}
 		this.writes.push({ docUrl, section });
-		return Promise.resolve();
+		return Promise.resolve("written");
 	}
 }
 
@@ -80,22 +106,30 @@ class FakeRetroActions implements RetroActions
 {
 	refreshed: RetroSession[] = [];
 	posts: Post[] = [];
-	failPost = false;
+	/** Khác null: mọi lần đăng thất bại với lý do này. */
+	postFailure: RetroMessageFailure | null = null;
+	/** Kết quả sửa tin của phiên (phiên chưa có tin thì luôn "none"). */
+	refreshResult: RetroRefreshResult = "ok";
 
 	constructor(public docWriter: RetroDocWriter | null)
 	{}
 
-	refreshSessionMessage(_client: DiscordClient, session: RetroSession): Promise<boolean>
+	set failPost(value: boolean)
 	{
-		this.refreshed.push(session);
-		return Promise.resolve(true);
+		this.postFailure = value ? "failed" : null;
 	}
 
-	post(_client: DiscordClient, channelId: string, payload: MessageCreateOptions): Promise<PostedRef | null>
+	refreshSessionMessage(_client: DiscordClient, session: RetroSession): Promise<RetroRefreshResult>
 	{
-		if (this.failPost) return Promise.resolve(null);
+		this.refreshed.push(session);
+		return Promise.resolve(session.messageId === null ? "none" : this.refreshResult);
+	}
+
+	post(_client: DiscordClient, channelId: string, payload: MessageCreateOptions): Promise<RetroPostResult>
+	{
+		if (this.postFailure !== null) return Promise.resolve({ ok: false, reason: this.postFailure });
 		this.posts.push({ channelId, payload });
-		return Promise.resolve({ channelId, messageId: String(700000000000000000n + BigInt(this.posts.length)) });
+		return Promise.resolve({ ok: true, channelId, messageId: String(700000000000000000n + BigInt(this.posts.length)) });
 	}
 }
 
@@ -144,10 +178,16 @@ function world(options: { docWriter?: boolean } = {}): World
 		},
 	});
 	const channels: Record<string, object> = { [CHANNEL_GENERAL]: channel(null), [CHANNEL_BOT]: channel(null), [CHANNEL_PRIVATE]: channel([USER_A]) };
+	const guild = {
+		roles: { cache: new Map([[ROLE_BACKEND, { id: ROLE_BACKEND, mentionable: true }], [ROLE_FRONTEND, { id: ROLE_FRONTEND, mentionable: false }]]) },
+		members: { me: { id: BOT, permissions: new PermissionsBitField([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]) } },
+		channels: { cache: new Map() },
+	};
 	const client = {
 		services,
 		retroActions: actions,
 		user: { id: BOT },
+		guilds: { cache: new Map([[GUILD, guild]]) },
 		channels: { fetch: (id: string) => Promise.resolve(channels[id] ?? null) },
 	} as unknown as DiscordClient;
 	return { services, clock, client, actions, doc, cmd: new RetroCmd(client), edits, xp: new Ledger(db, "xp", clock) };
@@ -161,6 +201,33 @@ interface MemberSpec
 	/** Quyền gửi tin ở kênh hiện tại (mặc định có). */
 	canSend?: boolean;
 	channelId?: string;
+	/** Quyền của bot ở kênh hiện tại (interaction.appPermissions); mặc định View Channel, Send Messages, Embed Links. */
+	botPermissions?: bigint[];
+	/** Kênh của interaction (mặc định: kênh văn bản thường). */
+	channel?: object;
+}
+
+const BOT_CHANNEL_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
+
+/** Thread riêng tư giả (cho interaction.channel): `members` là thành viên thread (members.fetch tìm thấy). */
+function privateThread(id: string, members: string[]): object
+{
+	return {
+		id,
+		type: ChannelType.PrivateThread,
+		isThread: () => true,
+		members: {
+			fetch: (options: { member: string }) => (members.includes(options.member)
+				? Promise.resolve({ id: options.member })
+				: Promise.reject(Object.assign(new Error("Unknown Member"), { status: 404, code: 10007 }))),
+		},
+	};
+}
+
+/** Đợi các việc chạy nền (ghi Confluence sau khi chốt vote) chạy xong. */
+function flushBackground(): Promise<void>
+{
+	return new Promise(resolve => setImmediate(resolve));
 }
 
 interface Payload
@@ -182,16 +249,18 @@ function chatInput(subcommand: string, values: Values = {}, member: MemberSpec =
 	const edits: Payload[] = [];
 	const followUps: Payload[] = [];
 	const permissions = [
-		...(member.canSend === false ? [] : [PermissionFlagsBits.SendMessages]),
+		...(member.canSend === false ? [] : [PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads]),
 		...(member.manageGuild ? [PermissionFlagsBits.ManageGuild] : []),
 	];
+	const channelId = member.channelId ?? CHANNEL_GENERAL;
 	const interaction = {
 		guildId: GUILD,
-		channelId: member.channelId ?? CHANNEL_GENERAL,
+		channelId,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
 		memberPermissions: new PermissionsBitField(permissions),
-		channel: { isThread: () => false },
+		appPermissions: new PermissionsBitField(member.botPermissions ?? BOT_CHANNEL_PERMISSIONS),
+		channel: member.channel ?? { id: channelId, type: ChannelType.GuildText, isThread: () => false },
 		inGuild: () => true,
 		options: {
 			getSubcommand: () => subcommand,
@@ -229,6 +298,7 @@ function buttonPress(customId: string, member: MemberSpec = {})
 	const interaction = {
 		customId,
 		guildId: GUILD,
+		channelId: member.channelId ?? CHANNEL_GENERAL,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
 		inGuild: () => true,
@@ -249,6 +319,7 @@ function modalSubmit(customId: string, inputs: Record<string, string>, member: M
 	const interaction = {
 		customId,
 		guildId: GUILD,
+		channelId: member.channelId ?? CHANNEL_GENERAL,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
 		inGuild: () => true,
@@ -281,16 +352,16 @@ function modalSubmit(customId: string, inputs: Record<string, string>, member: M
 	return { interaction: interaction as unknown as ModalSubmitInteraction, updates, followUps, replies };
 }
 
-function autocompleteFor(focused: string, member: MemberSpec = {}): AutocompleteInteraction
+function autocompleteFor(focused: string, member: MemberSpec = {}, id: number | null = null): AutocompleteInteraction
 {
 	return {
 		guildId: GUILD,
-		channelId: CHANNEL_GENERAL,
+		channelId: member.channelId ?? CHANNEL_GENERAL,
 		user: { id: member.userId ?? USER_B },
 		member: { roles: member.roleIds ?? [] },
 		memberPermissions: new PermissionsBitField(member.manageGuild ? [PermissionFlagsBits.ManageGuild] : []),
 		inGuild: () => true,
-		options: { getInteger: () => null, getFocused: () => focused },
+		options: { getInteger: () => id, getFocused: () => focused },
 	} as unknown as AutocompleteInteraction;
 }
 
@@ -365,7 +436,7 @@ async function createByCommand(w: World, values: Values = {}, member: MemberSpec
 
 async function fill(w: World, session: RetroSession, userId: string, values: Parameters<typeof fields>[0], roleIds: string[] = []): Promise<ReturnType<typeof modalSubmit>>
 {
-	const call = modalSubmit(retroComponentId("form", session.id), fields(values), { userId, roleIds });
+	const call = modalSubmit(retroComponentId("form", session.id), fields(values), { userId, roleIds, channelId: session.channelId });
 	await w.cmd.executeModal(call.interaction);
 	return call;
 }
@@ -555,7 +626,8 @@ describe("/retro quản lý phiên", () =>
 		assert.equal(w.doc.writes.length, 1);
 		const { docUrl, section } = w.doc.writes[0];
 		assert.equal(docUrl, DOC);
-		assert.equal(section.entries.length, 2);
+		assert.deepEqual(section.columns.learned.length + section.columns.improve.length, 2);
+		assert.deepEqual(section.columns.sprintName, ["Rồng Lửa"]);
 		assert.ok(!JSON.stringify(section).includes(USER_A), "Confluence không nhận người viết");
 		assert.equal(section.winnerName, null);
 		assert.notEqual(w.services.retro.get(GUILD, session.id)?.confluenceWrittenAt, null);
@@ -724,6 +796,7 @@ describe("/retro vote và chốt tên sprint", () =>
 		const xpC = w.xp.total(GUILD, USER_C);
 		const closedPoll = w.services.polls.close({ guildId: GUILD, pollId, actorId: ADMIN, actorIsAdmin: true });
 		await afterPollClosed(w.client, closedPoll);
+		await flushBackground();
 
 		assert.deepEqual(w.edits, ["700000000000000001"], "message vote được sửa sang trạng thái đóng");
 		const done = w.services.retro.get(GUILD, session.id);
@@ -808,7 +881,7 @@ describe("/retro vote và chốt tên sprint", () =>
 		await fill(w, due, USER_B, { learned: "y", sprint: "Hai" });
 		w.clock.advance(HOUR);
 
-		assert.deepEqual(await runRetroSweep(w.client), { closed: 1, settled: 0 });
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 1, settled: 0, summaries: 0 });
 		assert.equal(w.services.retro.get(GUILD, due.id)?.status, "closed");
 		assert.match(texts(w.actions.posts.at(-1)?.payload).join("\n"), /Tổng hợp retro/u);
 		assert.equal(w.doc.writes.length, 1);
@@ -817,9 +890,250 @@ describe("/retro vote và chốt tên sprint", () =>
 		const { poll } = w.services.retro.startVote({ guildId: GUILD, sessionId: due.id, actorId: ADMIN });
 		w.services.polls.vote({ guildId: GUILD, pollId: poll.id, userId: USER_C, optionIndex: 0, roleIds: [] });
 		w.services.polls.close({ guildId: GUILD, pollId: poll.id, actorId: ADMIN, actorIsAdmin: true });
-		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 1 });
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 1, summaries: 0 });
 		assert.equal(w.services.retro.get(GUILD, due.id)?.winnerName, "Hai");
-		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0 });
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 0 });
+	});
+});
+
+// ---------------------------------------------------------------------------------------------
+// Sửa sau review Phase 19: quyền bot, phạm vi người quản lý, khôi phục, Confluence chạy nền
+// ---------------------------------------------------------------------------------------------
+
+describe("/retro sau review: quyền của bot, kênh của phiên, phạm vi người quản lý", () =>
+{
+	const THREAD = "400000000000000050";
+	const THREAD_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads, PermissionFlagsBits.EmbedLinks];
+
+	test("create: bot thiếu Embed Links (tin vote là embed) hay thiếu quyền gửi trong thread thì báo đúng quyền; thread riêng tư phải có bot là thành viên", async () =>
+	{
+		const w = world();
+		const noEmbed = chatInput("create", { ten: "Retro" }, { ...ADMIN_MEMBER, botPermissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] });
+		await assert.rejects(w.cmd.execute(noEmbed.interaction), userError(/^Bot thiếu quyền \*\*Embed Links\*\* ở <#400000000000000001>/u));
+		assert.equal(noEmbed.replies.length, 0, "không đăng tin của phiên");
+		assert.equal(w.services.retro.latestInChannel(GUILD, CHANNEL_GENERAL), null, "không tạo phiên");
+
+		const threadSpec = (members: string[], botPermissions: bigint[]): MemberSpec => ({ ...ADMIN_MEMBER, channelId: THREAD, channel: privateThread(THREAD, members), botPermissions });
+		await assert.rejects(w.cmd.execute(chatInput("create", { ten: "Retro thread" }, threadSpec([ADMIN, BOT], BOT_CHANNEL_PERMISSIONS)).interaction),
+			userError(/Bot thiếu quyền \*\*Send Messages in Threads\*\*/u));
+		await assert.rejects(w.cmd.execute(chatInput("create", { ten: "Retro thread" }, threadSpec([ADMIN], THREAD_PERMISSIONS)).interaction),
+			userError(/Bot chưa là thành viên của thread riêng tư <#400000000000000050>.*thêm bot vào thread/u));
+		assert.equal(w.services.retro.latestInChannel(GUILD, THREAD), null);
+
+		const session = await createByCommand(w, { ten: "Retro thread" }, threadSpec([ADMIN, BOT], THREAD_PERMISSIONS));
+		assert.equal(session.channelId, THREAD);
+	});
+
+	test("nút và form chỉ dùng được trong kênh của phiên; phiếu đã lưu thì không báo lỗi dù không cập nhật được tin của phiên", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w);
+		await assert.rejects(w.cmd.executeButton(buttonPress(retroComponentId("fill", session.id), { channelId: CHANNEL_BOT }).interaction), userError(RETRO_WRONG_CHANNEL));
+		await assert.rejects(w.cmd.executeModal(modalSubmit(retroComponentId("form", session.id), fields({ learned: "x" }), { channelId: CHANNEL_BOT }).interaction),
+			userError(RETRO_WRONG_CHANNEL));
+		assert.equal(w.services.retro.get(GUILD, session.id)?.participants, 0, "form gửi từ kênh khác không được lưu");
+
+		const archived = modalSubmit(retroComponentId("form", session.id), fields({ learned: "Vẫn lưu" }), { userId: USER_A });
+		Object.assign(archived.interaction, { update: () => Promise.reject(Object.assign(new Error("Thread is archived"), { code: 50083 })) });
+		await w.cmd.executeModal(archived.interaction);
+		assert.equal(archived.replies.length, 1, "không sửa được tin thì vẫn trả lời riêng là đã lưu");
+		assert.match(archived.replies[0].content ?? "", /Đã lưu câu trả lời retro \(ẩn danh\)/u);
+		assert.equal(w.services.retro.getAnswers(GUILD, session.id, USER_A)?.learned, "Vẫn lưu");
+
+		w.actions.refreshResult = "archived";
+		const late = modalSubmit(retroComponentId("form", session.id), fields({ kudos: "Cảm ơn" }), { userId: USER_C }, null);
+		Object.assign(late.interaction, { reply: () => Promise.reject(new Error("Unknown interaction")) });
+		await w.cmd.executeModal(late.interaction);
+		assert.equal(w.services.retro.get(GUILD, session.id)?.participants, 2, "lỗi trả lời hay sửa tin sau khi lưu không làm hỏng phiếu");
+	});
+
+	test("người quản lý không phải admin: phiên ở kênh mình không xem được thì mọi subcommand báo 'không tìm thấy', không lộ tên; admin vẫn làm được", async () =>
+	{
+		const w = world();
+		w.services.retro.changeManagerRoles(GUILD, { add: [ROLE_OTHER] }, ADMIN);
+		const hidden = await createByCommand(w, { ten: "Retro kín" }, { ...ADMIN_MEMBER, channelId: CHANNEL_PRIVATE });
+		await fill(w, hidden, USER_A, { sprint: "Tên Kín A" });
+		await fill(w, hidden, USER_B, { sprint: "Tên Kín B" });
+		w.services.retro.close(GUILD, hidden.id, ADMIN);
+
+		const notFound = userError(`Không tìm thấy phiên retro #${hidden.id}.`);
+		const cases: [string, Values][] = [
+			["status", {}],
+			["vote", { "rut-gon": "Tên Kín A | Tên Dò" }],
+			["pick", { ten: "Tên Kín A" }],
+			["reopen", {}],
+			["remind", {}],
+			["write", {}],
+			["repost", {}],
+			["summary", {}],
+		];
+		for (const [subcommand, values] of cases)
+		{
+			await assert.rejects(w.cmd.execute(chatInput(subcommand, { id: hidden.id, ...values }, MANAGER).interaction), notFound, subcommand);
+		}
+		assert.equal(w.actions.posts.length, 0, "không đăng gì");
+		assert.equal(w.services.retro.get(GUILD, hidden.id)?.status, "closed");
+
+		const insider = { userId: USER_A, roleIds: [ROLE_OTHER] };
+		await assert.rejects(w.cmd.execute(chatInput("vote", { id: hidden.id, "rut-gon": "Tên Kín A | Tên Dò" }, insider).interaction), userError(/"Tên Dò" không có trong/u));
+		const admin = chatInput("status", { id: hidden.id }, ADMIN_MEMBER);
+		await w.cmd.execute(admin.interaction);
+		assert.match(admin.edits[0].content ?? "", /Retro kín/u);
+	});
+
+	test("gợi ý tên của /retro pick: người quản lý không phải admin chỉ được gợi ý khi gõ trong kênh của phiên; admin gợi ý mọi nơi", async () =>
+	{
+		const w = world();
+		w.services.retro.changeManagerRoles(GUILD, { add: [ROLE_OTHER] }, ADMIN);
+		const session = await createByCommand(w);
+		await fill(w, session, USER_A, { sprint: "Độc Nhất" });
+		w.services.retro.close(GUILD, session.id, ADMIN);
+		assert.deepEqual(w.cmd.autocomplete(autocompleteFor("", MANAGER, session.id)), ["Độc Nhất"]);
+		assert.deepEqual(w.cmd.autocomplete(autocompleteFor("", { ...MANAGER, channelId: CHANNEL_BOT }, session.id)), [], "gõ ở kênh khác: không dò được tên");
+		assert.deepEqual(w.cmd.autocomplete(autocompleteFor("", { ...ADMIN_MEMBER, channelId: CHANNEL_BOT }, session.id)), ["Độc Nhất"]);
+	});
+});
+
+describe("/retro sau review: thông báo rõ, đăng lại, đăng bù bảng tổng hợp, nhắc, Confluence", () =>
+{
+	test("không sửa được tin của phiên (thread lưu trữ, tin bị xoá) thì báo rõ; /retro repost đăng tin mới có nút và cập nhật tin mới từ đó", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w);
+		w.actions.refreshResult = "archived";
+		const archived = chatInput("extend", { "han-gio": 3 }, ADMIN_MEMBER);
+		await w.cmd.execute(archived.interaction);
+		assert.ok((archived.edits[0].content ?? "").includes(SESSION_MESSAGE_ARCHIVED), archived.edits[0].content);
+		w.actions.refreshResult = "missing";
+		const missing = chatInput("extend", { "han-gio": 4 }, ADMIN_MEMBER);
+		await w.cmd.execute(missing.interaction);
+		assert.ok((missing.edits[0].content ?? "").includes(SESSION_MESSAGE_MISSING), missing.edits[0].content);
+		assert.ok((missing.edits[0].content ?? "").includes("/retro repost"));
+		w.actions.refreshResult = "ok";
+
+		const repost = chatInput("repost", {}, ADMIN_MEMBER);
+		await w.cmd.execute(repost.interaction);
+		assert.match(repost.edits[0].content ?? "", new RegExp(`Đã đăng lại tin của phiên retro #${session.id}`, "u"));
+		const posted = w.actions.posts.at(-1);
+		assert.equal(posted?.channelId, CHANNEL_GENERAL);
+		assert.deepEqual(buttons(posted?.payload), [{ customId: `retro:fill:${session.id}`, disabled: false }]);
+		assert.equal(w.services.retro.get(GUILD, session.id)?.messageId, "700000000000000001");
+
+		w.actions.postFailure = "archived";
+		await assert.rejects(w.cmd.execute(chatInput("repost", {}, ADMIN_MEMBER).interaction), userError(/Thread của phiên đang lưu trữ/u));
+	});
+
+	test("đóng mà không đăng được bảng tổng hợp: báo rõ (thread lưu trữ), phiên vẫn đóng; /retro summary đăng lại; tạo vote trong thread lưu trữ thì huỷ vote, báo rõ", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w);
+		await fill(w, session, USER_A, { learned: "Ý của A", sprint: "Một" });
+		await fill(w, session, USER_B, { sprint: "Hai" });
+		await assert.rejects(w.cmd.execute(chatInput("summary", {}, ADMIN_MEMBER).interaction), userError(/Phiên còn mở/u));
+
+		w.actions.postFailure = "archived";
+		const close = chatInput("close", {}, ADMIN_MEMBER);
+		await w.cmd.execute(close.interaction);
+		const reply = close.edits[0].content ?? "";
+		assert.match(reply, /^Đã đóng phiên retro #\d+ \(2 người đã điền\)\.\n/u, "không nói đã đăng bảng tổng hợp");
+		assert.ok(reply.includes(SUMMARY_ARCHIVED), reply);
+		assert.equal(w.services.retro.get(GUILD, session.id)?.status, "closed");
+		assert.equal(w.services.retro.get(GUILD, session.id)?.summaryPostedAt, null);
+
+		await assert.rejects(w.cmd.execute(chatInput("vote", {}, ADMIN_MEMBER).interaction), userError(VOTE_ARCHIVED));
+		assert.equal(w.services.retro.get(GUILD, session.id)?.status, "closed", "vote vừa tạo đã được huỷ");
+
+		w.actions.postFailure = null;
+		const summary = chatInput("summary", {}, ADMIN_MEMBER);
+		await w.cmd.execute(summary.interaction);
+		assert.match(summary.edits[0].content ?? "", /Đã đăng lại bảng tổng hợp ẩn danh/u);
+		assert.match(texts(w.actions.posts.at(-1)?.payload).join("\n"), /Ý của A/u);
+		assert.notEqual(w.services.retro.get(GUILD, session.id)?.summaryPostedAt, null);
+	});
+
+	test("bot khởi động lại ngay sau khi đóng (chưa đăng bảng): lịch quét đăng bù; đăng lỗi thì đợi 5 phút mới thử lại; không đăng lần hai", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w);
+		await fill(w, session, USER_A, { learned: "Ý còn chờ đăng" });
+		w.services.retro.close(GUILD, session.id, ADMIN);
+
+		w.actions.failPost = true;
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 0 });
+		w.actions.failPost = false;
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 0 }, "vừa lỗi thì chưa thử lại");
+		w.clock.advance(SUMMARY_RETRY_DELAY_MS);
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 1 });
+		assert.match(texts(w.actions.posts.at(-1)?.payload).join("\n"), /Ý còn chờ đăng/u);
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 0 }, "không đăng lần hai");
+
+		const due = await createByCommand(w, { ten: "Tự đóng", "han-gio": 1 }, { ...ADMIN_MEMBER, channelId: CHANNEL_BOT });
+		w.clock.advance(HOUR);
+		w.actions.failPost = true;
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 1, settled: 0, summaries: 0 }, "phiên vừa tự đóng không bị thử hai lần trong một lượt");
+		w.actions.failPost = false;
+		assert.deepEqual(await runRetroSweep(w.client), { closed: 0, settled: 0, summaries: 1 });
+		assert.notEqual(w.services.retro.get(GUILD, due.id)?.summaryPostedAt, null);
+	});
+
+	test("remind: role team không cho mention và bot thiếu Mention Everyone thì vẫn đăng nhưng nói rõ không ping được", async () =>
+	{
+		const w = world();
+		w.services.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
+		await createByCommand(w, { team: { id: ROLE_FRONTEND } });
+		const call = chatInput("remind", {}, ADMIN_MEMBER);
+		await w.cmd.execute(call.interaction);
+		const reply = call.edits[0].content ?? "";
+		assert.match(reply, /KHÔNG ping được team <@&500000000000000002>/u);
+		assert.ok(!reply.startsWith("Đã nhắc"), reply);
+		assert.deepEqual(w.actions.posts.at(-1)?.payload.allowedMentions, { parse: [] });
+	});
+
+	test("write: phiên còn mở thì không ghi (giữ ẩn danh); mỗi phiên tối đa một lần trong 30 giây", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w, { link: DOC });
+		const open = chatInput("write", {}, ADMIN_MEMBER);
+		await w.cmd.execute(open.interaction);
+		assert.match(open.edits[0].content ?? "", /Không ghi Confluence: phiên còn mở/u);
+		assert.equal(w.doc.writes.length, 0);
+
+		w.services.retro.close(GUILD, session.id, ADMIN);
+		const first = chatInput("write", {}, ADMIN_MEMBER);
+		await w.cmd.execute(first.interaction);
+		assert.equal(first.edits[0].content, "📄 Đã ghi bảng retro vào Confluence.");
+		await assert.rejects(w.cmd.execute(chatInput("write", {}, ADMIN_MEMBER).interaction), userError(/Vừa ghi Confluence cho phiên này/u));
+		assert.equal(w.doc.writes.length, 1);
+		w.clock.advance(DOC_WRITE_COOLDOWN_MS);
+		await w.cmd.execute(chatInput("write", {}, ADMIN_MEMBER).interaction);
+		assert.equal(w.doc.writes.length, 2);
+	});
+
+	test("vote đóng: chốt tên và công bố ngay, ghi Confluence chạy nền (vòng quét vote không chờ Confluence)", async () =>
+	{
+		const w = world();
+		const session = await createByCommand(w, { link: DOC });
+		await fill(w, session, USER_A, { sprint: "Một" });
+		await fill(w, session, USER_B, { sprint: "Hai" });
+		w.services.retro.close(GUILD, session.id, ADMIN);
+		await w.cmd.execute(chatInput("vote", {}, ADMIN_MEMBER).interaction);
+		const pollId = w.services.retro.get(GUILD, session.id)?.pollId ?? 0;
+		w.services.polls.vote({ guildId: GUILD, pollId, userId: USER_C, optionIndex: 0, roleIds: [] });
+		let release = (): void => undefined;
+		w.doc.gate = new Promise<void>(resolve =>
+		{
+			release = () => resolve();
+		});
+		const closedPoll = w.services.polls.close({ guildId: GUILD, pollId, actorId: ADMIN, actorIsAdmin: true });
+
+		await afterPollClosed(w.client, closedPoll);
+		assert.equal(w.services.retro.get(GUILD, session.id)?.status, "done", "đã chốt dù Confluence chưa xong");
+		assert.match(w.actions.posts.at(-1)?.payload.content ?? "", /🏆 Tên sprint được chọn/u);
+		assert.equal(w.doc.writes.length, 0, "Confluence vẫn đang ghi nền");
+		release();
+		await flushBackground();
+		assert.equal(w.doc.writes.length, 1);
+		assert.equal(w.doc.writes[0].section.winnerName, "Hai");
 	});
 });
 
@@ -851,6 +1165,7 @@ describe("view retro", () =>
 			confluenceWrittenAt: null,
 			confluenceError: null,
 			contentDeletedAt: null,
+			summaryPostedAt: null,
 			participants: 250,
 			acceptingAnswers: false,
 			...overrides,
@@ -902,6 +1217,42 @@ describe("view retro", () =>
 			assert.throws(() => parseRetroComponentId(bad), (error: unknown) => error instanceof UserError, bad);
 		}
 		assert.equal(plainText("<@&1> @here [link](https://x) **b** #kênh"), "\\<\\@&1\\> \\@here link (https://x) \\*\\*b\\*\\* \\#kênh");
+	});
+
+	test("/retro status: danh sách người đã điền rất dài được cắt gọn ('và N người khác') để cả tin không vượt 2000 ký tự", () =>
+	{
+		const participants = Array.from({ length: 300 }, (_, index) => `3500000000000${String(index).padStart(5, "0")}`);
+		const session = sessionOf({ title: "x".repeat(100), docUrl: DOC, confluenceError: "<@&1>*".repeat(60) });
+		const text = retroStatusText(session, { manager: true, participants }, true);
+		assert.ok(text.length <= MESSAGE_CONTENT_MAX, `dài ${text.length} ký tự`);
+		assert.match(text, /và \d+ người khác/u);
+		assert.ok(text.includes(`<@${participants[0]}>`));
+		assert.match(text, /Confluence: ❌/u, "vẫn có dòng tình trạng Confluence");
+		const few = retroStatusText(session, { manager: true, participants: participants.slice(0, 3) }, true);
+		assert.ok(few.includes(participants.slice(0, 3).map(id => `<@${id}>`).join(", ")) && !few.includes("người khác"));
+	});
+
+	test("form điền sẵn: câu cũ dài hơn giới hạn của ô (Discord đếm UTF-16) được cắt an toàn thay vì bỏ trống", () =>
+	{
+		const long = "😀".repeat(1000);
+		const modal = retroModal(sessionOf(), { learned: long, improve: "ngắn", ideas: null, kudos: null, sprintName: "Tên" }).toJSON();
+		const values: string[] = [];
+		const visit = (node: unknown): void =>
+		{
+			if (Array.isArray(node))
+			{
+				node.forEach(visit);
+				return;
+			}
+			if (typeof node !== "object" || node === null) return;
+			if ("custom_id" in node && node.custom_id === "learned" && "value" in node && typeof node.value === "string") values.push(node.value);
+			for (const value of Object.values(node)) visit(value);
+		};
+		visit(modal);
+		assert.equal(values.length, 1, "ô Learned vẫn có giá trị");
+		assert.equal(values[0].length, 1000);
+		assert.ok(values[0] === "😀".repeat(500), "không cắt giữa emoji");
+		assert.ok(JSON.stringify(modal).includes("\"value\":\"ngắn\""));
 	});
 
 	test("role quản lý retro không dùng được làm role danh hiệu (chặn hai chiều, LL-017)", () =>

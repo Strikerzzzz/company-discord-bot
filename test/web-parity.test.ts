@@ -100,6 +100,8 @@ const COVERAGE: Readonly<Record<string, Coverage>> = {
 	"/retro remind": { options: ["id"], web: ["/retro/view"] },
 	"/retro pick": { options: ["id", "ten"], web: ["/retro/view"] },
 	"/retro write": { options: ["id"], web: ["/retro/view"] },
+	"/retro repost": { options: ["id"], web: ["/retro/view"] },
+	"/retro summary": { options: ["id"], web: ["/retro/view"] },
 };
 
 interface OptionJson

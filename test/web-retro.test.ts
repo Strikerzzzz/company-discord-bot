@@ -12,6 +12,7 @@ import { NAV_ITEMS } from "../src/web/layout";
 import {
 	CHANNEL_NOT_FOUND,
 	CHOOSE_CHANNEL,
+	CONTENT_HIDDEN_WHILE_OPEN,
 	HOURS_INVALID,
 	INVALID_RETRO_ID,
 	RETRO_PAGE_SIZE,
@@ -19,7 +20,7 @@ import {
 } from "../src/web/pages/retro";
 import { HIDDEN_ITEM_TEXT } from "../src/web/widgets";
 import { GUILD } from "./helpers";
-import { createSession, fill, flashAfter, getPage, pageUrl, post, sectionOf } from "./web-retro-helpers";
+import { closeSession, createSession, fill, flashAfter, getPage, pageUrl, post, sectionOf } from "./web-retro-helpers";
 import {
 	addChannel,
 	ADMIN_USER,
@@ -46,8 +47,10 @@ const THREAD_PUBLIC = "410000000000000096";
 const THREAD_ARCHIVED = "410000000000000095";
 const THREAD_PRIVATE_MEMBER = "410000000000000094";
 const THREAD_PRIVATE_OTHER = "410000000000000093";
+const THREAD_PRIVATE_NO_BOT = "410000000000000092";
+const CHANNEL_NO_EMBED = "410000000000000091";
 const DOC = "https://confluence.test/pages/viewpage.action?pageId=777";
-const THREAD_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads];
+const THREAD_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessagesInThreads, PermissionFlagsBits.EmbedLinks];
 
 /** Thêm kênh riêng tư (admin không xem được) và các kênh/thread để thử ô chọn kênh. */
 function addTestChannels(harness: WebHarness): void
@@ -56,6 +59,13 @@ function addTestChannels(harness: WebHarness): void
 	addChannel(world, { id: CHANNEL_SECRET, name: "ban-giam-doc", type: ChannelType.GuildText, position: 5, permissionsByMember: { [ADMIN_USER]: [] } });
 	addChannel(world, { id: CHANNEL_NO_BOT, name: "khong-co-bot", type: ChannelType.GuildText, position: 6, permissionsByMember: { [BOT_ID]: [PermissionFlagsBits.ViewChannel] } });
 	addChannel(world, { id: CHANNEL_READ_ONLY, name: "chi-doc", type: ChannelType.GuildText, position: 7, permissionsByMember: { [ADMIN_USER]: [PermissionFlagsBits.ViewChannel] } });
+	addChannel(world, {
+		id: CHANNEL_NO_EMBED,
+		name: "khong-nhung-link",
+		type: ChannelType.GuildText,
+		position: 8,
+		permissionsByMember: { [BOT_ID]: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+	});
 	const threadPermissions = { [ADMIN_USER]: THREAD_PERMISSIONS, [BOT_ID]: THREAD_PERMISSIONS };
 	addChannel(world, { id: THREAD_PUBLIC, name: "retro-sprint-25", type: ChannelType.PublicThread, parentId: CHANNEL_WORK, permissionsByMember: threadPermissions });
 	addChannel(world, { id: THREAD_ARCHIVED, name: "retro-cu", type: ChannelType.PublicThread, parentId: CHANNEL_WORK, archived: true, permissionsByMember: threadPermissions });
@@ -64,10 +74,18 @@ function addTestChannels(harness: WebHarness): void
 		name: "team-a-rieng",
 		type: ChannelType.PrivateThread,
 		parentId: CHANNEL_CHAT,
-		threadMembers: [ADMIN_USER],
+		threadMembers: [ADMIN_USER, BOT_ID],
 		permissionsByMember: threadPermissions,
 	});
 	addChannel(world, { id: THREAD_PRIVATE_OTHER, name: "team-b-rieng", type: ChannelType.PrivateThread, parentId: CHANNEL_CHAT, permissionsByMember: threadPermissions });
+	addChannel(world, {
+		id: THREAD_PRIVATE_NO_BOT,
+		name: "team-c-chua-co-bot",
+		type: ChannelType.PrivateThread,
+		parentId: CHANNEL_CHAT,
+		threadMembers: [ADMIN_USER],
+		permissionsByMember: threadPermissions,
+	});
 }
 
 /** Các giá trị `<option value>` của ô chọn kênh. */
@@ -158,6 +176,8 @@ describe("web: trang Retro — tạo phiên", () =>
 		assert.ok(body.includes("#chung › 🧵 team-a-rieng (thread riêng tư)"));
 		assert.ok(!body.includes("ban-giam-doc") && !body.includes("team-b-rieng") && !body.includes("retro-cu"));
 		assert.ok(!body.includes(`value="${CHANNEL_VOICE}"`) && !body.includes(`value="${CHANNEL_NO_BOT}"`) && !body.includes(`value="${CHANNEL_READ_ONLY}"`));
+		assert.ok(!body.includes(`value="${CHANNEL_NO_EMBED}"`), "bot thiếu Embed Links (tin vote là embed) thì không chọn được");
+		assert.ok(!body.includes(`value="${THREAD_PRIVATE_NO_BOT}"`), "thread riêng tư bot chưa là thành viên thì không chọn được");
 		assert.ok(body.includes(`<option value="${ROLE_TEAM_A}">@Backend</option>`), "team đã cấu hình");
 		assert.ok(!body.includes(`<option value="${ROLE_TEAM_B}">`), "role chưa là team thì không có");
 	});
@@ -229,6 +249,8 @@ describe("web: trang Retro — tạo phiên", () =>
 			[{ ...base, kenh: THREAD_ARCHIVED }, RETRO_CHANNEL_INVALID],
 			[{ ...base, kenh: CHANNEL_READ_ONLY }, "Bạn không có quyền xem hoặc gửi tin nhắn ở"],
 			[{ ...base, kenh: CHANNEL_NO_BOT }, "Bot thiếu quyền"],
+			[{ ...base, kenh: CHANNEL_NO_EMBED }, "Embed Links"],
+			[{ ...base, kenh: THREAD_PRIVATE_NO_BOT }, "Bot chưa là thành viên của thread riêng tư"],
 			[{ ...base, kenh: CHANNEL_CHAT, team: ROLE_TEAM_B }, "Role team phải là một team đã cấu hình"],
 			[{ ...base, kenh: CHANNEL_CHAT, team: "abc" }, "Team không hợp lệ"],
 			[{ ...base, kenh: CHANNEL_CHAT, "han-gio": "abc" }, HOURS_INVALID],
@@ -241,7 +263,7 @@ describe("web: trang Retro — tạo phiên", () =>
 			const flash = await flashAfter(harness, auth, await post(harness, auth, "/retro/new", form));
 			assert.equal(flash.kind, "error", JSON.stringify(form));
 			assert.ok(flash.text.includes(escapeHtml(message)), `${JSON.stringify(form)}: ${flash.text}`);
-			assert.equal(flash.location, pageUrl("/retro/new"));
+			assert.ok(flash.location.startsWith(pageUrl("/retro/new")), flash.location);
 		}
 		assert.equal(harness.services.retro.listPage(GUILD, { status: "all", page: 1, pageSize: 10 }).total, 0);
 		assert.equal(harness.retroPosts.length, 0);
@@ -253,11 +275,32 @@ describe("web: trang Retro — tạo phiên", () =>
 		assert.equal(harness.retroPosts.length, 0);
 	});
 
+	test("tạo phiên lỗi: quay về form với giá trị đã nhập (kênh, tên, link, team, hạn) để không phải nhập lại", async () =>
+	{
+		const harness = createWebHarness();
+		harness.services.teams.add(GUILD, ROLE_TEAM_A, ADMIN_USER);
+		const auth = await login(harness, ADMIN_USER);
+		const title = "Retro (Sprint 25) & 'bạn' *!";
+		const flash = await flashAfter(harness, auth, await post(harness, auth, "/retro/new", { kenh: CHANNEL_WORK, "tieu-de": title, link: "javascript:alert(1)", team: ROLE_TEAM_A, "han-gio": "12" }));
+		assert.equal(flash.kind, "error");
+		assert.ok(flash.text.includes("Link tài liệu không hợp lệ"), flash.text);
+		assert.ok(flash.location.startsWith(pageUrl("/retro/new?")), flash.location);
+		assert.ok(flash.body.includes(`<option value="${CHANNEL_WORK}" selected>`), "giữ kênh đã chọn");
+		assert.ok(flash.body.includes(`value="${escapeHtml(title)}"`), "giữ tên phiên (escape)");
+		assert.ok(flash.body.includes("value=\"javascript:alert(1)\""), "giữ link để sửa");
+		assert.ok(flash.body.includes(`<option value="${ROLE_TEAM_A}" selected>`), "giữ team");
+		assert.ok(flash.body.includes("value=\"12\""), "giữ số giờ");
+		assert.equal(harness.services.retro.listPage(GUILD, { status: "all", page: 1, pageSize: 10 }).total, 0);
+
+		const forged = await getPage(harness, auth, "/retro/new?kenh=abc&han-gio=xyz&team=1");
+		assert.ok(!forged.includes(" selected>"), "giá trị lạ trong query bị bỏ");
+	});
+
 	test("bot không đăng được tin của phiên: đóng phiên vừa tạo, báo lỗi; kênh vẫn tạo phiên khác được", async () =>
 	{
 		const harness = createWebHarness();
 		const realActions = harness.deps.retroActions;
-		harness.deps.retroActions = { ...realActions, post: () => Promise.resolve(null) };
+		harness.deps.retroActions = { ...realActions, post: () => Promise.resolve({ ok: false, reason: "failed" }) };
 		const auth = await login(harness, ADMIN_USER);
 		const flash = await flashAfter(harness, auth, await post(harness, auth, "/retro/new", { kenh: CHANNEL_CHAT, "tieu-de": "Retro Sprint 25" }));
 		assert.equal(flash.kind, "error");
@@ -289,12 +332,36 @@ describe("web: trang Retro — tạo phiên", () =>
 
 describe("web: trang Retro — chi tiết", () =>
 {
-	test("thông tin phiên; ai đã điền chỉ là danh sách tên; nội dung ẩn danh gom 5 cột, escape, không gắn tên; xuất đúng khu vực bot ghi Confluence", async () =>
+	test("phiên đang mở: chỉ hiện số người và ai đã điền; không hiện nội dung, tên sprint, phần xuất chữ hay nút ghi Confluence (không ghép được người với ý)", async () =>
+	{
+		const harness = createWebHarness();
+		const session = createSession(harness, { title: "Retro mở", docUrl: DOC });
+		fill(harness, session.id, PLAIN_USER, { learned: "Ý bí mật của Thường", sprintName: "Tên Của Thường" });
+		const auth = await login(harness, ADMIN_USER);
+		const first = await getPage(harness, auth, `/retro/view?id=${session.id}`);
+		fill(harness, session.id, ROLE_ADMIN_USER, { kudos: "Ý mới của Role Admin", sprintName: "Tên Mới" });
+		const second = await getPage(harness, auth, `/retro/view?id=${session.id}`);
+
+		for (const body of [first, second])
+		{
+			for (const secret of ["Ý bí mật của Thường", "Tên Của Thường", "Ý mới của Role Admin", "Tên Mới", "<textarea"]) assert.ok(!body.includes(secret), `lộ "${secret}"`);
+			assert.ok(body.includes(escapeHtml(CONTENT_HIDDEN_WHILE_OPEN)), "báo nội dung chỉ hiện sau khi đóng");
+			assert.ok(!body.includes(pageUrl("/retro/write")), "không ghi Confluence khi phiên còn mở");
+			assert.ok(!body.includes(pageUrl("/retro/idea-delete")), "không có form xoá ý");
+		}
+		assert.ok(sectionOf(second, "✍️ Ai đã điền (2)").includes("Role Admin"), "vẫn thấy ai đã điền");
+		assert.ok(second.includes("Phiên còn mở: đóng phiên rồi mới tạo vote"));
+		assert.ok(second.includes(pageUrl("/retro/close")) && second.includes(pageUrl("/retro/repost")));
+		assert.ok(!second.includes(pageUrl("/retro/summary")), "phiên mở chưa có bảng tổng hợp để đăng lại");
+	});
+
+	test("thông tin phiên đã đóng; ai đã điền chỉ là danh sách tên; nội dung ẩn danh gom 5 cột, escape, không gắn tên; xuất đúng khu vực bot ghi Confluence", async () =>
 	{
 		const harness = createWebHarness();
 		const session = createSession(harness, { title: "Retro <b>24</b>", docUrl: DOC });
 		fill(harness, session.id, PLAIN_USER, { learned: "Học <script>alert(1)</script>", sprintName: "Rồng Lửa" });
 		fill(harness, session.id, ROLE_ADMIN_USER, { improve: "Họp dài\ndòng hai", kudos: "Cảm ơn **team** <@&510000000000000002>", sprintName: "rồng  lửa" });
+		closeSession(harness, session.id);
 		const auth = await login(harness, ADMIN_USER);
 		const body = await getPage(harness, auth, `/retro/view?id=${session.id}`);
 
@@ -314,7 +381,8 @@ describe("web: trang Retro — chi tiết", () =>
 		assert.ok(!body.includes("<script>"), "không có script thật");
 		assert.ok(content.includes("Họp dài\ndòng hai"));
 		assert.ok(content.includes("Cảm ơn **team** &lt;@&amp;510000000000000002&gt;"), "chữ người dùng hiện nguyên văn, không thành mention hay định dạng");
-		assert.ok(content.includes("📚 Learned (1)") && content.includes("👎 Thiếu sót (1)") && content.includes("🍀 Đặt tên sprint (2)"));
+		assert.ok(content.includes("📚 Learned (1)") && content.includes("👎 Thiếu sót (1)") && content.includes("🍀 Đặt tên sprint (1)"), "tên sprint đã bỏ trùng");
+		assert.ok(content.includes("Mỗi cột trộn thứ tự riêng"), "ghi rõ một hàng không phải câu trả lời của một người");
 		for (const forbidden of [PLAIN_USER, ROLE_ADMIN_USER, "Thường", "Role Admin"]) assert.ok(!content.includes(forbidden), `nội dung không gắn với ${forbidden}`);
 		assert.ok(content.includes("name=\"muc\"") && content.includes("name=\"kt\""), "form xoá ý mang vị trí và dấu của chữ");
 		assert.ok(!/name="(entry|entryId|phieu)"/u.test(content), "form xoá ý không mang mã phiếu");
@@ -327,10 +395,11 @@ describe("web: trang Retro — chi tiết", () =>
 		assert.ok(exported.includes("🤖 Retro từ Discord: Retro &lt;b&gt;24&lt;/b&gt;"), "bảng xem trước để chép");
 		assert.ok(exported.includes("Cách 1") && exported.includes("Cách 2"), "hướng dẫn dán");
 
-		assert.ok(body.includes("Phiên còn mở: đóng phiên rồi mới tạo vote"));
-		assert.ok(body.includes("Chỉ xoá được nội dung khi phiên đã đóng"));
-		assert.ok(body.includes(pageUrl("/retro/close")) && body.includes(pageUrl("/retro/extend")) && body.includes(pageUrl("/retro/remind")));
-		assert.ok(!body.includes(pageUrl("/retro/reopen")), "phiên đang mở thì không có mở lại");
+		assert.ok(body.includes("Chỉ có một tên được đề xuất, không cần vote"), "hai cách viết của cùng một tên là một tên");
+		assert.ok(sectionOf(body, "🗑️ Xoá nội dung phiên").includes("lịch sử phiên bản của trang Confluence vẫn giữ"), "ghi chú bản cũ còn ở backup và Confluence");
+		assert.ok(body.includes(pageUrl("/retro/reopen")) && body.includes(pageUrl("/retro/write")) && body.includes(pageUrl("/retro/summary")));
+		assert.ok(!body.includes(pageUrl("/retro/close")) && !body.includes(pageUrl("/retro/extend")), "phiên đã đóng thì không đóng hay gia hạn nữa");
+		assert.ok(body.includes("Chưa đăng được: bot tự thử lại"), "bảng tổng hợp chưa đăng (đóng bằng service, không đăng gì)");
 	});
 
 	test("phiên ở kênh không xem được: giấu tiêu đề, tên kênh, link, nội dung, tên sprint; vẫn quản lý được", async () =>

@@ -1,18 +1,23 @@
 // Trang "Retro" của web quản trị (DEC-041, DEC-049):
 // - danh sách phiên có lọc trạng thái và phân trang;
 // - tạo phiên: bot đăng tin có nút "📝 Điền retro" vào kênh/thread đã chọn, cùng quy tắc với `/retro create` (createRetroSession);
-// - chi tiết phiên: ai đã điền (chỉ tên, không gắn với nội dung), nội dung ẩn danh gom 5 cột, vote tên sprint, xuất chữ để dán vào
-//   Confluence (đúng khu vực bot sẽ ghi), và mọi thao tác như `/retro close|reopen|extend|remind|vote|pick|write`, cộng phần chỉ có
-//   trên web: xoá một ý, xoá nội dung phiên.
+// - chi tiết phiên: ai đã điền (chỉ tên, không gắn với nội dung), nội dung ẩn danh gom 5 cột (mỗi cột trộn riêng), vote tên sprint, xuất
+//   chữ để dán vào Confluence (đúng khu vực bot sẽ ghi), và mọi thao tác như `/retro close|reopen|extend|remind|vote|pick|write|repost|
+//   summary`, cộng phần chỉ có trên web: xoá một ý, xoá nội dung phiên.
 // Quy tắc nằm ở RetroService và src/discord/retroOps.ts (dùng chung với lệnh); mọi thao tác ghi audit với người đăng nhập.
-// Riêng tư: phiên nằm trong kênh/thread người đăng nhập không xem được thì giấu tiêu đề, tên kênh, link tài liệu, nội dung và tên
-// sprint, nhưng vẫn quản lý được như lệnh /retro của admin. Form xoá ý không mang mã phiếu (chỉ vị trí trong danh sách ẩn danh và dấu
-// của chữ), để không dò được thứ tự gửi, tức không ghép được người với nội dung. Cài đặt retro nằm ở retroSettings.ts.
+// Riêng tư:
+// - nội dung ẩn danh (ý, tên sprint, phần xuất chữ) chỉ hiện khi phiên đã đóng: lúc phiên mở chỉ có số người đã điền và danh sách tên,
+//   để admin không ghép được người vừa điền với ý vừa thêm bằng cách tải lại trang;
+// - phiên nằm trong kênh/thread người đăng nhập không xem được thì giấu tiêu đề, tên kênh, link tài liệu, nội dung và tên sprint, nhưng
+//   vẫn quản lý được như lệnh /retro của admin;
+// - form xoá ý không mang mã phiếu (chỉ cột, vị trí trong cột đã trộn và dấu của chữ), để không dò được người viết.
+// Cài đặt retro nằm ở retroSettings.ts.
 import { createHash } from "node:crypto";
 import { ChannelType, GuildBasedChannel } from "discord.js";
 import { channelMention, formatNumber } from "../../discord/format";
 import { MemberDisplay } from "../../discord/memberDirectory";
 import {
+	botCanUseRetroChannel,
 	canPostInChannel,
 	closeRetroSession,
 	createRetroSession,
@@ -21,6 +26,8 @@ import {
 	pickRetroName,
 	remindRetro,
 	reopenRetroSession,
+	repostRetroSession,
+	repostRetroSummary,
 	resolveRetroChannel,
 	RetroContext,
 	retroDocReportLine,
@@ -30,15 +37,15 @@ import {
 	writeRetroDoc,
 } from "../../discord/retroOps";
 import { retroDocStatusLine, retroStatusLabel } from "../../discord/views/retro";
-import { buildRetroSection, RetroDocSection } from "../../integrations/confluence";
+import { buildRetroSection, RetroDocSection, retroRowCount } from "../../integrations/confluence";
 import { Poll } from "../../modules/poll/types";
 import { RETRO_NO_SPRINT_NAME } from "../../modules/retro/RetroService";
 import {
-	AnonymousRetroEntry,
 	isRetroField,
 	RETRO_FIELD_TITLES,
 	RETRO_FIELDS,
 	RETRO_LIMITS,
+	RetroColumns,
 	RetroField,
 	RetroListQuery,
 	RetroSession,
@@ -76,6 +83,8 @@ const REMIND_PATH = `${PATH}/remind`;
 const WRITE_PATH = `${PATH}/write`;
 const VOTE_PATH = `${PATH}/vote`;
 const PICK_PATH = `${PATH}/pick`;
+const REPOST_PATH = `${PATH}/repost`;
+const SUMMARY_PATH = `${PATH}/summary`;
 const IDEA_DELETE_PATH = `${PATH}/idea-delete`;
 const CONTENT_DELETE_PATH = `${PATH}/content-delete`;
 
@@ -101,13 +110,17 @@ const IDEA_DIGEST_LENGTH = 16;
 const HOURS_TEXT = /^\d{1,6}$/u;
 const INDEX_TEXT = /^\d{1,6}$/u;
 const DIGEST_TEXT = /^[0-9a-f]{16}$/u;
+/** Tiêu đề giữ lại trong link quay về form tạo phiên khi lỗi (đủ để sửa, không làm link quá dài). */
+const KEPT_TITLE_MAX = 200;
 
 export const INVALID_RETRO_ID = "Mã phiên retro không hợp lệ.";
 export const CONFIRM_REQUIRED = "Hãy tick ô xác nhận trước khi thực hiện.";
 export const CONTENT_DELETE_CONFIRM = `Để xoá nội dung phiên, hãy tick ô xác nhận và gõ chính xác: ${CONTENT_DELETE_WORD}`;
 export const IDEA_STALE = "Ý này đã thay đổi hoặc đã bị xoá. Hãy tải lại trang rồi thử lại.";
+export const CONTENT_WHILE_OPEN = "Phiên còn mở: nội dung ẩn danh chỉ hiện (và chỉ xoá được) sau khi đóng phiên, để không ai ghép được người vừa điền "
+	+ "với ý vừa thêm.";
 export const SECRET_SESSION_NOTE = "🔒 Phiên này nằm trong kênh hoặc thread bạn không xem được trên Discord: trang giấu tiêu đề, tên kênh, link tài liệu, "
-	+ "nội dung và tên sprint. Bạn vẫn đóng, mở lại, gia hạn, nhắc, ghi Confluence và xoá nội dung được như lệnh /retro.";
+	+ "nội dung và tên sprint. Bạn vẫn đóng, mở lại, gia hạn, nhắc, đăng lại tin, ghi Confluence và xoá nội dung được như lệnh /retro.";
 export const SECRET_CONTENT_DENIED = "Phiên này nằm trong kênh hoặc thread bạn không xem được trên Discord, nên trang không cho làm thao tác cần thấy "
 	+ "nội dung hay tên sprint. Người quản lý trong kênh dùng lệnh /retro vote (option rut-gon) hoặc /retro pick.";
 export const CHOOSE_CHANNEL = "Hãy chọn kênh hoặc thread để đăng phiên retro.";
@@ -117,6 +130,8 @@ export const NO_NAMES_PICKED = `Hãy tick các tên đưa vào vote (từ 2 đ�
 export const NAME_REQUIRED = "Hãy chọn một tên sprint.";
 export const HOURS_INVALID = `Hạn phải là số giờ nguyên từ ${RETRO_LIMITS.durationHoursMin} đến ${RETRO_LIMITS.durationHoursMax} `
 	+ `(${RETRO_LIMITS.durationHoursMax / 24} ngày).`;
+export const CONTENT_HIDDEN_WHILE_OPEN = "🔒 Nội dung ẩn danh chỉ hiện sau khi phiên đóng: lúc phiên còn mở trang chỉ cho biết số người đã điền và "
+	+ "ai đã điền, để không ai ghép được người vừa điền với ý vừa thêm.";
 
 type StatusTab = RetroListQuery["status"];
 
@@ -300,6 +315,16 @@ interface ChannelOption
 	label: string;
 }
 
+/** Giá trị admin đã nhập ở form tạo phiên (từ link quay về sau lỗi), để không phải nhập lại. */
+interface NewSessionValues
+{
+	channelId: string;
+	title: string;
+	link: string;
+	team: string;
+	hours: string;
+}
+
 function rawPosition(channel: GuildBasedChannel): number
 {
 	return "rawPosition" in channel ? channel.rawPosition : 0;
@@ -327,48 +352,71 @@ function channelOptionLabel(ctx: GuildPageContext, channel: GuildBasedChannel): 
 
 /**
  * Kênh chọn được để tạo phiên (từ cache của server): kênh văn bản, kênh thông báo, thread đang hoạt động mà người đăng nhập xem và
- * gửi tin được (thread riêng tư: phải là thành viên thread hoặc có Manage Threads), và bot gửi tin được. Bước lưu kiểm tra lại.
+ * gửi tin được (thread riêng tư: phải là thành viên thread hoặc có Manage Threads), và bot dùng được (botCanUseRetroChannel: View
+ * Channel, gửi tin, Embed Links; thread riêng tư thì bot là thành viên). Bước lưu kiểm tra lại.
  */
 async function channelOptions(ctx: GuildPageContext): Promise<ChannelOption[]>
 {
 	const { guild, member } = ctx;
 	const me = guild.members.me;
 	if (!me) return [];
-	const candidates = [...guild.channels.cache.values()].filter(channel => isRetroChannel(channel) && canPostInChannel(channel, member) && canPostInChannel(channel, me));
-	const hidden = await hiddenChannelIds(ctx.deps.client, guild, candidates.map(channel => channel.id), member);
-	return candidates
+	const candidates = [...guild.channels.cache.values()].filter(channel => isRetroChannel(channel) && canPostInChannel(channel, member));
+	const usable = await Promise.all(candidates.map(channel => botCanUseRetroChannel(channel, me)));
+	const forBot = candidates.filter((_, index) => usable[index]);
+	const hidden = await hiddenChannelIds(ctx.deps.client, guild, forBot.map(channel => channel.id), member);
+	return forBot
 		.filter(channel => !hidden.has(channel.id))
 		.map(channel => ({ channel, key: channelSortKey(ctx, channel) }))
 		.sort((a, b) => compareKeys(a.key, b.key))
 		.map(({ channel }) => ({ id: channel.id, label: channelOptionLabel(ctx, channel) }));
 }
 
+/** Giá trị điền sẵn form tạo phiên từ query (link quay về sau lỗi); giá trị lạ thì bỏ. */
+function keptValues(query: URLSearchParams): NewSessionValues
+{
+	const snowflake = (text: string | null): string => (text !== null && isSnowflake(text) ? text : "");
+	const hours = query.get(HOURS_FIELD) ?? "";
+	return {
+		channelId: snowflake(query.get(CHANNEL_FIELD)),
+		title: (query.get(TITLE_FIELD) ?? "").slice(0, KEPT_TITLE_MAX),
+		link: (query.get(LINK_FIELD) ?? "").slice(0, RETRO_LIMITS.docUrlMax),
+		team: snowflake(query.get(TEAM_FIELD)),
+		hours: HOURS_TEXT.test(hours) ? hours : "",
+	};
+}
+
+function selected(on: boolean): RawHtml | string
+{
+	return on ? html` selected` : "";
+}
+
 async function renderNew(ctx: GuildPageContext): Promise<WebResponse>
 {
 	const options = await channelOptions(ctx);
 	const teams = ctx.deps.services.teams.list(ctx.guild.id);
+	const kept = keptValues(ctx.req.query);
 	const { titleMin, titleMax, docUrlMax, durationHoursMin, durationHoursMax } = RETRO_LIMITS;
 	const channelField = options.length === 0
-		? html`<div class="warn-box">Không có kênh nào chọn được: cần kênh văn bản, kênh thông báo hoặc thread đang hoạt động mà bạn xem và gửi tin được, và bot cũng gửi tin được.</div>`
+		? html`<div class="warn-box">Không có kênh nào chọn được: cần kênh văn bản, kênh thông báo hoặc thread đang hoạt động mà bạn xem và gửi tin được, và bot cũng xem, gửi tin, nhúng link được (thread riêng tư: bot phải là thành viên thread).</div>`
 		: html`<select id="rt-channel" name="${CHANNEL_FIELD}" required><option value="">— Chọn kênh hoặc thread —</option>
-${options.map(option => html`<option value="${option.id}">${option.label}</option>`)}</select>`;
+${options.map(option => html`<option value="${option.id}"${selected(option.id === kept.channelId)}>${option.label}</option>`)}</select>`;
 	const form = html`<form method="post" action="${guildUrl(ctx, NEW_PATH)}" class="rt-form">${csrfField(ctx)}
 <div class="field"><label for="rt-channel">Kênh hoặc thread của team</label>
 ${channelField}
 <span class="hint">Bot đăng tin có nút “📝 Điền retro” vào đây; số người đã điền, bảng tổng hợp và vote tên sprint cũng diễn ra ở đây. Mỗi kênh chỉ có một phiên đang mở.
-Chỉ có kênh văn bản, kênh thông báo và thread đang hoạt động mà bạn xem và gửi tin được, và bot gửi tin được.</span></div>
+Chỉ có kênh văn bản, kênh thông báo và thread đang hoạt động mà bạn xem và gửi tin được, và bot có quyền View Channel, gửi tin, Embed Links (thread riêng tư: bot phải là thành viên thread).</span></div>
 <div class="field"><label for="rt-title-input">Tên phiên</label>
-<input type="text" id="rt-title-input" name="${TITLE_FIELD}" required minlength="${titleMin}" maxlength="${titleMax}" placeholder="Retrospective PMS Sprint 24">
+<input type="text" id="rt-title-input" name="${TITLE_FIELD}" value="${kept.title}" required minlength="${titleMin}" maxlength="${titleMax}" placeholder="Retrospective PMS Sprint 24">
 <span class="hint">Từ ${titleMin} đến ${titleMax} ký tự.</span></div>
 <div class="field"><label for="rt-link">Link trang Confluence (tuỳ chọn)</label>
-<input type="text" id="rt-link" name="${LINK_FIELD}" maxlength="${docUrlMax}" placeholder="https://…/pages/viewpage.action?pageId=…">
+<input type="text" id="rt-link" name="${LINK_FIELD}" value="${kept.link}" maxlength="${docUrlMax}" placeholder="https://…/pages/viewpage.action?pageId=…">
 <span class="hint">Khi đóng phiên, bot ghi bảng ẩn danh vào cuối trang này (nếu đã bật ghi Confluence). Link phải có mã trang.</span></div>
 <div class="field"><label for="rt-team">Team (tuỳ chọn)</label>
 <select id="rt-team" name="${TEAM_FIELD}"><option value="">Không giới hạn: ai xem được kênh cũng điền được</option>
-${teams.map(roleId => html`<option value="${roleId}">${roleLabel(ctx.guild, roleId)}</option>`)}</select>
+${teams.map(roleId => html`<option value="${roleId}"${selected(roleId === kept.team)}>${roleLabel(ctx.guild, roleId)}</option>`)}</select>
 <span class="hint">Chọn team thì chỉ người có role team đó điền được. Danh sách là các team đã cấu hình ở trang Team.</span></div>
 <div class="field"><label for="rt-hours">Tự đóng sau (giờ, tuỳ chọn)</label>
-<input type="number" id="rt-hours" name="${HOURS_FIELD}" min="${durationHoursMin}" max="${durationHoursMax}" step="1">
+<input type="number" id="rt-hours" name="${HOURS_FIELD}" value="${kept.hours}" min="${durationHoursMin}" max="${durationHoursMax}" step="1">
 <span class="hint">Bỏ trống: người quản lý tự đóng. Từ ${durationHoursMin} đến ${durationHoursMax} giờ.</span></div>
 <div class="actions"><button class="btn btn-primary" type="submit"${options.length === 0 ? html` disabled` : ""}>📝 Tạo phiên và đăng vào kênh</button></div>
 </form>`;
@@ -391,7 +439,7 @@ async function createSession(ctx: GuildPageContext): Promise<WebResponse>
 	{
 		throw new UserError(CHANNEL_NOT_FOUND);
 	}
-	const channel = resolveRetroChannel(guild, channelId, member);
+	const channel = await resolveRetroChannel(guild, channelId, member);
 	const team = (form.get(TEAM_FIELD) ?? "").trim();
 	if (team !== "" && !isSnowflake(team)) throw new UserError(INVALID_TEAM);
 	const link = (form.get(LINK_FIELD) ?? "").trim();
@@ -408,11 +456,32 @@ async function createSession(ctx: GuildPageContext): Promise<WebResponse>
 	}, async payload =>
 	{
 		const posted = await retroCtx.actions.post(retroCtx.client, channel.id, payload);
-		if (posted === null) throw new UserError(SESSION_NOT_POSTED);
+		if (!posted.ok) throw new UserError(SESSION_NOT_POSTED);
 		return posted.messageId;
 	});
 	const text = [`Đã tạo phiên retro #${session.id} và đăng tin có nút “📝 Điền retro” vào ${channelMention(session.channelId)}.`, ...notes];
 	return redirectWithFlash(ctx, viewPath(session.id), "ok", text.join("\n"));
+}
+
+/** Giá trị cho query của link quay về: mã hoá chặt (cả ! ' ( ) *), để link qua được bộ lọc đường dẫn quay về của server. */
+function queryValue(text: string): string
+{
+	return encodeURIComponent(text).replace(/[!'()*]/gu, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** Lỗi khi tạo phiên: quay về form tạo phiên, giữ lại giá trị đã nhập (qua query; trang chỉ nhận lại giá trị hợp lệ). */
+function newErrorRedirect(ctx: GuildPageContext): string
+{
+	const form = formOf(ctx);
+	const kept: [string, string][] = [
+		[CHANNEL_FIELD, (form.get(CHANNEL_FIELD) ?? "").trim()],
+		[TITLE_FIELD, (form.get(TITLE_FIELD) ?? "").slice(0, KEPT_TITLE_MAX)],
+		[LINK_FIELD, (form.get(LINK_FIELD) ?? "").trim().slice(0, RETRO_LIMITS.docUrlMax)],
+		[TEAM_FIELD, (form.get(TEAM_FIELD) ?? "").trim()],
+		[HOURS_FIELD, (form.get(HOURS_FIELD) ?? "").trim().slice(0, 6)],
+	];
+	const query = kept.filter(([, value]) => value !== "").map(([name, value]) => `${name}=${queryValue(value)}`).join("&");
+	return query === "" ? NEW_PATH : `${NEW_PATH}?${query}`;
 }
 
 // ---------- Chi tiết ----------
@@ -420,6 +489,15 @@ async function createSession(ctx: GuildPageContext): Promise<WebResponse>
 function idField(session: RetroSession): RawHtml
 {
 	return html`<input type="hidden" name="${ID_FIELD}" value="${session.id}">`;
+}
+
+/** Tình trạng bảng tổng hợp của phiên đã đóng. */
+function summaryHtml(session: RetroSession): RawHtml | string
+{
+	if (session.summaryPostedAt !== null) return `Đã đăng lúc ${formatDateTime(session.summaryPostedAt)}`;
+	if (session.messageId === null) return html`<span class="muted">Không có (phiên chưa từng có tin trên Discord)</span>`;
+	if (session.contentDeletedAt !== null) return html`<span class="muted">Không đăng (nội dung đã bị xoá)</span>`;
+	return "⚠️ Chưa đăng được: bot tự thử lại trong 24 giờ sau khi đóng, hoặc bấm “Đăng lại bảng tổng hợp”.";
 }
 
 function infoCard(ctx: GuildPageContext, session: RetroSession, secret: boolean, poll: Poll | null, displays: ReadonlyMap<string, MemberDisplay>): RawHtml
@@ -435,6 +513,8 @@ function infoCard(ctx: GuildPageContext, session: RetroSession, secret: boolean,
 		session.status === "open" ? ["Hạn", session.closesAt === null ? "Không tự đóng: người quản lý đóng" : formatDateTime(session.closesAt)] : null,
 		session.closedAt === null ? null : ["Đóng lúc", formatDateTime(session.closedAt)],
 		["Đã điền", `${formatNumber(session.participants)} người`],
+		["Tin của phiên", session.messageId === null ? "⚠️ Chưa có tin trên Discord: bấm “Đăng lại tin của phiên”." : "Đã đăng (có nút 📝 Điền retro)"],
+		session.status === "open" ? null : ["Bảng tổng hợp", summaryHtml(session)],
 		["Người tạo", memberLink(ctx, session.createdBy, displays.get(session.createdBy))],
 		["Tạo lúc", formatDateTime(session.createdAt)],
 		["Tài liệu", doc],
@@ -475,7 +555,7 @@ function actionsCard(ctx: GuildPageContext, session: RetroSession): RawHtml
 	if (session.acceptingAnswers)
 	{
 		parts.push(postForm(ctx, REMIND_PATH, session, html`<h3>📣 Nhắc điền</h3>
-<p class="muted">Bot nhắc trong kênh của phiên (ping role team nếu phiên có team); mỗi phiên nhắc tối đa một lần trong 10 phút.</p>
+<p class="muted">Bot nhắc trong kênh của phiên (ping role team nếu phiên có team và bot ping được role đó); mỗi phiên nhắc tối đa một lần trong 10 phút.</p>
 <div class="actions"><button class="btn" type="submit">📣 Nhắc điền retro</button></div>`));
 	}
 	if (session.status === "closed" && session.contentDeletedAt === null)
@@ -484,6 +564,15 @@ function actionsCard(ctx: GuildPageContext, session: RetroSession): RawHtml
 <p class="muted">Mở lại phiên đã đóng (chưa tạo vote tên sprint) để mọi người điền hoặc sửa tiếp, như <code>/retro reopen</code>.</p>
 <div class="field"><label for="rt-reopen">Tự đóng sau (giờ, tuỳ chọn)</label>${hoursInput("rt-reopen", false)}<span class="hint">Bỏ trống: không tự đóng.</span></div>
 <div class="actions"><button class="btn" type="submit">🔓 Mở lại phiên</button></div>`));
+	}
+	parts.push(postForm(ctx, REPOST_PATH, session, html`<h3>🔁 Đăng lại tin của phiên</h3>
+<p class="muted">Khi tin có nút “📝 Điền retro” bị xoá hoặc bot không sửa được: bot đăng tin mới (theo trạng thái hiện tại) vào kênh của phiên và cập nhật tin mới từ đó, như <code>/retro repost</code>.</p>
+<div class="actions"><button class="btn" type="submit">🔁 Đăng lại tin của phiên</button></div>`));
+	if (session.status !== "open" && session.contentDeletedAt === null)
+	{
+		parts.push(postForm(ctx, SUMMARY_PATH, session, html`<h3>📋 Đăng lại bảng tổng hợp</h3>
+<p class="muted">Đăng lại bảng tổng hợp ẩn danh (theo nội dung hiện tại) vào kênh của phiên, như <code>/retro summary</code>.</p>
+<div class="actions"><button class="btn" type="submit">📋 Đăng lại bảng tổng hợp</button></div>`));
 	}
 	parts.push(confluenceAction(ctx, session));
 	return html`<section class="card"><h2>⚙️ Quản lý phiên</h2><div class="rt-actions">${parts}</div></section>`;
@@ -495,15 +584,19 @@ function confluenceAction(ctx: GuildPageContext, session: RetroSession): RawHtml
 	if (session.contentDeletedAt !== null) return html`<div class="rt-action">${head}<p class="muted">Nội dung phiên đã bị xoá nên không ghi Confluence nữa.</p></div>`;
 	if (session.docUrl === null)
 	{
-		return html`<div class="rt-action">${head}<p class="muted">Phiên chưa gắn link tài liệu nên bot không ghi Confluence. Vẫn dán tay được bằng phần “Xuất chữ để dán vào Confluence”.</p></div>`;
+		return html`<div class="rt-action">${head}<p class="muted">Phiên chưa gắn link tài liệu nên bot không ghi Confluence. Sau khi đóng phiên vẫn dán tay được bằng phần “Xuất chữ để dán vào Confluence”.</p></div>`;
 	}
 	if (ctx.deps.retroActions.docWriter === null)
 	{
 		return html`<div class="rt-action">${head}<p class="muted">Bot chưa bật ghi Confluence (CONFLUENCE_BASE_URL, CONFLUENCE_TOKEN), nên chỉ lưu link.
-Hãy dùng phần “Xuất chữ để dán vào Confluence” bên dưới để dán tay.</p></div>`;
+Sau khi đóng phiên, hãy dùng phần “Xuất chữ để dán vào Confluence” bên dưới để dán tay.</p></div>`;
+	}
+	if (session.status === "open")
+	{
+		return html`<div class="rt-action">${head}<p class="muted">Bot ghi bảng ẩn danh vào cuối trang đã gắn khi đóng phiên; sau đó ghi lại được ở đây. Lúc phiên còn mở không ghi, để giữ ẩn danh.</p></div>`;
 	}
 	return postForm(ctx, WRITE_PATH, session, html`${head}
-<p class="muted">Ghi (hoặc ghi lại) bảng ẩn danh vào cuối trang đã gắn, như <code>/retro write</code>. Ghi nhiều lần không nhân đôi bảng.</p>
+<p class="muted">Ghi (hoặc ghi lại) bảng ẩn danh vào cuối trang đã gắn, như <code>/retro write</code>. Ghi nhiều lần không nhân đôi bảng; nội dung không đổi thì không tạo phiên bản mới. Mỗi phiên tối đa một lần trong 30 giây.</p>
 <div class="actions"><button class="btn" type="submit">📄 Ghi lại vào Confluence</button></div>`);
 }
 
@@ -513,7 +606,7 @@ function participantsCard(ctx: GuildPageContext, participants: readonly string[]
 		? html`<p class="muted">Chưa có ai điền.</p>`
 		: html`<ul class="rt-people">${participants.map(userId => html`<li>${memberLink(ctx, userId, displays.get(userId))}</li>`)}</ul>`;
 	return html`<section class="card"><h2>✍️ Ai đã điền (${formatNumber(participants.length)})</h2>
-<p class="muted rt-hint">Chỉ admin bot thấy danh sách này (DEC-049), xếp theo ID, không theo thứ tự gửi. Nội dung bên dưới ẩn danh và không gắn với tên;
+<p class="muted rt-hint">Chỉ admin bot thấy danh sách này (DEC-049), xếp theo ID, không theo thứ tự gửi. Nội dung ẩn danh không gắn với tên và chỉ hiện sau khi phiên đóng;
 bảng trên Discord và Confluence không có tên người viết.</p>
 ${list}</section>`;
 }
@@ -524,34 +617,38 @@ function ideaDigest(text: string): string
 	return createHash("sha256").update(text).digest("hex").slice(0, IDEA_DIGEST_LENGTH);
 }
 
-function ideaItem(ctx: GuildPageContext, session: RetroSession, index: number, field: RetroField, text: string): RawHtml
+/** Một ý của một cột, kèm form xoá (không mang mã phiếu: chỉ cột, vị trí trong cột và dấu của chữ). `deletable` false thì không có form. */
+function ideaItem(ctx: GuildPageContext, session: RetroSession, field: RetroField, index: number, text: string, deletable: boolean): RawHtml
 {
+	if (!deletable) return html`<li><span class="rt-idea">${text}</span></li>`;
+	const label = field === "sprintName" ? "Xoá tên không phù hợp này ở mọi phiếu đã đề xuất (không khôi phục được)" : "Xoá ý không phù hợp này (không khôi phục được)";
 	return html`<li><span class="rt-idea">${text}</span>
 <details class="rt-delete"><summary>🗑️ Xoá</summary>${postForm(ctx, IDEA_DELETE_PATH, session, html`<input type="hidden" name="${IDEA_INDEX_FIELD}" value="${index}">
 <input type="hidden" name="${IDEA_FIELD_FIELD}" value="${field}"><input type="hidden" name="${IDEA_DIGEST_FIELD}" value="${ideaDigest(text)}">
-<label class="check"><input type="checkbox" name="${CONFIRM_FIELD}" value="1" required> Xoá ý không phù hợp này (không khôi phục được)</label>
-<button class="btn btn-danger rt-small" type="submit">Xoá ý</button>`)}</details></li>`;
+<label class="check"><input type="checkbox" name="${CONFIRM_FIELD}" value="1" required> ${label}</label>
+<button class="btn btn-danger rt-small" type="submit">Xoá</button>`)}</details></li>`;
 }
 
-function contentCard(ctx: GuildPageContext, session: RetroSession, entries: readonly AnonymousRetroEntry[]): RawHtml
+function contentCard(ctx: GuildPageContext, session: RetroSession): RawHtml
 {
 	const head = html`<h2>📋 Nội dung ẩn danh</h2>`;
 	if (session.contentDeletedAt !== null) return html`<section class="card">${head}<p class="muted">🗑️ Nội dung đã bị xoá lúc ${formatDateTime(session.contentDeletedAt)}.</p></section>`;
-	if (entries.length === 0) return html`<section class="card">${head}<p class="muted">Chưa có nội dung.</p></section>`;
-	const columns = RETRO_FIELDS.map(field =>
+	if (session.status === "open") return html`<section class="card">${head}<p class="muted">${CONTENT_HIDDEN_WHILE_OPEN}</p></section>`;
+	const columns = ctx.deps.services.retro.columns(ctx.guild.id, session.id);
+	if (retroRowCount(columns) === 0) return html`<section class="card">${head}<p class="muted">Chưa có nội dung.</p></section>`;
+	const namesLocked = session.status === "voting";
+	const blocks = RETRO_FIELDS.map(field =>
 	{
-		const items = entries.flatMap((entry, index) =>
-		{
-			const text = entry[field];
-			return text === null ? [] : [ideaItem(ctx, session, index, field, text)];
-		});
+		const items = columns[field].map((text, index) => ideaItem(ctx, session, field, index, text, !(field === "sprintName" && namesLocked)));
+		const lockNote = field === "sprintName" && namesLocked && items.length > 0 ? html`<p class="muted rt-hint">Đang vote tên sprint: chốt tên xong mới xoá được tên.</p>` : "";
 		return html`<div class="rt-col"><h3>${RETRO_FIELD_TITLES[field]} (${formatNumber(items.length)})</h3>
-${items.length === 0 ? html`<p class="muted">Trống.</p>` : html`<ul class="rt-ideas">${items}</ul>`}</div>`;
+${items.length === 0 ? html`<p class="muted">Trống.</p>` : html`<ul class="rt-ideas">${items}</ul>`}${lockNote}</div>`;
 	});
 	return html`<section class="card">${head}
-<p class="muted rt-hint">Thứ tự trộn cố định, không theo thứ tự gửi. Cột “Đặt tên sprint” hiện mọi tên như đã gửi; phần vote bên dưới đã bỏ trùng.
-Xoá một ý không sửa bảng tổng hợp đã đăng trong Discord; trang Confluence cập nhật khi bấm “Ghi lại vào Confluence”.</p>
-<div class="rt-columns">${columns}</div></section>`;
+<p class="muted rt-hint">Mỗi cột trộn thứ tự riêng (ngẫu nhiên, không theo người hay thứ tự gửi), nên ý cùng vị trí ở hai cột thường không phải của một người.
+Cột “Đặt tên sprint” là các tên đã bỏ trùng, theo chữ cái; xoá một tên là xoá tên đó ở mọi phiếu đã đề xuất.
+Xoá một ý không sửa bảng tổng hợp đã đăng trong Discord (dùng “Đăng lại bảng tổng hợp” nếu cần); trang Confluence cập nhật khi bấm “Ghi lại vào Confluence”.</p>
+<div class="rt-columns">${blocks}</div></section>`;
 }
 
 function pickForm(ctx: GuildPageContext, session: RetroSession, names: readonly string[]): RawHtml
@@ -584,18 +681,11 @@ hoà thì quay lại đây để chọn tên cuối cùng.</p>
 <div class="actions"><button class="btn btn-primary" type="submit">🗳️ Tạo vote tên sprint</button></div>`);
 }
 
-function candidateNames(candidates: readonly SprintNameCandidate[]): RawHtml
-{
-	return candidates.length === 0 ? html`<p class="muted">Chưa có tên nào được đề xuất.</p>` : html`<ul class="rt-ideas">${candidates.map(candidate => html`<li>${candidate.name}</li>`)}</ul>`;
-}
-
 /** Phần vote tên sprint theo trạng thái phiên. Phiên bí mật không hiện tên: chỉ tạo được vote với toàn bộ tên (không cần thấy tên). */
 function voteCard(ctx: GuildPageContext, session: RetroSession, poll: Poll | null, secret: boolean): RawHtml
 {
 	const { retro } = ctx.deps.services;
 	const head = html`<h2>🍀 Tên sprint và vote</h2>`;
-	const candidates = retro.sprintNameCandidates(ctx.guild.id, session.id);
-	const pickable = retro.pickableNames(ctx.guild.id, session.id);
 	const secretNote = html`<p class="muted">${SECRET_CONTENT_DENIED}</p>`;
 	let body: RawHtml;
 	switch (session.status)
@@ -604,6 +694,8 @@ function voteCard(ctx: GuildPageContext, session: RetroSession, poll: Poll | nul
 		body = html`<p>🏆 Tên sprint được chọn: ${session.winnerName === null ? NONE : secret ? html`<span class="muted">🔒</span>` : html`<strong>${session.winnerName}</strong>`}</p>`;
 		break;
 	case "voting":
+	{
+		const pickable = retro.pickableNames(ctx.guild.id, session.id);
 		if (pickable.length > 0)
 		{
 			body = html`<p>⚖️ Vote tên sprint hoà. Người quản lý chọn tên cuối cùng trong các tên hoà.</p>${secret ? secretNote : pickForm(ctx, session, pickable)}`;
@@ -614,11 +706,12 @@ function voteCard(ctx: GuildPageContext, session: RetroSession, poll: Poll | nul
 			body = html`<p>🗳️ Đang có ${link}. Vote xong bot tự chốt tên, công bố trong kênh và cộng XP cho người đề xuất.</p>`;
 		}
 		break;
+	}
 	case "open":
-		body = html`<p class="muted">Phiên còn mở: đóng phiên rồi mới tạo vote tên sprint. Các tên đã được đề xuất (${formatNumber(candidates.length)}):</p>${secret ? "" : candidateNames(candidates)}`;
+		body = html`<p class="muted">Phiên còn mở: đóng phiên rồi mới tạo vote tên sprint. Các tên được đề xuất hiện sau khi đóng.</p>`;
 		break;
 	case "closed":
-		body = closedVoteBody(ctx, session, candidates, pickable, secret);
+		body = closedVoteBody(ctx, session, retro.sprintNameCandidates(ctx.guild.id, session.id), retro.pickableNames(ctx.guild.id, session.id), secret);
 		break;
 	}
 	return html`<section class="card">${head}${body}</section>`;
@@ -640,12 +733,17 @@ function closedVoteBody(ctx: GuildPageContext, session: RetroSession, candidates
 <div class="actions"><button class="btn btn-primary" type="submit">🗳️ Tạo vote với toàn bộ ${formatNumber(candidates.length)} tên</button></div>`);
 }
 
-/** Bảng xem trước khu vực bot ghi lên Confluence (cùng dữ liệu retroDocSection), để bôi đen rồi chép sang trình sửa của Confluence. */
+/**
+ * Bảng xem trước khu vực bot ghi lên Confluence (cùng dữ liệu retroDocSection): 5 cột, số hàng bằng cột dài nhất, để bôi đen rồi chép
+ * sang trình sửa của Confluence.
+ */
 function docPreview(section: RetroDocSection): RawHtml
 {
-	const rows = section.entries.length === 0
+	const columns: RetroColumns = section.columns;
+	const count = retroRowCount(columns);
+	const rows = count === 0
 		? html`<tr><td colspan="${RETRO_FIELDS.length}"><em>Chưa có câu trả lời.</em></td></tr>`
-		: section.entries.map(entry => html`<tr>${RETRO_FIELDS.map(field => html`<td class="rt-cell">${entry[field] ?? ""}</td>`)}</tr>`);
+		: Array.from({ length: count }, (_, row) => html`<tr>${RETRO_FIELDS.map(field => html`<td class="rt-cell">${columns[field].at(row) ?? ""}</td>`)}</tr>`);
 	return html`<div class="rt-preview"><h3>🤖 Retro từ Discord: ${section.title}</h3>
 <table class="table rt-doc"><thead><tr>${RETRO_FIELDS.map(field => html`<th>${RETRO_FIELD_TITLES[field]}</th>`)}</tr></thead><tbody>${rows}</tbody></table>
 ${section.winnerName === null ? "" : html`<p>🏆 Tên sprint được chọn: <strong>${section.winnerName}</strong></p>`}</div>`;
@@ -655,10 +753,11 @@ function exportCard(ctx: GuildPageContext, session: RetroSession): RawHtml
 {
 	const head = html`<h2>📄 Xuất chữ để dán vào Confluence</h2>`;
 	if (session.contentDeletedAt !== null) return html`<section class="card">${head}<p class="muted">Nội dung phiên đã bị xoá: không còn gì để xuất.</p></section>`;
+	if (session.status === "open") return html`<section class="card">${head}<p class="muted">Phần xuất chữ có sau khi phiên đóng (nội dung ẩn danh chỉ hiện khi đã đóng).</p></section>`;
 	const section = retroDocSection(ctx.deps.services, session);
 	return html`<section class="card">${head}
 <p class="muted rt-hint">Phương án dự phòng khi bot chưa ghi được vào Confluence (chưa cấu hình, hoặc server chưa vào được Confluence). Đây đúng là khu vực bot sẽ ghi:
-tiêu đề, bảng 5 cột ẩn danh (mỗi phiếu một dòng, không có tên người viết) và tên sprint đã chốt.</p>
+tiêu đề, bảng 5 cột ẩn danh (mỗi cột trộn thứ tự riêng, một hàng không phải câu trả lời của một người, không có tên người viết) và tên sprint đã chốt.</p>
 <h3>Cách 1: chép bảng (dễ nhất)</h3>
 <p class="rt-hint">Bôi đen từ tiêu đề tới hết bảng xem trước dưới đây, bấm Ctrl+C; mở trang Confluence ở chế độ sửa, đặt con trỏ ở cuối trang rồi bấm Ctrl+V:
 Confluence giữ nguyên dạng bảng.</p>
@@ -681,9 +780,10 @@ function deleteContentCard(ctx: GuildPageContext, session: RetroSession): RawHtm
 	}
 	return html`<section class="card danger-zone">${head}
 <ul class="rt-list">
-<li>Xoá hẳn chữ của mọi phiếu trong phiên (DEC-049): <strong>không khôi phục được</strong>, kể cả từ trang này.</li>
+<li>Xoá hẳn chữ của mọi phiếu trong phiên (DEC-049): <strong>không khôi phục được</strong>, kể cả từ trang này. Database ghi đè chỗ chữ cũ và dọn file WAL ngay sau khi xoá.</li>
 <li>Giữ thông tin phiên, danh sách người đã điền và XP đã cộng.</li>
 <li>Không sửa bảng tổng hợp đã đăng trong Discord và bảng đã ghi trên Confluence: hãy tự xoá ở đó nếu cần.</li>
+<li>Bản sao lưu cũ của database (backup hằng ngày, giữ tới khi bị xoay vòng) và lịch sử phiên bản của trang Confluence vẫn giữ bản trước khi xoá.</li>
 </ul>
 ${postForm(ctx, CONTENT_DELETE_PATH, session, html`<label class="check"><input type="checkbox" name="${CONFIRM_FIELD}" value="1" required> Tôi muốn xoá vĩnh viễn nội dung của phiên retro #${session.id}</label>
 <div class="field"><label for="rt-word">Nhập ${CONTENT_DELETE_WORD} để xác nhận</label>
@@ -702,9 +802,6 @@ async function renderDetail(ctx: GuildPageContext): Promise<WebResponse>
 	const participants = services.retro.participants(ctx.guild.id, sessionId);
 	const displays = await adminActions.displays(client, ctx.guild, [...new Set([session.createdBy, ...participants])]);
 	const poll = sessionPoll(ctx, session);
-	const content = secret
-		? html``
-		: html`${contentCard(ctx, session, services.retro.anonymousEntries(ctx.guild.id, sessionId))}`;
 
 	return renderPage(ctx, {
 		nav: "retro",
@@ -713,7 +810,7 @@ async function renderDetail(ctx: GuildPageContext): Promise<WebResponse>
 ${infoCard(ctx, session, secret, poll, displays)}
 ${actionsCard(ctx, session)}
 ${participantsCard(ctx, participants, displays)}
-${content}
+${secret ? "" : contentCard(ctx, session)}
 ${voteCard(ctx, session, poll, secret)}
 ${secret ? "" : exportCard(ctx, session)}
 ${deleteContentCard(ctx, session)}`,
@@ -759,10 +856,22 @@ async function remindSession(ctx: GuildPageContext): Promise<WebResponse>
 	return flashBack(ctx, sessionId, await remindRetro(retroContextOf(ctx), ctx.guild.id, sessionId));
 }
 
+async function repostSession(ctx: GuildPageContext): Promise<WebResponse>
+{
+	const sessionId = sessionIdOf(ctx);
+	return flashBack(ctx, sessionId, await repostRetroSession(retroContextOf(ctx), ctx.guild.id, sessionId));
+}
+
+async function repostSummary(ctx: GuildPageContext): Promise<WebResponse>
+{
+	const sessionId = sessionIdOf(ctx);
+	return flashBack(ctx, sessionId, await repostRetroSummary(retroContextOf(ctx), ctx.guild.id, sessionId));
+}
+
 async function writeDoc(ctx: GuildPageContext): Promise<WebResponse>
 {
 	const sessionId = sessionIdOf(ctx);
-	const report = await writeRetroDoc(retroContextOf(ctx), ctx.guild.id, sessionId);
+	const report = await writeRetroDoc(retroContextOf(ctx), ctx.guild.id, sessionId, { manual: true });
 	return redirectWithFlash(ctx, viewPath(sessionId), report.status === "failed" ? "error" : "ok", retroDocReportLine(report));
 }
 
@@ -783,15 +892,17 @@ async function deleteIdea(ctx: GuildPageContext): Promise<WebResponse>
 	const field = form.get(IDEA_FIELD_FIELD);
 	const digest = form.get(IDEA_DIGEST_FIELD) ?? "";
 	if (!INDEX_TEXT.test(indexText) || !isRetroField(field) || !DIGEST_TEXT.test(digest)) throw new UserError(IDEA_STALE);
-	await requireVisibleSession(ctx, sessionId);
+	const session = await requireVisibleSession(ctx, sessionId);
+	if (session.status === "open") throw new UserError(CONTENT_WHILE_OPEN);
 
 	const { retro } = ctx.deps.services;
-	const entry = retro.anonymousEntries(ctx.guild.id, sessionId).at(Number(indexText));
-	const text = entry?.[field] ?? null;
-	if (!entry || text === null || ideaDigest(text) !== digest) throw new UserError(IDEA_STALE);
-	retro.deleteIdea(ctx.guild.id, sessionId, entry.id, field, ctx.actorId);
-	return flashBack(ctx, sessionId, `Đã xoá một ý ở cột “${RETRO_FIELD_TITLES[field]}” của phiên retro #${sessionId}. `
-		+ "Bảng tổng hợp đã đăng trong Discord không đổi; trang Confluence cập nhật khi bấm “Ghi lại vào Confluence”.");
+	const index = Number(indexText);
+	const text = retro.columns(ctx.guild.id, sessionId)[field].at(index);
+	if (text === undefined || ideaDigest(text) !== digest) throw new UserError(IDEA_STALE);
+	retro.deleteIdea({ guildId: ctx.guild.id, sessionId, field, index, text, actorId: ctx.actorId });
+	const what = field === "sprintName" ? "một tên sprint (ở mọi phiếu đã đề xuất tên đó)" : `một ý ở cột “${RETRO_FIELD_TITLES[field]}”`;
+	return flashBack(ctx, sessionId, `Đã xoá ${what} của phiên retro #${sessionId}. `
+		+ "Bảng tổng hợp đã đăng trong Discord không đổi (dùng “Đăng lại bảng tổng hợp” nếu cần); trang Confluence cập nhật khi bấm “Ghi lại vào Confluence”.");
 }
 
 function deleteContent(ctx: GuildPageContext): WebResponse
@@ -800,7 +911,8 @@ function deleteContent(ctx: GuildPageContext): WebResponse
 	const sessionId = sessionIdOf(ctx);
 	if (form.get(CONFIRM_FIELD) !== "1" || (form.get(CONTENT_WORD_FIELD) ?? "").trim() !== CONTENT_DELETE_WORD) throw new UserError(CONTENT_DELETE_CONFIRM);
 	ctx.deps.services.retro.deleteContent(ctx.guild.id, sessionId, ctx.actorId);
-	return flashBack(ctx, sessionId, `Đã xoá hẳn nội dung của phiên retro #${sessionId}. Thông tin phiên, danh sách người đã điền và XP đã cộng vẫn giữ.`);
+	return flashBack(ctx, sessionId, `Đã xoá hẳn nội dung của phiên retro #${sessionId}. Thông tin phiên, danh sách người đã điền và XP đã cộng vẫn giữ. `
+		+ "Bản sao lưu cũ và lịch sử trang Confluence vẫn giữ bản trước khi xoá.");
 }
 
 async function startVote(ctx: GuildPageContext): Promise<WebResponse>
@@ -844,12 +956,14 @@ export const retroPage: PageModule = {
 	routes: [
 		{ method: "GET", path: PATH, handler: renderList },
 		{ method: "GET", path: NEW_PATH, handler: renderNew },
-		{ method: "POST", path: NEW_PATH, handler: createSession },
+		{ method: "POST", path: NEW_PATH, handler: createSession, errorRedirect: newErrorRedirect },
 		{ method: "GET", path: VIEW_PATH, handler: renderDetail },
 		{ method: "POST", path: CLOSE_PATH, handler: closeSession, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: REOPEN_PATH, handler: reopenSession, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: EXTEND_PATH, handler: extendSession, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: REMIND_PATH, handler: remindSession, errorRedirect: detailErrorRedirect },
+		{ method: "POST", path: REPOST_PATH, handler: repostSession, errorRedirect: detailErrorRedirect },
+		{ method: "POST", path: SUMMARY_PATH, handler: repostSummary, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: WRITE_PATH, handler: writeDoc, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: VOTE_PATH, handler: startVote, errorRedirect: detailErrorRedirect },
 		{ method: "POST", path: PICK_PATH, handler: pickName, errorRedirect: detailErrorRedirect },

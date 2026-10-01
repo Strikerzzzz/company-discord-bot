@@ -6,12 +6,14 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { ChannelType } from "discord.js";
-import { VOTE_NOT_POSTED } from "../src/discord/retroOps";
+import { DOC_WRITE_COOLDOWN_MS, VOTE_NOT_POSTED } from "../src/discord/retroOps";
+import { RETRO_NAME_IN_VOTE } from "../src/modules/retro/RetroService";
 import { escapeHtml } from "../src/web/html";
 import {
 	CONFIRM_REQUIRED,
 	CONTENT_DELETE_CONFIRM,
 	CONTENT_DELETE_WORD,
+	CONTENT_WHILE_OPEN,
 	HOURS_INVALID,
 	IDEA_STALE,
 	INVALID_RETRO_ID,
@@ -19,7 +21,7 @@ import {
 	SECRET_CONTENT_DENIED,
 } from "../src/web/pages/retro";
 import { GUILD } from "./helpers";
-import { createSession, fill, flashAfter, getPage, ideaForm, pageUrl, post, sectionOf } from "./web-retro-helpers";
+import { closeSession, createSession, fill, flashAfter, getPage, ideaForm, pageUrl, post, sectionOf } from "./web-retro-helpers";
 import {
 	addChannel,
 	ADMIN_USER,
@@ -33,6 +35,7 @@ import {
 	PLAIN_USER,
 	ROLE_ADMIN_USER,
 	ROLE_TEAM_A,
+	ROLE_TEAM_B,
 	WebHarness,
 } from "./web-helpers";
 
@@ -168,6 +171,12 @@ describe("web: Retro — Confluence", () =>
 		fill(harness, session.id, PLAIN_USER, { learned: "x" });
 		const id = String(session.id);
 
+		const whileOpen = await flashAfter(harness, auth, await post(harness, auth, "/retro/write", { id }));
+		assert.equal(whileOpen.kind, "ok");
+		assert.ok(whileOpen.text.includes("phiên còn mở"), whileOpen.text);
+		assert.equal(harness.retroDoc.writes.length, 0, "phiên còn mở thì không ghi Confluence (giữ ẩn danh)");
+		closeSession(harness, session.id);
+
 		const written = await flashAfter(harness, auth, await post(harness, auth, "/retro/write", { id }));
 		assert.equal(written.kind, "ok");
 		assert.ok(written.text.includes("📄 Đã ghi bảng retro vào Confluence."));
@@ -176,6 +185,12 @@ describe("web: Retro — Confluence", () =>
 		assert.notEqual(harness.services.retro.get(GUILD, session.id)?.confluenceWrittenAt, null);
 		assert.ok(written.body.includes("Confluence: ✅ đã ghi"));
 
+		const tooSoon = await flashAfter(harness, auth, await post(harness, auth, "/retro/write", { id }));
+		assert.equal(tooSoon.kind, "error");
+		assert.ok(tooSoon.text.includes("Vừa ghi Confluence cho phiên này"), tooSoon.text);
+		assert.equal(harness.retroDoc.writes.length, 1, "bấm lại ngay thì không gọi Confluence (30 giây mỗi phiên)");
+
+		harness.clock.advance(DOC_WRITE_COOLDOWN_MS);
 		harness.retroDoc.error = TOKEN_ERROR;
 		const failed = await flashAfter(harness, auth, await post(harness, auth, "/retro/write", { id }));
 		assert.equal(failed.kind, "error");
@@ -207,6 +222,7 @@ describe("web: Retro — xoá ý và xoá nội dung", () =>
 		const session = createSession(harness);
 		fill(harness, session.id, PLAIN_USER, { learned: "Ý tốt", improve: "Ý xấu <b>" });
 		fill(harness, session.id, ROLE_ADMIN_USER, { learned: "Ý khác" });
+		closeSession(harness, session.id);
 		const body = await getPage(harness, auth, `/retro/view?id=${session.id}`);
 		const form = ideaForm(body, "Ý xấu &lt;b&gt;");
 		assert.equal(form.o, "improve");
@@ -224,12 +240,14 @@ describe("web: Retro — xoá ý và xoá nội dung", () =>
 		const deleted = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { ...form, "xac-nhan": "1" }));
 		assert.equal(deleted.kind, "ok");
 		assert.ok(deleted.text.includes("Đã xoá một ý ở cột “👎 Thiếu sót”"), deleted.text);
-		const texts = harness.services.retro.anonymousEntries(GUILD, session.id).flatMap(entry => [entry.learned, entry.improve]);
+		const columns = harness.services.retro.columns(GUILD, session.id);
+		const texts = [...columns.learned, ...columns.improve];
 		assert.ok(!texts.includes("Ý xấu <b>"));
 		assert.ok(texts.includes("Ý tốt") && texts.includes("Ý khác"), "ý khác còn nguyên");
 		const audit = harness.services.audit.list(GUILD, 20).find(entry => entry.action === "retro.idea_delete");
 		assert.equal(audit?.actorId, ADMIN_USER);
 		assert.ok(!JSON.stringify(audit?.details).includes(PLAIN_USER), "audit không ghi người viết");
+		assert.deepEqual(audit?.details, { sessionId: session.id, title: session.title, field: "improve" }, "audit không có mã phiếu");
 
 		const twice = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { ...form, "xac-nhan": "1" }));
 		assert.equal(twice.kind, "error");
@@ -267,7 +285,7 @@ describe("web: Retro — xoá ý và xoá nội dung", () =>
 		const after = harness.services.retro.get(GUILD, session.id);
 		assert.notEqual(after?.contentDeletedAt, null);
 		assert.equal(after?.participants, 2);
-		assert.deepEqual(harness.services.retro.anonymousEntries(GUILD, session.id), []);
+		assert.deepEqual(harness.services.retro.columns(GUILD, session.id), { learned: [], improve: [], ideas: [], kudos: [], sprintName: [] });
 		assert.deepEqual(harness.services.retro.participants(GUILD, session.id), [PLAIN_USER, ROLE_ADMIN_USER].sort());
 		assert.equal(totalXp(harness, PLAIN_USER), xpBefore, "XP đã cộng giữ nguyên");
 		assert.ok(!deleted.body.includes("Riêng tư A") && deleted.body.includes("Nội dung đã bị xoá"));
@@ -384,7 +402,7 @@ describe("web: Retro — vote tên sprint và chọn tên", () =>
 		assert.equal(harness.services.retro.get(GUILD, single)?.winnerName, "Duy Nhất");
 
 		const two = closedWithNames(harness, ["Một", "Hai"], { channelId: CHANNEL_WORK });
-		harness.deps.retroActions = { ...harness.deps.retroActions, post: () => Promise.resolve(null) };
+		harness.deps.retroActions = { ...harness.deps.retroActions, post: () => Promise.resolve({ ok: false, reason: "failed" }) };
 		const failed = await flashAfter(harness, auth, await post(harness, auth, "/retro/vote", { id: String(two), ten: ["Một", "Hai"] }));
 		assert.equal(failed.kind, "error");
 		assert.ok(failed.text.includes(escapeHtml(VOTE_NOT_POSTED)));
@@ -406,7 +424,7 @@ describe("web: Retro — vote tên sprint và chọn tên", () =>
 		const ideaDenied = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { id: String(id), muc: "0", o: "learned", kt: digest, "xac-nhan": "1" }));
 		assert.equal(ideaDenied.kind, "error");
 		assert.ok(ideaDenied.text.includes(escapeHtml(SECRET_CONTENT_DENIED)));
-		assert.equal(harness.services.retro.anonymousEntries(GUILD, id).length, 2, "không xoá gì");
+		assert.equal(harness.services.retro.columns(GUILD, id).learned.length, 2, "không xoá gì");
 		const shortlistDenied = await flashAfter(harness, auth, await post(harness, auth, "/retro/vote", { id: String(id), ten: ["Tên Kín A", "Tên Kín B"] }));
 		assert.equal(shortlistDenied.kind, "error");
 		assert.ok(shortlistDenied.text.includes(escapeHtml(SECRET_CONTENT_DENIED)));
@@ -441,5 +459,93 @@ describe("web: Retro — bảo vệ form", () =>
 		const invalid = await flashAfter(harness, auth, await post(harness, auth, "/retro/remind", { id: "abc" }));
 		assert.equal(invalid.location, pageUrl("/retro"));
 		assert.ok(invalid.text.includes(INVALID_RETRO_ID));
+	});
+});
+
+describe("web: Retro — ẩn danh, đăng lại, nhắc không ping được (review Phase 19)", () =>
+{
+	test("phiên đang mở: form xoá ý gửi tay (đoán chữ) bị từ chối, không xoá gì", async () =>
+	{
+		const { harness, auth } = await setup();
+		const session = createSession(harness);
+		fill(harness, session.id, PLAIN_USER, { learned: "Không có" });
+		const digest = createHash("sha256").update("Không có").digest("hex").slice(0, 16);
+		const refused = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { id: String(session.id), muc: "0", o: "learned", kt: digest, "xac-nhan": "1" }));
+		assert.equal(refused.kind, "error");
+		assert.ok(refused.text.includes(escapeHtml(CONTENT_WHILE_OPEN)), refused.text);
+		assert.deepEqual(harness.services.retro.columns(GUILD, session.id).learned, ["Không có"]);
+	});
+
+	test("xoá tên sprint: xoá tên đó ở mọi phiếu đã đề xuất (mọi cách viết); đang vote thì chặn", async () =>
+	{
+		const { harness, auth } = await setup();
+		const session = createSession(harness);
+		fill(harness, session.id, PLAIN_USER, { sprintName: "Tên Tục", learned: "a" });
+		fill(harness, session.id, ROLE_ADMIN_USER, { sprintName: "tên  tục" });
+		fill(harness, session.id, userId(1), { sprintName: "Rồng Lửa" });
+		fill(harness, session.id, userId(2), { sprintName: "Phượng Hoàng" });
+		closeSession(harness, session.id);
+		const body = await getPage(harness, auth, `/retro/view?id=${session.id}`);
+		const form = ideaForm(body, "Tên Tục");
+		assert.equal(form.o, "sprintName");
+
+		const deleted = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { ...form, "xac-nhan": "1" }));
+		assert.equal(deleted.kind, "ok", deleted.text);
+		assert.ok(deleted.text.includes("một tên sprint (ở mọi phiếu đã đề xuất tên đó)"), deleted.text);
+		assert.deepEqual(harness.services.retro.columns(GUILD, session.id).sprintName, ["Phượng Hoàng", "Rồng Lửa"]);
+		assert.equal(harness.services.retro.getAnswers(GUILD, session.id, ROLE_ADMIN_USER)?.sprintName, null, "cách viết khác của cùng tên cũng bị xoá");
+		assert.equal(harness.services.retro.getAnswers(GUILD, session.id, PLAIN_USER)?.learned, "a", "ô khác giữ nguyên");
+
+		await post(harness, auth, "/retro/vote", { id: String(session.id), ten: ["Phượng Hoàng", "Rồng Lửa"] });
+		const voting = await getPage(harness, auth, `/retro/view?id=${session.id}`);
+		assert.ok(voting.includes("Đang vote tên sprint: chốt tên xong mới xoá được tên."));
+		assert.ok(!sectionOf(voting, "📋 Nội dung ẩn danh").includes("name=\"o\" value=\"sprintName\""), "không có form xoá tên khi đang vote");
+		const digest = createHash("sha256").update("Rồng Lửa").digest("hex").slice(0, 16);
+		const blocked = await flashAfter(harness, auth, await post(harness, auth, "/retro/idea-delete", { id: String(session.id), muc: "1", o: "sprintName", kt: digest, "xac-nhan": "1" }));
+		assert.equal(blocked.kind, "error");
+		assert.ok(blocked.text.includes(escapeHtml(RETRO_NAME_IN_VOTE)), blocked.text);
+		assert.deepEqual(harness.services.retro.columns(GUILD, session.id).sprintName, ["Phượng Hoàng", "Rồng Lửa"]);
+	});
+
+	test("đăng lại tin của phiên: bot đăng tin mới có nút điền và cập nhật tin mới từ đó; đăng lại bảng tổng hợp sau khi đóng", async () =>
+	{
+		const { harness, auth } = await setup();
+		const session = createSession(harness);
+		fill(harness, session.id, PLAIN_USER, { learned: "Ý của phiên" });
+		const reposted = await flashAfter(harness, auth, await post(harness, auth, "/retro/repost", { id: String(session.id) }));
+		assert.equal(reposted.kind, "ok");
+		assert.ok(reposted.text.includes(`Đã đăng lại tin của phiên retro #${session.id}`), reposted.text);
+		const [posted] = harness.retroPosts;
+		assert.equal(posted?.channelId, CHANNEL_CHAT);
+		assert.ok(JSON.stringify(posted?.payload.components).includes(`"custom_id":"retro:fill:${session.id}"`));
+		assert.equal(harness.services.retro.get(GUILD, session.id)?.messageId, "700000000000000001", "tin mới thành tin của phiên");
+
+		const tooEarly = await flashAfter(harness, auth, await post(harness, auth, "/retro/summary", { id: String(session.id) }));
+		assert.equal(tooEarly.kind, "error");
+		assert.ok(tooEarly.text.includes("Phiên còn mở"));
+
+		closeSession(harness, session.id);
+		const summary = await flashAfter(harness, auth, await post(harness, auth, "/retro/summary", { id: String(session.id) }));
+		assert.equal(summary.kind, "ok", summary.text);
+		assert.ok(JSON.stringify(harness.retroPosts.at(-1)?.payload.components).includes("Ý của phiên"), "bảng tổng hợp có nội dung");
+		assert.notEqual(harness.services.retro.get(GUILD, session.id)?.summaryPostedAt, null);
+		assert.ok(summary.body.includes("Đã đăng lúc"), "trang ghi bảng tổng hợp đã đăng");
+
+		harness.deps.retroActions = { ...harness.deps.retroActions, post: () => Promise.resolve({ ok: false, reason: "archived" }) };
+		const archived = await flashAfter(harness, auth, await post(harness, auth, "/retro/repost", { id: String(session.id) }));
+		assert.equal(archived.kind, "error");
+		assert.ok(archived.text.includes("Thread của phiên đang lưu trữ"), archived.text);
+	});
+
+	test("nhắc khi role team không cho mention và bot thiếu Mention Everyone: vẫn đăng nhưng nói rõ không ping được, không báo “Đã nhắc”", async () =>
+	{
+		const { harness, auth } = await setup();
+		harness.services.teams.add(GUILD, ROLE_TEAM_B, ADMIN_USER);
+		const session = createSession(harness, { teamRoleId: ROLE_TEAM_B });
+		const reminded = await flashAfter(harness, auth, await post(harness, auth, "/retro/remind", { id: String(session.id) }));
+		assert.equal(reminded.kind, "ok");
+		assert.ok(reminded.text.includes("KHÔNG ping được"), reminded.text);
+		assert.ok(!reminded.text.includes("Đã nhắc"), reminded.text);
+		assert.deepEqual(harness.retroPosts[0]?.payload.allowedMentions, { parse: [] }, "không xin ping role không ping được");
 	});
 });
