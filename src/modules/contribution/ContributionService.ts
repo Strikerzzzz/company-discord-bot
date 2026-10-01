@@ -141,9 +141,12 @@ function toContribution(row: ContributionRow): Contribution
  * Contribution Score (DEC-025, DEC-051): ai cũng gửi được; contribution chờ người duyệt rồi mới mở cho người khác bấm 👍 Ghi nhận
  * hoặc 👎 Không ghi nhận (một trong hai, đổi hoặc rút được).
  * - Điểm của một contribution = max(0, tổng 👍 − tổng 👎): mỗi lượt một event trong contributionLedger (👍 dương, 👎 âm, actor là
- *   người bấm), cộng một event sàn (nguồn 'vote', không actor) khi tổng các lượt âm.
+ *   người bấm), cộng các event sàn (nguồn 'vote', không actor) có tổng bằng phần âm của các lượt. Event sàn ghi theo chênh lệch tại
+ *   thời điểm thao tác, nên bảng tuần/tháng nhận đúng phần điểm contribution thay đổi trong kỳ (bị 👎 không làm điểm kỳ tăng).
  * - Người bấm được Activity XP một lần mỗi contribution (xpLedger, nguồn 'admin', actor là bot, như XP retro), có hạn mức ngày;
- *   đây là XP hoạt động như tham gia vote, điểm contribution vẫn tách khỏi XP (DEC-004).
+ *   rút thì thu lại, bấm lại thì được lại (không lời không lỗ); phần bị hạn mức cắt hay bị admin reset không bao giờ được bù. Gỡ
+ *   contribution không thu lại XP người bấm (họ đã tương tác thật). Đây là XP hoạt động như tham gia vote, điểm contribution vẫn
+ *   tách khỏi XP (DEC-004).
  * - Điểm team theo snapshot team của tác giả lúc gửi (DEC-024); gỡ và reset chỉ void, không xoá dữ liệu (DEC-027).
  * - Lượt có điểm đã bị admin reset vẫn tính là đã dùng: người đó không đổi hay rút được lượt ấy.
  * - Tổng của tác giả không bao giờ âm (DEC-028, PROP-024): thao tác làm tổng âm thì tự ghi event bù trong cùng transaction. Thao tác
@@ -321,7 +324,7 @@ export class ContributionService implements ContributionServiceApi
 			let xp = { awarded: 0, capped: false };
 			let xpRevoked = 0;
 			if (state.current === null && target !== null) xp = this.awardInteractionXp(input, now);
-			if (target === null) xpRevoked = this.revokeInteractionXp(contributionId, voterId);
+			if (target === null) xpRevoked = this.revokeInteractionXp(contributionId, voterId, now);
 
 			return {
 				current: target,
@@ -430,51 +433,47 @@ export class ContributionService implements ContributionServiceApi
 	}
 
 	/**
-	 * Đưa event sàn của contribution về đúng: tổng các lượt 👍/👎 chưa huỷ âm thì có đúng một event sàn còn hiệu lực bằng phần âm
-	 * đó (nguồn 'vote', không actor, reference là contribution, nên gỡ contribution hay reset huỷ luôn), không âm thì không có.
-	 * Event sàn cũ bị huỷ (không xoá) khi giá trị cần đổi. Gọi trong transaction của thao tác lượt, trước compensateNegative.
+	 * Đưa event sàn của contribution về đúng: tổng các event sàn chưa huỷ (nguồn 'vote', không actor, reference là contribution, nên
+	 * gỡ contribution hay reset huỷ luôn) phải bằng max(0, −tổng các lượt 👍/👎 chưa huỷ). Lệch thì ghi MỘT event mới bằng phần chênh
+	 * lệch (có thể âm) và không huỷ event sàn cũ: phần điểm contribution thay đổi do thao tác này rơi đúng vào thời điểm thao tác, nên
+	 * bảng tuần/tháng không cộng nhầm cả phần sàn cũ vào kỳ hiện tại. Gọi trong transaction của thao tác lượt, trước compensateNegative.
 	 */
 	private recomputeFloor(guildId: string, authorId: string, contributionId: number, teamRoleIds: readonly string[]): void
 	{
-		const ledger = this.deps.contributionLedger;
 		const raw = this.repo.rawVoteSum(guildId, contributionId);
 		const wanted = raw < 0 ? -raw : 0;
-		const floorEventId = this.repo.findById(guildId, contributionId)?.floor_event_id ?? null;
-		const current = floorEventId === null ? null : ledger.getEvent(floorEventId);
-		const currentAmount = current !== null && current.voidedAt === null ? current.amount : 0;
-		if (wanted === currentAmount) return;
-
-		if (current !== null && current.voidedAt === null) ledger.voidEvent(current.id);
-		if (wanted === 0)
-		{
-			this.repo.setFloorEvent(guildId, contributionId, null);
-			return;
-		}
-		const event = ledger.record({
+		const delta = wanted - this.repo.floorSum(guildId, contributionId);
+		if (delta === 0) return;
+		this.deps.contributionLedger.record({
 			guildId,
 			userId: authorId,
-			amount: wanted,
+			amount: delta,
 			source: "vote",
 			referenceId: String(contributionId),
 			actorId: null,
 			reason: FLOOR_REASON,
 			teamRoleIds,
 		});
-		this.repo.setFloorEvent(guildId, contributionId, event.id);
 	}
 
 	/**
-	 * XP người bấm (DEC-051) cho lượt đầu tiên của một người trên contribution: chưa có dòng XP thì cộng
-	 * min(cấu hình, hạn mức ngày còn lại) rồi ghi dòng (kể cả khi được 0 XP); đã có dòng (đã nhận, hoặc event bị admin reset) thì
-	 * không cộng thêm.
+	 * XP người bấm (DEC-051) khi một người từ chỗ chưa có lượt bấm 👍/👎 trên contribution:
+	 * - chưa có dòng XP: cộng min(cấu hình, hạn mức ngày còn lại) rồi ghi dòng (kể cả khi được 0 XP);
+	 * - dòng đã bị thu lại khi rút (revoked_at): cộng lại min(số XP đã thu, hạn mức ngày còn lại), dòng trỏ sang event mới;
+	 * - dòng khác (đang giữ XP, event bị admin reset, hoặc lần trước được 0 hay bị cắt): không cộng, để không có đường cộng bù.
 	 */
 	private awardInteractionXp(input: ContributionVoteInput, now: number): { awarded: number; capped: boolean }
 	{
 		const { guildId, contributionId, voterId } = input;
-		if (this.repo.findInteractionXp(contributionId, voterId) !== null) return { awarded: 0, capped: false };
-
+		const record = this.repo.findInteractionXp(contributionId, voterId);
 		const settings = this.deps.guildConfig.getSettings(guildId);
-		const reward = settings.contributionInteractionXp;
+		let reward = settings.contributionInteractionXp;
+		if (record !== null)
+		{
+			if (record.revokedAt === null || record.xpEventId === null) return { awarded: 0, capped: false };
+			reward = this.deps.xpLedger.getEvent(record.xpEventId)?.amount ?? 0;
+		}
+
 		const cap = settings.contributionInteractionXpDailyCap;
 		const remaining = cap <= 0 ? reward : Math.max(0, cap - this.repo.interactionXpSince(guildId, voterId, startOfVnDay(now)));
 		const awarded = Math.min(reward, remaining);
@@ -492,20 +491,23 @@ export class ContributionService implements ContributionServiceApi
 				teamRoleIds: this.deps.teams.resolveTeams(guildId, input.voterRoleIds),
 			}).id;
 		}
-		this.repo.insertInteractionXp(contributionId, guildId, voterId, xpEventId, now);
+		if (record === null) this.repo.insertInteractionXp(contributionId, guildId, voterId, xpEventId, now);
+		else this.repo.restoreInteractionXp(contributionId, voterId, xpEventId);
 		return { awarded, capped: reward > 0 && awarded < reward };
 	}
 
-	/** Rút hẳn lượt: huỷ event XP người bấm (nếu còn hiệu lực) và xoá dòng XP; trả về số XP vừa thu lại. */
-	private revokeInteractionXp(contributionId: number, voterId: string): number
+	/**
+	 * Rút hẳn lượt: event XP người bấm còn hiệu lực thì huỷ và đánh dấu dòng là đã thu lại (giữ dòng và xp_event_id để lần bấm lại
+	 * biết số XP được trả). Event đã bị admin reset, hoặc không có event (lần đó được 0), thì không làm gì. Trả về số XP vừa thu lại.
+	 */
+	private revokeInteractionXp(contributionId: number, voterId: string, now: number): number
 	{
 		const record = this.repo.findInteractionXp(contributionId, voterId);
-		if (record === null) return 0;
-		this.repo.deleteInteractionXp(contributionId, voterId);
-		if (record.xpEventId === null) return 0;
+		if (record === null || record.xpEventId === null || record.revokedAt !== null) return 0;
 		const event = this.deps.xpLedger.getEvent(record.xpEventId);
 		if (event === null || event.voidedAt !== null) return 0;
 		this.deps.xpLedger.voidEvent(event.id);
+		this.repo.markInteractionXpRevoked(contributionId, voterId, now);
 		return event.amount;
 	}
 

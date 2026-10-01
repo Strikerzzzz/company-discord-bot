@@ -129,11 +129,19 @@ export interface ContributionVoteResult
 	 * (PROP-024): lượt của người này bị khoá, không đổi hay rút được nữa (PROP-031).
 	 */
 	locked: boolean;
-	/** Activity XP vừa cộng cho người bấm (0 nếu đã nhận cho contribution này, cấu hình 0, hoặc hết hạn mức ngày). */
+	/**
+	 * Activity XP vừa cộng cho người bấm. Chỉ khi từ chỗ chưa có lượt mà bấm 👍/👎: lần đầu trên contribution được
+	 * min(`contributionInteractionXp`, hạn mức ngày còn lại); bấm lại sau khi rút được lại min(số XP đã bị thu, hạn mức ngày còn
+	 * lại). 0 khi đổi 👍↔👎, khi đang giữ XP, khi event XP đã bị admin reset, hoặc khi lần trước được 0 hay bị hạn mức cắt (không
+	 * bao giờ cộng bù).
+	 */
 	xpAwarded: number;
-	/** true nếu hạn mức XP ngày cắt bớt (một phần hoặc toàn bộ) XP lẽ ra được cộng ở lần này. */
+	/** true nếu hạn mức XP ngày cắt bớt (một phần hoặc toàn bộ) XP lẽ ra được cộng ở lần này; phần bị cắt không được cộng bù sau. */
 	xpCapped: boolean;
-	/** Activity XP vừa thu lại khi rút (0 nếu không có). */
+	/**
+	 * Activity XP vừa thu lại khi rút hẳn (bấm lại thì được trả lại, trong hạn mức ngày). 0 nếu không có event XP còn hiệu lực: lần
+	 * đó được 0 XP, hoặc event đã bị admin reset.
+	 */
 	xpRevoked: number;
 	contribution: Contribution;
 }
@@ -159,7 +167,7 @@ export interface ContributionProfile
 	/** null nếu chưa có điểm. */
 	rank: number | null;
 	totalRanked: number;
-	/** Số contribution còn hiệu lực của người đó. */
+	/** Số contribution còn hiệu lực và đã được duyệt của người đó (DEC-051). */
 	contributions: number;
 }
 
@@ -216,14 +224,19 @@ export interface ContributionServiceApi
 	/** Lượt hiện tại của `voterId` trên contribution (để tầng Discord quyết định bấm lại là rút hay đổi). */
 	voterState(guildId: string, contributionId: number, voterId: string): ContributionVoterState;
 	/**
-	 * 👍 / 👎 / rút (DEC-051), trong một transaction: điểm contribution = max(0, tổng 👍 − tổng 👎); XP người bấm một lần mỗi
-	 * contribution (giữ khi đổi, thu lại khi rút), có hạn mức ngày. UserError nếu contribution không tồn tại, đã bị gỡ, chưa được
-	 * duyệt hoặc bị từ chối; nếu người bấm là tác giả; nếu lượt bị khoá; nếu chọn 👎 mà lý do không hợp lệ.
+	 * 👍 / 👎 / rút (DEC-051), trong một transaction: điểm contribution = max(0, tổng 👍 − tổng 👎), event sàn ghi theo chênh lệch
+	 * nên bảng tuần/tháng nhận đúng phần điểm thay đổi lúc thao tác. XP người bấm một lần mỗi contribution, có hạn mức ngày: giữ khi
+	 * đổi, thu lại khi rút, trả lại khi bấm lại (không lời không lỗ); phần bị hạn mức cắt hay bị admin reset không được cộng bù.
+	 * UserError nếu contribution không tồn tại, đã bị gỡ, chưa được duyệt hoặc bị từ chối; nếu người bấm là tác giả; nếu lượt bị
+	 * khoá; nếu chọn 👎 mà lý do không hợp lệ.
 	 */
 	vote(input: ContributionVoteInput): ContributionVoteResult;
 	/** Mọi lượt 👍/👎 của contribution kèm người bấm và lý do, cũ nhất trước (chỉ cho admin và người duyệt xem). */
 	listVoters(guildId: string, contributionId: number): ContributionVoter[];
-	/** Admin gỡ contribution: huỷ mọi điểm của nó. Ghi audit. */
+	/**
+	 * Admin gỡ contribution: huỷ mọi điểm của nó (lượt 👍/👎 và event sàn; tác giả đang bị trừ điểm thì bù về 0, PROP-024). XP người
+	 * bấm đã nhận được giữ nguyên (người bấm đã tương tác thật). Ghi audit.
+	 */
 	remove(guildId: string, contributionId: number, actorId: string): Contribution;
 	/** Admin cộng/trừ điểm contribution. UserError nếu delta = 0 hoặc kết quả âm. Ghi audit. */
 	adjust(input: ContributionAdjustInput): { score: number };

@@ -467,13 +467,12 @@ export const MIGRATIONS: readonly Migration[] = [
 			-- Duyệt contribution (DEC-051). review_state: 'pending' = chờ duyệt (chưa bấm 👍/👎 được); 'approved' = đã duyệt, cũng là
 			-- giá trị của contribution có từ trước migration này; 'rejected' = bị từ chối (không tính điểm). reviewed_by/reviewed_at:
 			-- người và lúc duyệt hoặc từ chối (NULL với contribution cũ). review_reason: lý do từ chối (không hiện công khai).
-			-- floor_event_id: event "sàn" gần nhất của contribution (nguồn 'vote', actor NULL, reference_id = id) đưa tổng điểm của
-			-- contribution về 0 khi 👎 nhiều hơn 👍; NULL = chưa từng cần. Event sàn cũ bị huỷ khi tính lại, không xoá.
+			-- Event "sàn" (nguồn 'vote', actor NULL, reference_id = id) đưa điểm của contribution về 0 khi 👎 nhiều hơn 👍 nằm trong
+			-- contribution_events, không cần cột riêng: mỗi lần tính lại ghi một event chênh lệch, tổng các event sàn chưa huỷ bằng phần âm.
 			ALTER TABLE contributions ADD COLUMN review_state TEXT NOT NULL DEFAULT 'approved' CHECK (review_state IN ('pending', 'approved', 'rejected'));
 			ALTER TABLE contributions ADD COLUMN reviewed_by TEXT;
 			ALTER TABLE contributions ADD COLUMN reviewed_at INTEGER;
 			ALTER TABLE contributions ADD COLUMN review_reason TEXT;
-			ALTER TABLE contributions ADD COLUMN floor_event_id INTEGER REFERENCES contribution_events (id);
 
 			-- Contribution bị từ chối không chặn việc gửi lại cùng tin nhắn nguồn.
 			DROP INDEX idx_contributions_source_message;
@@ -496,13 +495,16 @@ export const MIGRATIONS: readonly Migration[] = [
 			);
 			CREATE INDEX idx_contribution_downvotes_voter ON contribution_downvotes (guild_id, voter_id);
 
-			-- XP cho người bấm 👍/👎 (DEC-051): một dòng mỗi người mỗi contribution, giữ khi đổi 👍↔👎. xp_event_id NULL = không được
-			-- XP (cấu hình 0 hoặc hết hạn mức ngày). Rút hẳn thì huỷ event XP và xoá dòng (event vẫn còn, đã huỷ).
+			-- XP cho người bấm 👍/👎 (DEC-051): một dòng mỗi người mỗi contribution, giữ vĩnh viễn (kể cả khi rút). xp_event_id: event
+			-- XP gần nhất (NULL = không được XP: cấu hình 0 hoặc hết hạn mức ngày). revoked_at: lúc rút hẳn đã huỷ event XP đó (event vẫn
+			-- còn, đã huỷ, nên biết số XP); bấm lại thì được lại tối đa chừng đó trong hạn mức ngày và revoked_at về NULL. Event bị admin
+			-- reset, hoặc lần trước được 0 hay bị cắt, thì không bao giờ được cộng bù.
 			CREATE TABLE contribution_interaction_xp (
 				contribution_id INTEGER NOT NULL REFERENCES contributions (id),
 				guild_id TEXT NOT NULL,
 				user_id TEXT NOT NULL,
 				xp_event_id INTEGER REFERENCES xp_events (id),
+				revoked_at INTEGER,
 				created_at INTEGER NOT NULL,
 				PRIMARY KEY (contribution_id, user_id)
 			);
