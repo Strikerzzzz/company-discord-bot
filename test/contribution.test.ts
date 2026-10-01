@@ -1,13 +1,20 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { ContributionService } from "../src/modules/contribution/ContributionService";
 import { SubmitContributionInput } from "../src/modules/contribution/types";
 import { LedgerEvent } from "../src/modules/ledger/Ledger";
 import { UserError } from "../src/shared/errors";
 import {
+	castVote,
+	contributionInput,
+	ContributionTestContext,
+	setupContributions,
+	submitApproved,
+	voteUp,
+	withdrawVote,
+} from "./contribution-helpers";
+import {
 	ADMIN,
 	CHANNEL_GENERAL,
-	createTestContext,
 	GUILD,
 	OTHER_GUILD,
 	ROLE_BACKEND,
@@ -20,26 +27,18 @@ import {
 } from "./helpers";
 
 const MESSAGE_ID = "600000000000000001";
+const SELF_VOTE = "Bạn không thể tự ghi nhận hay không ghi nhận đóng góp của chính mình.";
+const VOTE_LOCKED = "Lượt của bạn cho đóng góp này đã bị khoá (do admin reset, hoặc vì lần bạn rút hay đổi lượt đã phải bù điểm cho tác giả đang bị trừ điểm) nên không đổi hay rút được nữa.";
 
-function setup(): TestContext & { service: ContributionService }
+/** Kênh contribution đã chọn sẵn cho cả GUILD và OTHER_GUILD (DEC-051). */
+function setup(): ContributionTestContext
 {
-	const context = createTestContext();
-	return { ...context, service: new ContributionService(context.db, context.deps) };
+	return setupContributions([GUILD, OTHER_GUILD]);
 }
 
 function input(overrides: Partial<SubmitContributionInput> = {}): SubmitContributionInput
 {
-	return {
-		guildId: GUILD,
-		authorId: USER_A,
-		submittedBy: USER_A,
-		title: "Tối ưu build",
-		description: "Giảm thời gian build CI từ 10 phút xuống 4 phút.",
-		category: "cai-tien",
-		link: null,
-		authorRoleIds: [],
-		...overrides,
-	};
+	return contributionInput(overrides);
 }
 
 /** Mô phỏng dữ liệu sai kiểu đến từ Discord: TypeScript không cho phép nhưng runtime vẫn phải chặn. */
@@ -66,7 +65,7 @@ function countRows(context: TestContext, table: "contributions" | "contribution_
 
 describe("ContributionService.submit", () =>
 {
-	test("tạo contribution đã trim, votes = 0, active, chưa có message", () =>
+	test("tạo contribution đã trim, chờ duyệt, votes = 0, active, chưa có message", () =>
 	{
 		const context = setup();
 		const { service, clock } = context;
@@ -91,6 +90,12 @@ describe("ContributionService.submit", () =>
 			status: "active",
 			createdAt: clock.now(),
 			votes: 0,
+			downvotes: 0,
+			score: 0,
+			reviewState: "pending",
+			reviewedBy: null,
+			reviewedAt: null,
+			reviewReason: null,
 		});
 		assert.deepEqual(service.get(GUILD, created.id), created);
 	});
@@ -181,32 +186,32 @@ describe("ContributionService.submit", () =>
 	});
 });
 
-describe("ContributionService.toggleVote", () =>
+describe("ContributionService.vote: 👍 ghi nhận và rút", () =>
 {
 	test("ghi nhận, rút ghi nhận, cộng điểm cho tác giả", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input());
+		const { id } = submitApproved(service, input());
 
-		const first = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(first.voted, true);
+		const first = voteUp(service, id, USER_B);
+		assert.deepEqual([first.current, first.change, first.locked], ["up", "added", false]);
 		assert.equal(first.contribution.votes, 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 
-		const second = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
-		assert.equal(second.voted, true);
+		const second = voteUp(service, id, USER_C);
+		assert.deepEqual([second.current, second.change], ["up", "added"]);
 		assert.equal(second.contribution.votes, 2);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 2);
 
-		const withdrawn = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(withdrawn.voted, false);
+		const withdrawn = withdrawVote(service, id, USER_B);
+		assert.deepEqual([withdrawn.current, withdrawn.change, withdrawn.locked], [null, "withdrawn", false]);
 		assert.equal(withdrawn.contribution.votes, 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 0);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_C), 0);
 
-		const again = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(again.voted, true);
+		const again = voteUp(service, id, USER_B);
+		assert.deepEqual([again.current, again.change], ["up", "added"]);
 		assert.equal(again.contribution.votes, 2);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 2);
 	});
@@ -214,8 +219,8 @@ describe("ContributionService.toggleVote", () =>
 	test("event ghi nhận có source vote, reference là id contribution, actor là người ghi nhận", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
 		const [event] = deps.contributionLedger.recent(GUILD, USER_A, 5);
 		assert.equal(event.source, "vote");
 		assert.equal(event.referenceId, String(id));
@@ -226,13 +231,10 @@ describe("ContributionService.toggleVote", () =>
 	test("không tự ghi nhận; người gửi hộ (khác tác giả) vẫn ghi nhận được", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input({ authorId: USER_A, submittedBy: USER_B }));
-		assert.throws(
-			() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_A }),
-			userError("Bạn không thể tự ghi nhận đóng góp của chính mình."),
-		);
+		const { id } = submitApproved(service, input({ authorId: USER_A, submittedBy: USER_B }));
+		assert.throws(() => voteUp(service, id, USER_A), userError(SELF_VOTE));
 		assert.equal(service.get(GUILD, id)?.votes, 0);
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }).voted, true);
+		assert.equal(voteUp(service, id, USER_B).current, "up");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 0);
 	});
@@ -240,29 +242,29 @@ describe("ContributionService.toggleVote", () =>
 	test("contribution không tồn tại thì báo lỗi", () =>
 	{
 		const { service } = setup();
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: 999, voterId: USER_B }), userError("Không tìm thấy contribution này."));
+		assert.throws(() => voteUp(service, 999, USER_B), userError("Không tìm thấy contribution này."));
 	});
 
 	test("điểm mỗi lượt theo cấu hình tại thời điểm ghi nhận; rút thì trừ đúng số đã cộng", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input());
+		const { id } = submitApproved(service, input());
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		voteUp(service, id, USER_B);
 		deps.guildConfig.updateSettings(GUILD, { contributionVotePoints: 5 }, ADMIN);
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		voteUp(service, id, USER_C);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 6);
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		withdrawVote(service, id, USER_B);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 5);
 
 		deps.guildConfig.updateSettings(GUILD, { contributionVotePoints: 0 }, ADMIN);
-		const zero = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.equal(zero.voted, true);
+		const zero = voteUp(service, id, USER_B);
+		assert.equal(zero.current, "up");
 		assert.equal(zero.contribution.votes, 2);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 5);
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		withdrawVote(service, id, USER_C);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 	});
 
@@ -270,21 +272,21 @@ describe("ContributionService.toggleVote", () =>
 	{
 		const { service, deps } = setup();
 		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
-		const { id } = service.submit(input({ authorRoleIds: [ROLE_BACKEND, ROLE_FRONTEND] }));
+		const { id } = submitApproved(service, input({ authorRoleIds: [ROLE_BACKEND, ROLE_FRONTEND] }));
 
 		deps.teams.add(GUILD, ROLE_FRONTEND, ADMIN);
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		voteUp(service, id, USER_B);
+		voteUp(service, id, USER_C);
 		assert.deepEqual(deps.contributionLedger.teamTotals(GUILD, 10), [{ id: ROLE_BACKEND, total: 2 }]);
 
-		const other = service.submit(input({ authorId: USER_B, authorRoleIds: [ROLE_FRONTEND] }));
-		service.toggleVote({ guildId: GUILD, contributionId: other.id, voterId: USER_A });
+		const other = submitApproved(service, input({ authorId: USER_B, authorRoleIds: [ROLE_FRONTEND] }));
+		voteUp(service, other.id, USER_A);
 		assert.deepEqual(deps.contributionLedger.teamTotals(GUILD, 10), [
 			{ id: ROLE_BACKEND, total: 2 },
 			{ id: ROLE_FRONTEND, total: 1 },
 		]);
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		withdrawVote(service, id, USER_B);
 		assert.deepEqual(deps.contributionLedger.teamTotals(GUILD, 10), [
 			{ id: ROLE_BACKEND, total: 1 },
 			{ id: ROLE_FRONTEND, total: 1 },
@@ -299,11 +301,11 @@ describe("ContributionService.remove", () =>
 		const context = setup();
 		const { service, deps, clock } = context;
 		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
-		const created = service.submit(input({ authorRoleIds: [ROLE_BACKEND] }));
-		const kept = service.submit(input({ title: "Contribution khác" }));
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
-		service.toggleVote({ guildId: GUILD, contributionId: kept.id, voterId: USER_B });
+		const created = submitApproved(service, input({ authorRoleIds: [ROLE_BACKEND] }));
+		const kept = submitApproved(service, input({ title: "Contribution khác" }));
+		voteUp(service, created.id, USER_B);
+		voteUp(service, created.id, USER_C);
+		voteUp(service, kept.id, USER_B);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: 3, actorId: ADMIN, reason: null, roleIds: [] });
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 6);
 
@@ -328,8 +330,8 @@ describe("ContributionService.remove", () =>
 		assert.equal(entry.targetId, USER_A);
 		assert.deepEqual(entry.details, { contributionId: created.id, title: created.title });
 
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B }), userError("Contribution này đã bị gỡ."));
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C }), userError("Contribution này đã bị gỡ."));
+		assert.throws(() => voteUp(service, created.id, USER_B), userError("Contribution này đã bị gỡ."));
+		assert.throws(() => withdrawVote(service, created.id, USER_C), userError("Contribution này đã bị gỡ."));
 		assert.throws(() => service.remove(GUILD, created.id, ADMIN), userError("Contribution này đã bị gỡ."));
 		assert.throws(() => service.remove(GUILD, 999, ADMIN), userError("Không tìm thấy contribution này."));
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 4);
@@ -415,11 +417,11 @@ describe("ContributionService reset", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const mine = service.submit(input());
-		const theirs = service.submit(input({ authorId: USER_B }));
-		service.toggleVote({ guildId: GUILD, contributionId: mine.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: mine.id, voterId: USER_C });
-		service.toggleVote({ guildId: GUILD, contributionId: theirs.id, voterId: USER_C });
+		const mine = submitApproved(service, input());
+		const theirs = submitApproved(service, input({ authorId: USER_B }));
+		voteUp(service, mine.id, USER_B);
+		voteUp(service, mine.id, USER_C);
+		voteUp(service, theirs.id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: 5, actorId: ADMIN, reason: null, roleIds: [] });
 
 		assert.deepEqual(service.resetUser(GUILD, USER_A, ADMIN), { voidedEvents: 3 });
@@ -439,12 +441,12 @@ describe("ContributionService reset", () =>
 	test("resetAll huỷ điểm cả guild, không ảnh hưởng guild khác, ghi audit", () =>
 	{
 		const { service, deps } = setup();
-		const mine = service.submit(input());
-		const theirs = service.submit(input({ authorId: USER_B }));
-		const elsewhere = service.submit(input({ guildId: OTHER_GUILD }));
-		service.toggleVote({ guildId: GUILD, contributionId: mine.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: theirs.id, voterId: USER_C });
-		service.toggleVote({ guildId: OTHER_GUILD, contributionId: elsewhere.id, voterId: USER_B });
+		const mine = submitApproved(service, input());
+		const theirs = submitApproved(service, input({ authorId: USER_B }));
+		const elsewhere = submitApproved(service, input({ guildId: OTHER_GUILD }));
+		voteUp(service, mine.id, USER_B);
+		voteUp(service, theirs.id, USER_C);
+		voteUp(service, elsewhere.id, USER_B, { guildId: OTHER_GUILD });
 
 		assert.deepEqual(service.resetAll(GUILD, ADMIN), { voidedEvents: 2, members: 2 });
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
@@ -455,14 +457,13 @@ describe("ContributionService reset", () =>
 		assert.equal(entry.action, "contribution.reset_all");
 		assert.equal(entry.targetId, null);
 		assert.deepEqual(entry.details, { voidedEvents: 2, members: 2 });
-		assert.equal(deps.audit.list(OTHER_GUILD, 5).length, 0);
+		assert.deepEqual(deps.audit.list(OTHER_GUILD, 20).filter(audit => audit.action.startsWith("contribution.reset")), []);
 	});
 
 });
 
 describe("ContributionService: lượt ghi nhận sau khi admin reset", () =>
 {
-	const VOTE_RESET = "Lượt ghi nhận của bạn cho đóng góp này đã bị huỷ (do admin reset, hoặc bạn đã rút ghi nhận khi tác giả đang bị trừ điểm) nên không thể ghi nhận lại.";
 	const USER_D = "300000000000000004";
 
 	function voteRows(context: TestContext, contributionId: number): string[]
@@ -472,20 +473,21 @@ describe("ContributionService: lượt ghi nhận sau khi admin reset", () =>
 			.map(row => row.voter_id);
 	}
 
-	test("resetUser: người đã ghi nhận bấm lại bị từ chối, giữ nguyên dòng vote, điểm không quay về", () =>
+	test("resetUser: người đã ghi nhận bấm lại hay rút đều bị từ chối, giữ nguyên dòng vote, điểm không quay về", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
+		voteUp(service, id, USER_C);
 		service.resetUser(GUILD, USER_A, ADMIN);
 
-		for (let click = 0; click < 2; click++)
+		for (const action of ["up", "withdraw"] as const)
 		{
-			assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
-			assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }), userError(VOTE_RESET));
+			assert.throws(() => castVote(service, id, USER_B, action), userError(VOTE_LOCKED));
+			assert.throws(() => castVote(service, id, USER_C, action), userError(VOTE_LOCKED));
 		}
+		assert.deepEqual(service.voterState(GUILD, id, USER_B), { current: null, locked: true });
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(voteRows(context, id), [USER_B, USER_C]);
 		assert.equal(service.get(GUILD, id)?.votes, 0);
@@ -496,67 +498,67 @@ describe("ContributionService: lượt ghi nhận sau khi admin reset", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
 		service.resetUser(GUILD, USER_A, ADMIN);
 
-		const voted = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D });
-		assert.equal(voted.voted, true);
+		const voted = voteUp(service, id, USER_D);
+		assert.equal(voted.current, "up");
 		assert.equal(voted.contribution.votes, 1, "chỉ đếm lượt còn hiệu lực");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D }).voted, false);
+		assert.equal(withdrawVote(service, id, USER_D).current, null);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_D }).voted, true);
+		assert.equal(voteUp(service, id, USER_D).current, "up");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+		assert.throws(() => voteUp(service, id, USER_B), userError(VOTE_LOCKED));
 		assert.deepEqual(voteRows(context, id), [USER_B, USER_D]);
 	});
 
 	test("resetAll: người đã ghi nhận không lấy lại được điểm; người mới ghi nhận được; guild khác không bị ảnh hưởng", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input());
-		const elsewhere = service.submit(input({ guildId: OTHER_GUILD }));
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: OTHER_GUILD, contributionId: elsewhere.id, voterId: USER_B });
+		const { id } = submitApproved(service, input());
+		const elsewhere = submitApproved(service, input({ guildId: OTHER_GUILD }));
+		voteUp(service, id, USER_B);
+		voteUp(service, elsewhere.id, USER_B, { guildId: OTHER_GUILD });
 		service.resetAll(GUILD, ADMIN);
 
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
-		assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }), userError(VOTE_RESET));
+		assert.throws(() => voteUp(service, id, USER_B), userError(VOTE_LOCKED));
+		assert.throws(() => withdrawVote(service, id, USER_B), userError(VOTE_LOCKED));
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }).voted, true);
+		assert.equal(voteUp(service, id, USER_C).current, "up");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 		assert.equal(service.get(GUILD, id)?.votes, 1);
 
-		const withdrawn = service.toggleVote({ guildId: OTHER_GUILD, contributionId: elsewhere.id, voterId: USER_B });
-		assert.equal(withdrawn.voted, false);
+		const withdrawn = withdrawVote(service, elsewhere.id, USER_B, { guildId: OTHER_GUILD });
+		assert.equal(withdrawn.current, null);
 		assert.equal(deps.contributionLedger.total(OTHER_GUILD, USER_A), 0);
 	});
 
 	test("đã rút ghi nhận trước khi reset thì không còn lượt nào bị khoá, ghi nhận lại được", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
+		withdrawVote(service, id, USER_B);
 		service.resetUser(GUILD, USER_A, ADMIN);
 
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B }).voted, true);
+		assert.equal(voteUp(service, id, USER_B).current, "up");
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 	});
 
 	test("list, get và getProfile chỉ đếm lượt còn hiệu lực", () =>
 	{
 		const { service } = setup();
-		const reset = service.submit(input({ title: "Bị reset" }));
-		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_C });
+		const reset = submitApproved(service, input({ title: "Bị reset" }));
+		voteUp(service, reset.id, USER_B);
+		voteUp(service, reset.id, USER_C);
 		service.resetUser(GUILD, USER_A, ADMIN);
-		const fresh = service.submit(input({ title: "Sau reset" }));
-		service.toggleVote({ guildId: GUILD, contributionId: fresh.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: reset.id, voterId: USER_D });
+		const fresh = submitApproved(service, input({ title: "Sau reset" }));
+		voteUp(service, fresh.id, USER_B);
+		voteUp(service, reset.id, USER_D);
 
 		assert.deepEqual(service.list(GUILD, { limit: 10 }).map(c => [c.title, c.votes]), [["Sau reset", 1], ["Bị reset", 1]]);
 		assert.equal(service.get(GUILD, reset.id)?.votes, 1);
@@ -621,10 +623,10 @@ describe("ContributionService: tin nhắn nguồn (sourceMessageId)", () =>
 	test("không nhân điểm: điểm của một tin nhắn chỉ đến từ một contribution", () =>
 	{
 		const { service, deps } = setup();
-		const { id } = service.submit(input({ authorId: USER_B, submittedBy: USER_A, sourceMessageId: SOURCE }));
+		const { id } = submitApproved(service, input({ authorId: USER_B, submittedBy: USER_A, sourceMessageId: SOURCE }));
 		assert.throws(() => service.submit(input({ authorId: USER_B, submittedBy: USER_C, sourceMessageId: SOURCE })), UserError);
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_A });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		voteUp(service, id, USER_A);
+		voteUp(service, id, USER_C);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 2);
 	});
 
@@ -645,23 +647,26 @@ describe("ContributionService: tin nhắn nguồn (sourceMessageId)", () =>
 
 describe("ContributionService tách biệt", () =>
 {
-	test("không ảnh hưởng Activity XP (DEC-004)", () =>
+	test("điểm contribution không ảnh hưởng Activity XP (DEC-004); người bấm chỉ nhận XP người bấm (DEC-051)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
 		deps.xpLedger.record({ guildId: GUILD, userId: USER_A, amount: 40, source: "message" });
 
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		const { id } = submitApproved(service, input());
+		const vote = voteUp(service, id, USER_B);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: 7, actorId: ADMIN, reason: null, roleIds: [] });
-		assert.equal(deps.xpLedger.total(GUILD, USER_A), 40);
-		assert.equal(deps.xpLedger.total(GUILD, USER_B), 0);
+		assert.equal(deps.xpLedger.total(GUILD, USER_A), 40, "tác giả không được XP từ điểm contribution");
+		assert.equal(vote.xpAwarded, 5);
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5, "XP người bấm là Activity XP riêng, không phải điểm contribution");
+		assert.equal(deps.contributionLedger.total(GUILD, USER_B), 0);
 
 		service.remove(GUILD, id, ADMIN);
 		service.resetUser(GUILD, USER_A, ADMIN);
 		service.resetAll(GUILD, ADMIN);
 		assert.equal(deps.xpLedger.total(GUILD, USER_A), 40);
-		assert.equal(countRows(context, "xp_events"), 1);
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), 5, "gỡ hay reset Contribution không đụng tới XP");
+		assert.equal(countRows(context, "xp_events"), 2);
 		assert.equal(deps.xpLedger.recent(GUILD, USER_A, 5)[0].voidedAt, null);
 	});
 
@@ -669,17 +674,18 @@ describe("ContributionService tách biệt", () =>
 	{
 		const { service, deps } = setup();
 		deps.guildConfig.updateSettings(OTHER_GUILD, { contributionVotePoints: 9 }, ADMIN);
-		const { id } = service.submit(input());
+		const { id } = submitApproved(service, input());
 
 		assert.equal(service.get(OTHER_GUILD, id), null);
 		assert.deepEqual(service.list(OTHER_GUILD, { limit: 10 }), []);
-		assert.throws(() => service.toggleVote({ guildId: OTHER_GUILD, contributionId: id, voterId: USER_B }), userError("Không tìm thấy contribution này."));
+		assert.throws(() => voteUp(service, id, USER_B, { guildId: OTHER_GUILD }), userError("Không tìm thấy contribution này."));
 		assert.throws(() => service.remove(OTHER_GUILD, id, ADMIN), userError("Không tìm thấy contribution này."));
+		assert.throws(() => service.approve(OTHER_GUILD, id, ADMIN), userError("Không tìm thấy contribution này."));
 
 		service.attachMessage(OTHER_GUILD, id, CHANNEL_GENERAL, MESSAGE_ID);
 		assert.equal(service.get(GUILD, id)?.messageId, null);
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		voteUp(service, id, USER_B);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 		assert.equal(deps.contributionLedger.total(OTHER_GUILD, USER_A), 0);
 		assert.deepEqual(service.getProfile(OTHER_GUILD, USER_A), { userId: USER_A, score: 0, rank: null, totalRanked: 0, contributions: 0 });
@@ -710,14 +716,14 @@ describe("ContributionService đọc dữ liệu", () =>
 	test("list: chỉ contribution còn hiệu lực, mới nhất trước, lọc theo tác giả, kèm số ghi nhận", () =>
 	{
 		const { service, clock } = setup();
-		const oldest = service.submit(input({ title: "Cũ nhất" }));
+		const oldest = submitApproved(service, input({ title: "Cũ nhất" }));
 		clock.advanceSeconds(10);
 		const sameTimeFirst = service.submit(input({ title: "Cùng giờ 1", authorId: USER_B }));
 		const sameTimeSecond = service.submit(input({ title: "Cùng giờ 2" }));
 		clock.advanceSeconds(10);
 		const removed = service.submit(input({ title: "Bị gỡ" }));
 		service.remove(GUILD, removed.id, ADMIN);
-		service.toggleVote({ guildId: GUILD, contributionId: oldest.id, voterId: USER_B });
+		voteUp(service, oldest.id, USER_B);
 
 		assert.deepEqual(service.list(GUILD, { limit: 10 }).map(c => c.id), [sameTimeSecond.id, sameTimeFirst.id, oldest.id]);
 		assert.deepEqual(service.list(GUILD, { authorId: USER_A, limit: 10 }).map(c => c.id), [sameTimeSecond.id, oldest.id]);
@@ -737,15 +743,15 @@ describe("ContributionService đọc dữ liệu", () =>
 		assert.equal(service.list(GUILD, { authorId: USER_A, limit: 100 }).length, 50);
 	});
 
-	test("getProfile: điểm, hạng và số contribution còn hiệu lực", () =>
+	test("getProfile: điểm, hạng và số contribution còn hiệu lực (đã duyệt)", () =>
 	{
 		const { service } = setup();
-		const first = service.submit(input());
-		service.submit(input({ title: "Thứ hai" }));
-		const removed = service.submit(input({ title: "Bị gỡ" }));
-		service.submit(input({ authorId: USER_B, submittedBy: USER_A }));
+		const first = submitApproved(service, input());
+		submitApproved(service, input({ title: "Thứ hai" }));
+		const removed = submitApproved(service, input({ title: "Bị gỡ" }));
+		submitApproved(service, input({ authorId: USER_B, submittedBy: USER_A }));
 		service.remove(GUILD, removed.id, ADMIN);
-		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_B });
+		voteUp(service, first.id, USER_B);
 		service.adjust({ guildId: GUILD, userId: USER_C, delta: 5, actorId: ADMIN, reason: null, roleIds: [] });
 
 		assert.deepEqual(service.getProfile(GUILD, USER_A), { userId: USER_A, score: 1, rank: 2, totalRanked: 2, contributions: 2 });
@@ -785,9 +791,9 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps, clock } = context;
-		const created = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		const created = submitApproved(service, input());
+		voteUp(service, created.id, USER_B);
+		voteUp(service, created.id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: "phạt", roleIds: [] });
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 
@@ -820,19 +826,19 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
+		voteUp(service, id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [] });
 		const auditCount = deps.audit.list(GUILD, 100).length;
 
-		const withdrawn = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.deepEqual([withdrawn.voted, withdrawn.locked], [false, true]);
+		const withdrawn = withdrawVote(service, id, USER_B);
+		assert.deepEqual([withdrawn.current, withdrawn.change, withdrawn.locked], [null, "withdrawn", true]);
 		assert.equal(withdrawn.contribution.votes, 1);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(compensations(context, USER_A).map(event => [event.amount, event.source, event.actorId, event.referenceId]), [[1, "admin", null, null]]);
 
-		assert.equal(service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C }).locked, true);
+		assert.equal(withdrawVote(service, id, USER_C).locked, true);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(compensations(context, USER_A).map(event => event.amount), [1, 1]);
 		assert.equal(deps.audit.list(GUILD, 100).length, auditCount, "rút ghi nhận không ghi audit");
@@ -840,7 +846,8 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 		// Ghi nhận lại bị chặn, nên hình phạt −2 của admin không bị xoá dần.
 		for (const voterId of [USER_B, USER_C])
 		{
-			assert.throws(() => service.toggleVote({ guildId: GUILD, contributionId: id, voterId }), { name: "UserError", message: /không thể ghi nhận lại/ });
+			assert.throws(() => voteUp(service, id, voterId), { name: "UserError", message: /bị khoá/ });
+			assert.deepEqual(service.voterState(GUILD, id, voterId), { current: null, locked: true });
 		}
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.equal(service.get(GUILD, id)?.votes, 0);
@@ -850,18 +857,18 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const { id } = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		const { id } = submitApproved(service, input());
+		voteUp(service, id, USER_B);
+		voteUp(service, id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -1, actorId: ADMIN, reason: null, roleIds: [] });
 
-		const withdrawn = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.deepEqual([withdrawn.voted, withdrawn.locked], [false, false]);
+		const withdrawn = withdrawVote(service, id, USER_B);
+		assert.deepEqual([withdrawn.current, withdrawn.locked], [null, false]);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.equal(compensations(context, USER_A).length, 0);
 
-		const again = service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		assert.deepEqual([again.voted, again.locked], [true, false]);
+		const again = voteUp(service, id, USER_B);
+		assert.deepEqual([again.current, again.locked], ["up", false]);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 	});
 
@@ -869,14 +876,14 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const { id } = service.submit(input());
+		const { id } = submitApproved(service, input());
 		deps.guildConfig.updateSettings(GUILD, { contributionVotePoints: 3 }, ADMIN);
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_C });
+		voteUp(service, id, USER_B);
+		voteUp(service, id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -4, actorId: ADMIN, reason: null, roleIds: [] });
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 2);
 
-		service.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		withdrawVote(service, id, USER_B);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		assert.deepEqual(compensations(context, USER_A).map(event => event.amount), [1]);
 	});
@@ -886,15 +893,15 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 		const context = setup();
 		const { service, deps } = context;
 		deps.teams.add(GUILD, ROLE_BACKEND, ADMIN);
-		const penalized = service.submit(input({ authorRoleIds: [ROLE_BACKEND] }));
-		const teammate = service.submit(input({ authorId: USER_B, authorRoleIds: [ROLE_BACKEND] }));
-		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_C });
-		service.toggleVote({ guildId: GUILD, contributionId: teammate.id, voterId: USER_C });
+		const penalized = submitApproved(service, input({ authorRoleIds: [ROLE_BACKEND] }));
+		const teammate = submitApproved(service, input({ authorId: USER_B, authorRoleIds: [ROLE_BACKEND] }));
+		voteUp(service, penalized.id, USER_B);
+		voteUp(service, penalized.id, USER_C);
+		voteUp(service, teammate.id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [ROLE_BACKEND] });
 		assert.equal(rawTeamTotal(context, ROLE_BACKEND), 1);
 
-		service.toggleVote({ guildId: GUILD, contributionId: penalized.id, voterId: USER_B });
+		withdrawVote(service, penalized.id, USER_B);
 		assert.equal(rawTeamTotal(context, ROLE_BACKEND), 1);
 
 		service.remove(GUILD, penalized.id, ADMIN);
@@ -909,12 +916,12 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const created = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		const created = submitApproved(service, input());
+		voteUp(service, created.id, USER_B);
+		voteUp(service, created.id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -1, actorId: ADMIN, reason: null, roleIds: [] });
 
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
+		withdrawVote(service, created.id, USER_B);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 0);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: 5, actorId: ADMIN, reason: null, roleIds: [] });
 		service.remove(GUILD, created.id, ADMIN);
@@ -930,14 +937,14 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const first = service.submit(input());
-		const second = service.submit(input({ title: "Đóng góp thứ hai" }));
-		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_C });
-		service.toggleVote({ guildId: GUILD, contributionId: second.id, voterId: USER_B });
+		const first = submitApproved(service, input());
+		const second = submitApproved(service, input({ title: "Đóng góp thứ hai" }));
+		voteUp(service, first.id, USER_B);
+		voteUp(service, first.id, USER_C);
+		voteUp(service, second.id, USER_B);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -3, actorId: ADMIN, reason: null, roleIds: [] });
 
-		service.toggleVote({ guildId: GUILD, contributionId: first.id, voterId: USER_B });
+		withdrawVote(service, first.id, USER_B);
 		service.remove(GUILD, first.id, ADMIN);
 		service.remove(GUILD, second.id, ADMIN);
 
@@ -953,9 +960,9 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 	{
 		const context = setup();
 		const { service, deps } = context;
-		const created = service.submit(input());
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_B });
-		service.toggleVote({ guildId: GUILD, contributionId: created.id, voterId: USER_C });
+		const created = submitApproved(service, input());
+		voteUp(service, created.id, USER_B);
+		voteUp(service, created.id, USER_C);
 		service.adjust({ guildId: GUILD, userId: USER_A, delta: -2, actorId: ADMIN, reason: null, roleIds: [] });
 		service.remove(GUILD, created.id, ADMIN);
 
@@ -964,8 +971,8 @@ describe("ContributionService: điểm không âm (PROP-024)", () =>
 		assert.equal(compensations(context, USER_A).length, 1);
 		assert.ok(compensations(context, USER_A).every(event => event.voidedAt !== null));
 
-		const fresh = service.submit(input({ title: "Sau reset" }));
-		service.toggleVote({ guildId: GUILD, contributionId: fresh.id, voterId: USER_D });
+		const fresh = submitApproved(service, input({ title: "Sau reset" }));
+		voteUp(service, fresh.id, USER_D);
 		assert.equal(deps.contributionLedger.total(GUILD, USER_A), 1);
 	});
 });

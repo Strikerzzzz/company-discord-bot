@@ -9,6 +9,7 @@ import { computeStreak } from "../src/modules/gamification/streaks";
 import { GamificationProfile, StreakInfo } from "../src/modules/gamification/types";
 import { PollService } from "../src/modules/poll/PollService";
 import { vnDayNumber, vnDayStart } from "../src/shared/time";
+import { enableContributions, voteDown, voteUp, withdrawVote } from "./contribution-helpers";
 import { ADMIN, createTestContext, GUILD, OTHER_GUILD, TestContext, USER_A, USER_B, USER_C } from "./helpers";
 
 const TODAY = 20_000;
@@ -105,6 +106,7 @@ function setup(): Setup
 {
 	const context = createTestContext();
 	context.clock.current = NOW;
+	enableContributions(context.deps.guildConfig);
 	return {
 		...context,
 		gamification: new GamificationService(context.db, context.deps),
@@ -131,7 +133,8 @@ function unlockedKeys(profile: GamificationProfile): string[]
 	return profile.achievements.filter(progress => progress.unlocked).map(progress => progress.achievement.key);
 }
 
-function submit(context: Setup, authorId: string, title: string): number
+/** Gửi một contribution, để ở trạng thái chờ duyệt (DEC-051); trả về id. */
+function submitPending(context: Setup, authorId: string, title: string): number
 {
 	return context.contributions.submit({
 		guildId: GUILD,
@@ -143,6 +146,12 @@ function submit(context: Setup, authorId: string, title: string): number
 		link: null,
 		authorRoleIds: [],
 	}).id;
+}
+
+/** Gửi và duyệt một contribution (phải duyệt mới bấm 👍/👎 được); trả về id. */
+function submit(context: Setup, authorId: string, title: string): number
+{
+	return context.contributions.approve(GUILD, submitPending(context, authorId, title), ADMIN).id;
 }
 
 function joinPoll(context: Setup, userId: string, guildId = GUILD): void
@@ -248,9 +257,9 @@ describe("GamificationService.profile", () =>
 		const { contributions, gamification } = context;
 		const first = submit(context, USER_A, "Tối ưu build");
 		const second = submit(context, USER_A, "Viết tài liệu");
-		contributions.toggleVote({ guildId: GUILD, contributionId: first, voterId: USER_B });
-		contributions.toggleVote({ guildId: GUILD, contributionId: first, voterId: USER_C });
-		contributions.toggleVote({ guildId: GUILD, contributionId: second, voterId: USER_B });
+		voteUp(contributions, first, USER_B);
+		voteUp(contributions, first, USER_C);
+		voteUp(contributions, second, USER_B);
 
 		let author = gamification.profile(GUILD, USER_A);
 		assert.equal(author.stats.recognitionsReceived, 3);
@@ -259,7 +268,7 @@ describe("GamificationService.profile", () =>
 		assert.equal(gamification.profile(GUILD, USER_B).stats.recognitionsGiven, 2);
 		assert.equal(gamification.profile(GUILD, USER_C).stats.recognitionsGiven, 1);
 
-		contributions.toggleVote({ guildId: GUILD, contributionId: second, voterId: USER_B });
+		withdrawVote(contributions, second, USER_B);
 		assert.equal(gamification.profile(GUILD, USER_B).stats.recognitionsGiven, 1, "rút ghi nhận thì không tính");
 
 		contributions.remove(GUILD, first, ADMIN);
@@ -277,12 +286,47 @@ describe("GamificationService.profile", () =>
 		const context = setup();
 		const { contributions, gamification } = context;
 		const id = submit(context, USER_A, "Tối ưu build");
-		contributions.toggleVote({ guildId: GUILD, contributionId: id, voterId: USER_B });
+		voteUp(contributions, id, USER_B);
 		contributions.resetUser(GUILD, USER_A, ADMIN);
 
 		assert.equal(gamification.profile(GUILD, USER_B).stats.recognitionsGiven, 0);
 		assert.equal(gamification.profile(GUILD, USER_A).stats.recognitionsReceived, 0);
 		assert.equal(gamification.profile(GUILD, USER_A).stats.contributions, 1, "reset điểm không gỡ contribution");
+	});
+
+	test("👎 Không ghi nhận và event sàn không tính là ghi nhận; chỉ đếm contribution đã duyệt (DEC-051)", () =>
+	{
+		const context = setup();
+		const { contributions, gamification } = context;
+		const USER_D = "300000000000000004";
+		const approved = submit(context, USER_A, "Tối ưu build");
+		voteUp(contributions, approved, USER_B);
+		voteDown(contributions, approved, USER_C);
+		voteDown(contributions, approved, USER_D);
+		const floors = context.deps.contributionLedger.recent(GUILD, USER_A, 20)
+			.filter(event => event.source === "vote" && event.actorId === null && event.voidedAt === null);
+		assert.deepEqual(floors.map(event => event.amount), [1], "có đúng một event sàn còn hiệu lực");
+
+		submitPending(context, USER_A, "Đang chờ duyệt");
+		const rejected = submitPending(context, USER_A, "Bị từ chối");
+		contributions.reject(GUILD, rejected, ADMIN, "Không phải đóng góp");
+
+		let author = gamification.profile(GUILD, USER_A);
+		assert.equal(author.stats.recognitionsReceived, 1, "chỉ lượt 👍 còn hiệu lực, không tính lượt 👎 hay event sàn");
+		assert.equal(author.stats.contributions, 1, "contribution chờ duyệt hoặc bị từ chối không tính");
+		assert.deepEqual(unlockedKeys(author), ["duoc-cong-nhan", "gop-gach"]);
+		assert.equal(gamification.profile(GUILD, USER_B).stats.recognitionsGiven, 1);
+		assert.equal(gamification.profile(GUILD, USER_C).stats.recognitionsGiven, 0, "bấm 👎 không phải là ghi nhận người khác");
+		assert.equal(gamification.profile(GUILD, USER_D).stats.recognitionsGiven, 0);
+
+		voteUp(contributions, approved, USER_C);
+		author = gamification.profile(GUILD, USER_A);
+		assert.equal(author.stats.recognitionsReceived, 2, "đổi 👎 sang 👍 thì thành một lượt ghi nhận");
+		assert.equal(gamification.profile(GUILD, USER_C).stats.recognitionsGiven, 1);
+
+		withdrawVote(contributions, approved, USER_B);
+		assert.equal(gamification.profile(GUILD, USER_A).stats.recognitionsReceived, 1);
+		assert.equal(gamification.profile(GUILD, USER_A).stats.contributions, 1);
 	});
 
 	test("số vote đã tham gia theo guild; đủ 5 thì mở huy hiệu", () =>

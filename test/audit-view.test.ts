@@ -21,6 +21,7 @@ describe("audit log: dữ liệu service thật → hiển thị", () =>
 			runMigrations(db);
 			const s = createServices(db, { clock: new FakeClock(), backupDir: join(dir, "backups"), backupKeep: 1 });
 
+			s.guildConfig.updateSettings(GUILD, { contributionChannelId: "400000000000000009" }, ADMIN);
 			const contribution = s.contributions.submit({
 				guildId: GUILD, authorId: USER_A, submittedBy: USER_A, title: "Tài liệu quy trình",
 				description: "Mô tả", category: "tai-lieu", link: null, authorRoleIds: [],

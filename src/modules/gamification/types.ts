@@ -27,13 +27,16 @@ export interface AchievementStats
 	messages: number;
 	/** Chuỗi ngày hoạt động dài nhất. */
 	bestStreak: number;
-	/** Số lượt được người khác ghi nhận (event contribution nguồn "vote" chưa huỷ của người này). */
+	/**
+	 * Số lượt 👍 được người khác ghi nhận mà điểm còn hiệu lực (dòng contribution_votes có event chưa huỷ, trên contribution người
+	 * này là tác giả). Lượt 👎 và event sàn (DEC-051) cũng là event nguồn "vote" nhưng không tính.
+	 */
 	recognitionsReceived: number;
-	/** Số lượt người này ghi nhận người khác mà điểm còn hiệu lực (dòng contribution_votes có event chưa huỷ). */
+	/** Số lượt 👍 người này ghi nhận người khác mà điểm còn hiệu lực (dòng contribution_votes có event chưa huỷ); lượt 👎 không tính. */
 	recognitionsGiven: number;
 	/** Số vote người này đã tham gia (poll_participants). */
 	pollsJoined: number;
-	/** Số contribution còn hiệu lực người này là tác giả. */
+	/** Số contribution còn hiệu lực và đã được duyệt (DEC-051) người này là tác giả. */
 	contributions: number;
 }
 
