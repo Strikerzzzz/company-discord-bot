@@ -339,6 +339,18 @@ describe("web contribution (DEC-051): duyệt và từ chối", () =>
 		assert.equal(services.contributions.get(GUILD, contribution.id)?.reviewState, "approved");
 	});
 
+	test("duyệt bài chưa có thẻ (đăng lỗi lúc gửi): flash nhắc Đăng lại thẻ (review Phase 20)", async () =>
+	{
+		const harness = createWebHarness();
+		const contribution = submit(harness, { title: "Chưa có thẻ" });
+		const auth = await login(harness, ADMIN_USER);
+		const response = await post(harness, auth, "/contributions/approve", { id: String(contribution.id) });
+		const flash = await flashAfter(harness, auth, response);
+		assert.equal(flash.kind, "ok");
+		assert.ok(flash.text.includes("chưa có thẻ trong Discord") && flash.text.includes("Đăng lại thẻ"), flash.text);
+		assert.ok(!flash.text.includes(CARD_EDIT_FAILED), "chưa có thẻ thì không báo sửa thẻ lỗi");
+	});
+
 	test("đăng lại thẻ: chờ duyệt và đã duyệt có form, gọi repostContribution, flash; bị từ chối hoặc đã gỡ thì không có form và POST báo lỗi", async () =>
 	{
 		const harness = createWebHarness();

@@ -139,8 +139,9 @@ export interface ContributionVoteResult
 	/** true nếu hạn mức XP ngày cắt bớt (một phần hoặc toàn bộ) XP lẽ ra được cộng ở lần này; phần bị cắt không được cộng bù sau. */
 	xpCapped: boolean;
 	/**
-	 * Activity XP vừa thu lại khi rút hẳn (bấm lại thì được trả lại, trong hạn mức ngày). 0 nếu không có event XP còn hiệu lực: lần
-	 * đó được 0 XP, hoặc event đã bị admin reset.
+	 * Activity XP vừa thu lại khi rút hẳn (bấm lại thì được trả lại, trong hạn mức ngày). 0 nếu không có event XP còn hiệu lực (lần
+	 * đó được 0 XP, event đã bị admin reset, hoặc lượt 👍 có từ trước Phase 20), hoặc nếu lần rút bị khoá (`locked`: người bấm giữ XP
+	 * vì không bấm lại được).
 	 */
 	xpRevoked: number;
 	contribution: Contribution;

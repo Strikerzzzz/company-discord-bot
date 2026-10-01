@@ -321,7 +321,8 @@ export class ContributionService implements ContributionServiceApi
 			let xp = { awarded: 0, capped: false };
 			let xpRevoked = 0;
 			if (state.current === null && target !== null) xp = this.awardInteractionXp(input, now);
-			if (target === null) xpRevoked = this.revokeInteractionXp(contributionId, voterId, now);
+			// Rút bị khoá (phải bù vì tác giả đang bị trừ điểm) thì người bấm giữ XP: họ không bấm lại được, không bị phạt thay tác giả.
+			if (target === null && !locked) xpRevoked = this.revokeInteractionXp(contributionId, voterId, now);
 
 			return {
 				current: target,

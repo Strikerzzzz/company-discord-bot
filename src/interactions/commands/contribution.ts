@@ -206,7 +206,23 @@ export default class ContributionCmd extends Command
 		const card = contributionMessage(result.contribution);
 		if (interaction.isButton() || interaction.isFromMessage())
 		{
-			await interaction.update(card);
+			let updated = true;
+			try
+			{
+				await interaction.update(card);
+			}
+			catch (error)
+			{
+				// Lượt đã lưu: không báo lỗi cho người bấm (ví dụ thẻ vừa bị xoá hoặc đăng lại); trả lời riêng và sửa thẻ đang lưu.
+				logger.warn(`Không cập nhật được thẻ contribution #${result.contribution.id} đang bấm:`, error);
+				updated = false;
+			}
+			if (!updated)
+			{
+				await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: NO_MENTIONS });
+				await refreshContributionMessage(this.client, result.contribution);
+				return;
+			}
 			await interaction.followUp({ content, flags: MessageFlags.Ephemeral, allowedMentions: NO_MENTIONS })
 				.catch((error: unknown) => logger.warn(`Không gửi được phản hồi lượt bấm contribution #${result.contribution.id}:`, error));
 			return;

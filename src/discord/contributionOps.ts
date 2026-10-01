@@ -16,6 +16,7 @@ export type ContributionReviewActions = Pick<AdminActions, "refreshContribution"
 
 const TITLE_MAX = 100;
 export const CARD_EDIT_FAILED = "Không sửa được thẻ contribution trong Discord (có thể message đã bị xoá hoặc bot mất quyền).";
+export const NO_CARD_YET = "Contribution này chưa có thẻ trong Discord (bot đăng lỗi lúc gửi), nên chưa ai bấm 👍/👎 được: hãy dùng **Đăng lại thẻ** ở trang chi tiết contribution trên web.";
 export const NOTICE_FAILED = "Không nhắn riêng được cho tác giả (có thể họ tắt tin nhắn riêng từ thành viên server); họ vẫn thấy trạng thái trên thẻ.";
 
 export interface ReviewOutcome
@@ -40,10 +41,8 @@ export function reviewNoticeText(contribution: Contribution, guildName: string |
 	const url = contributionMessageUrl(contribution);
 	if (contribution.reviewState === "approved")
 	{
-		return [
-			`✅ Đóng góp ${title}${where} đã được duyệt. Mọi người đã có thể 👍 ghi nhận hoặc 👎 không ghi nhận.`,
-			...(url === null ? [] : [url]),
-		].join("\n");
+		if (url === null) return `✅ Đóng góp ${title}${where} đã được duyệt.`;
+		return [`✅ Đóng góp ${title}${where} đã được duyệt. Mọi người đã có thể 👍 ghi nhận hoặc 👎 không ghi nhận.`, url].join("\n");
 	}
 	return [
 		`❌ Đóng góp ${title}${where} không được duyệt.`,
@@ -68,6 +67,7 @@ async function finishReview(client: DiscordClient, actions: ContributionReviewAc
 	const noticeFailed = await notifyReviewResult(client, actions, contribution);
 	const lines = [head];
 	if (!refreshed && contribution.messageId !== null) lines.push(CARD_EDIT_FAILED);
+	if (contribution.messageId === null && contribution.reviewState === "approved") lines.push(NO_CARD_YET);
 	if (noticeFailed) lines.push(NOTICE_FAILED);
 	return { text: lines.join("\n"), contribution, refreshed, noticeFailed };
 }

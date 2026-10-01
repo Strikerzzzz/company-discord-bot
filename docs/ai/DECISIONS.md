@@ -624,7 +624,8 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - mỗi người được **+5 Activity XP** (`contributionInteractionXp`, 0–100) một lần cho mỗi contribution, bấm 👍 hay 👎 như nhau;
     - đổi 👍↔👎 giữ XP; rút hẳn thì thu lại XP; bấm lại sau khi rút thì được lại đúng phần đã thu (nếu còn hạn mức ngày);
     - tối đa **25 XP mỗi ngày** giờ Việt Nam từ contribution (`contributionInteractionXpDailyCap`, 0 = không giới hạn); phần bị cắt không được cộng bù, XP đã bị admin reset cũng không lấy lại được bằng cách rút rồi bấm lại;
-    - admin gỡ contribution thì người bấm vẫn giữ XP đã nhận;
+    - admin gỡ contribution thì người bấm vẫn giữ XP đã nhận; rút 👍 mà bị khoá (PROP-031) thì người bấm cũng giữ XP (không bấm lại được, không bị phạt thay tác giả);
+    - lượt 👍 có từ trước Phase 20 coi như đã tương tác, **không được XP người bấm** (kể cả rút rồi bấm lại), để không thành cách cày XP trên contribution cũ (review Phase 20, cùng tinh thần DEC-050);
     - XP ghi vào `xpLedger` nguồn `admin`, actor là bot, `reference_id` = `contribution:<id>`, như XP retro (DEC-049); không đổi CHECK của `xp_events`;
     - điểm contribution vẫn tách khỏi XP (DEC-004): XP người bấm là Activity XP như tham gia vote, không phải điểm contribution.
   - **Điểm cho tác giả mỗi lượt:** vẫn là `contributionVotePoints` (mặc định 1). Người phụ trách nêu ví dụ 2 điểm: chỉnh trên web, không đổi mặc định trong code.

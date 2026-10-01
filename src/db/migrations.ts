@@ -509,6 +509,11 @@ export const MIGRATIONS: readonly Migration[] = [
 				PRIMARY KEY (contribution_id, user_id)
 			);
 			CREATE INDEX idx_contribution_interaction_xp_user ON contribution_interaction_xp (guild_id, user_id, created_at);
+			-- Lượt 👍 có từ trước migration này coi như đã tương tác, không được XP (review Phase 20): không có dòng thì rút rồi bấm lại
+			-- sẽ được XP như lần đầu, thành cách cày XP trên các contribution cũ.
+			INSERT INTO contribution_interaction_xp (contribution_id, guild_id, user_id, xp_event_id, revoked_at, created_at)
+				SELECT v.contribution_id, c.guild_id, v.voter_id, NULL, NULL, v.created_at
+				FROM contribution_votes v JOIN contributions c ON c.id = v.contribution_id;
 
 			-- Cấu hình (DEC-051): kênh đăng thẻ contribution (NULL = chưa chọn, chưa gửi được), XP cho người bấm và hạn mức ngày (0 =
 			-- không giới hạn).

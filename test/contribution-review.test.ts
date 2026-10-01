@@ -781,6 +781,19 @@ describe("Contribution DEC-051: khoá lượt khi phải bù cho tác giả đan
 		return { ...context, id };
 	}
 
+	test("rút 👍 bị khoá: người bấm giữ XP đã nhận (không bị phạt thay tác giả) và không bấm lại được (review Phase 20)", () =>
+	{
+		const context = penalized();
+		const { service, deps, id } = context;
+		const before = deps.xpLedger.total(GUILD, USER_B);
+		assert.ok(before > 0, "B đã được XP người bấm khi 👍");
+		const result = withdrawVote(service, id, USER_B);
+		assert.deepEqual([result.locked, result.xpRevoked], [true, 0]);
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), before);
+		assert.throws(() => voteUp(service, id, USER_B), userError(VOTE_LOCKED));
+		assert.equal(deps.xpLedger.total(GUILD, USER_B), before);
+	});
+
 	interface LockCase
 	{
 		label: string;

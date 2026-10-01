@@ -402,6 +402,42 @@ describe("migrations", () =>
 		assert.equal(contributions.getProfile("g1", "a").contributions, 1);
 	});
 
+	test("lượt 👍 có từ trước migration 10 coi như đã tương tác: rút rồi bấm lại không được XP người bấm (review Phase 20)", () =>
+	{
+		const db = openDatabase(":memory:");
+		runMigrations(db, MIGRATIONS.filter(migration => migration.version <= 9));
+		const clock = new FakeClock();
+		db.prepare(`
+			INSERT INTO contributions (guild_id, author_id, submitted_by, title, description, category, status, created_at)
+			VALUES ('g1', 'a', 'a', 'Cũ', 'Mô tả', 'khac', 'active', 0)`).run();
+		const legacyEvent = new Ledger(db, "contribution", clock).record({ guildId: "g1", userId: "a", amount: 1, source: "vote", referenceId: "1", actorId: "u0" });
+		db.prepare("INSERT INTO contribution_votes (contribution_id, voter_id, event_id, created_at) VALUES (1, 'u0', ?, 0)").run(legacyEvent.id);
+		runMigrations(db);
+
+		assert.deepEqual(
+			db.prepare("SELECT contribution_id, guild_id, user_id, xp_event_id, revoked_at FROM contribution_interaction_xp").all(),
+			[{ contribution_id: 1, guild_id: "g1", user_id: "u0", xp_event_id: null, revoked_at: null }],
+		);
+		const audit = new AuditService(db, clock);
+		const deps = {
+			clock,
+			audit,
+			guildConfig: new GuildConfigService(db, clock, audit),
+			teams: new TeamService(db, clock, audit),
+			xpLedger: new Ledger(db, "xp", clock),
+			contributionLedger: new Ledger(db, "contribution", clock),
+			tierSets: new TierSetService(db, clock, audit),
+		};
+		const contributions = new ContributionService(db, deps);
+		const withdrawn = contributions.vote({ guildId: "g1", contributionId: 1, voterId: "u0", action: "withdraw", voterRoleIds: [], systemActorId: "bot" });
+		assert.deepEqual([withdrawn.change, withdrawn.locked, withdrawn.xpRevoked], ["withdrawn", false, 0]);
+		const again = contributions.vote({ guildId: "g1", contributionId: 1, voterId: "u0", action: "up", voterRoleIds: [], systemActorId: "bot" });
+		assert.deepEqual([again.change, again.xpAwarded, again.contribution.score], ["added", 0, 1]);
+		assert.equal(deps.xpLedger.total("g1", "u0"), 0);
+		const fresh = contributions.vote({ guildId: "g1", contributionId: 1, voterId: "u9", action: "up", voterRoleIds: [], systemActorId: "bot" });
+		assert.equal(fresh.xpAwarded, 5, "người chưa từng bấm vẫn được XP như thường");
+	});
+
 	test("từ chối database mới hơn code", () =>
 	{
 		const db = openDatabase(":memory:");

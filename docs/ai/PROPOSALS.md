@@ -1510,7 +1510,7 @@ Có từ Phase 10 (review Phase 17 phát hiện). Dòng audit `contribution.remo
 
 ### Đề xuất
 
-Khi hiện nhật ký, audit `contribution.remove` chỉ hiện tiêu đề, và `poll.create` chỉ hiện câu hỏi (review bảo mật Phase 17), nếu người xem xem được kênh gốc. Phase 20 thêm `contribution.approve` (tiêu đề) và `contribution.reject` (tiêu đề và lý do từ chối): áp dụng cùng quy tắc. Cách làm: tra `contributionId`/`pollId` trong details (dòng không bao giờ bị xoá, DEC-027) để lấy `channelId`, rồi kiểm tra bằng `channelAccess`; không cần thêm trường vào details. Làm cho cả `/admin audit` và trang Nhật ký.
+Khi hiện nhật ký, audit `contribution.remove` chỉ hiện tiêu đề, và `poll.create` chỉ hiện câu hỏi (review bảo mật Phase 17), nếu người xem xem được kênh gốc. Phase 20 thêm `contribution.approve` và `contribution.reject` (chỉ tiêu đề; lý do từ chối không ghi vào audit sau review bảo mật Phase 20): áp dụng cùng quy tắc. Cách làm: tra `contributionId`/`pollId` trong details (dòng không bao giờ bị xoá, DEC-027) để lấy `channelId`, rồi kiểm tra bằng `channelAccess`; không cần thêm trường vào details. Làm cho cả `/admin audit` và trang Nhật ký.
 
 ### Độ ưu tiên
 

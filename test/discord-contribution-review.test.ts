@@ -18,6 +18,7 @@ import {
 } from "discord.js";
 import type DiscordClient from "../src/classes/DiscordClient";
 import { CONTRIBUTION_CHANNEL_GONE, NO_CONTRIBUTION_CHANNEL, repostContributionCard } from "../src/discord/messages";
+import { reviewNoticeText } from "../src/discord/contributionOps";
 import {
 	CONTRIBUTION_REASON_INPUT,
 	contributionComponentId,
@@ -1138,5 +1139,33 @@ describe("repostContributionCard (đăng lại thẻ từ web, DEC-051)", () =>
 		harness.context.deps.guildConfig.updateSettings(GUILD, { contributionChannelId: "419999999999999998" }, ADMIN);
 		await assert.rejects(repostContributionCard(harness.client, contribution), (error: unknown) => error instanceof UserError && error.message === CONTRIBUTION_CHANNEL_GONE);
 		assert.equal(harness.sent.length, 0);
+	});
+});
+
+describe("sửa sau review tính đúng đắn Phase 20", () =>
+{
+	test("tin nhắn riêng khi duyệt bài chưa có thẻ không nói mọi người đã bấm được", () =>
+	{
+		const harness = createHarness();
+		const created = harness.contributions.submit({
+			guildId: GUILD, authorId: USER_A, submittedBy: USER_A, title: "Chưa có thẻ", description: "Mô tả.", category: "khac", link: null, authorRoleIds: [],
+		});
+		const approved = harness.contributions.approve(GUILD, created.id, ADMIN);
+		const text = reviewNoticeText(approved, "Công ty ABC");
+		assert.ok(text.includes("đã được duyệt") && !text.includes("Mọi người đã có thể"), text);
+		const withCard = reviewNoticeText(submitApproved(harness), "Công ty ABC");
+		assert.ok(withCard.includes("Mọi người đã có thể"), withCard);
+	});
+
+	test("lượt 👍 đã lưu nhưng không cập nhật được thẻ đang bấm: trả lời riêng bình thường và sửa thẻ đang lưu", async () =>
+	{
+		const harness = createHarness();
+		const contribution = submitApproved(harness);
+		const { interaction, calls } = component("button", `contrib:${contribution.id}`);
+		interaction.update = () => Promise.reject(new Error("Unknown Message"));
+		await harness.command.executeButton(interaction as unknown as ButtonInteraction);
+		assert.deepEqual(methods(calls), ["reply"]);
+		assert.equal(current(harness, contribution.id).votes, 1, "lượt đã lưu");
+		assert.ok(harness.edits.some(edit => edit.messageId === CARD_MESSAGE_ID), "sửa thẻ đang lưu qua REST");
 	});
 });

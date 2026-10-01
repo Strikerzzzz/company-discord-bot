@@ -184,7 +184,9 @@ export async function repostContributionCard(client: DiscordClient, contribution
 			logger.debug(`Không xoá được thẻ cũ của contribution #${contribution.id} (có thể đã bị xoá):`, error);
 		}
 	}
-	const posted = await postContributionCard(client.services, channel, contribution);
+	// Đọc lại ngay trước khi đăng: trong lúc chờ Discord, contribution có thể vừa được duyệt, bị từ chối hay bị gỡ.
+	const fresh = client.services.contributions.get(guildId, contribution.id) ?? contribution;
+	const posted = await postContributionCard(client.services, channel, fresh);
 	if (posted === null) throw new UserError(`Discord từ chối đăng thẻ vào ${channelMention(channel.id)}. Hãy thử lại sau ít phút.`);
 	return posted;
 }
