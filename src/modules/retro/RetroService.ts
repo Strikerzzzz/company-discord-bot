@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import { Db, truncateWal } from "../../db/connection";
 import { UserError } from "../../shared/errors";
 import { ListPage, pageWindow } from "../../shared/paging";
+import { startOfVnDay } from "../../shared/time";
 import { ServiceDeps } from "../deps";
 import { Poll, POLL_LIMITS, PollServiceApi } from "../poll/types";
 import { cutText, displaySprintName, isNumericOnlyName, normalizeAnswers, sprintNameKey } from "./answers";
@@ -111,6 +112,11 @@ interface ColumnIdea
 }
 
 type OrderKeys = Partial<Record<RetroIdeaField, string>>;
+
+/** Thưởng người đề xuất tên thắng chỉ khi vote có ít nhất ngần này lựa chọn (DEC-050, chống cày XP). */
+export const MIN_BONUS_VOTE_OPTIONS = 2;
+/** Thưởng người đề xuất tên thắng chỉ khi vote có ít nhất ngần này người bỏ phiếu (DEC-050, chống cày XP). */
+export const MIN_BONUS_VOTERS = 3;
 
 const SESSION_COLUMNS = "s.*, (SELECT COUNT(*) FROM retro_entries e WHERE e.session_id = s.id) AS participants";
 
@@ -341,12 +347,17 @@ export class RetroService implements RetroServiceApi
 					UPDATE retro_entries SET learned = ?, improve = ?, ideas = ?, kudos = ?, sprint_name = ?, team_role_ids = ?, order_keys = ?, updated_at = ?
 					WHERE id = ?`,
 				).run(answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams, keys, now, existing.id);
-				return { session: this.load(row.id), answers, firstSubmit: false, xpAwarded: 0 };
+				return { session: this.load(row.id), answers, firstSubmit: false, xpAwarded: 0, dailyLimitReached: false };
 			}
 
 			const fillXp = this.getConfig(guildId).fillXp;
+			// Chống cày XP (DEC-050): mỗi người nhận XP điền retro tối đa một lần mỗi ngày giờ Việt Nam, tính chung mọi phiên của server.
+			const awardedToday = this.db.prepare<[string, string, number], { n: number }>(
+				"SELECT COUNT(*) AS n FROM retro_entries WHERE guild_id = ? AND user_id = ? AND fill_xp_event_id IS NOT NULL AND submitted_at >= ?",
+			).get(guildId, userId, startOfVnDay(now))?.n ?? 0;
+			const dailyLimitReached = fillXp > 0 && awardedToday > 0;
 			let eventId: number | null = null;
-			if (fillXp > 0)
+			if (fillXp > 0 && !dailyLimitReached)
 			{
 				eventId = this.deps.xpLedger.record({
 					guildId,
@@ -365,7 +376,7 @@ export class RetroService implements RetroServiceApi
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			).run(row.id, guildId, userId, answers.learned, answers.improve, answers.ideas, answers.kudos, answers.sprintName, teams,
 				JSON.stringify(this.orderKeys(answers, null)), eventId, now, now);
-			return { session: this.load(row.id), answers, firstSubmit: true, xpAwarded: eventId === null ? 0 : fillXp };
+			return { session: this.load(row.id), answers, firstSubmit: true, xpAwarded: eventId === null ? 0 : fillXp, dailyLimitReached };
 		})();
 	}
 
@@ -761,12 +772,18 @@ export class RetroService implements RetroServiceApi
 			.map(({ entryId, text }) => ({ entryId, text }));
 	}
 
-	/** Chốt tên `name` (đúng cách viết của ứng viên): cộng XP cho mọi người đề xuất tên đó, phiên sang "done". Gọi trong transaction. */
+	/**
+	 * Chốt tên `name` (đúng cách viết của ứng viên): phiên sang "done"; cộng XP cho mọi người đề xuất tên đó CHỈ KHI tên thắng một
+	 * vote thật (DEC-050): vote có ít nhất MIN_BONUS_VOTE_OPTIONS lựa chọn và ít nhất MIN_BONUS_VOTERS người bỏ phiếu (kể cả khi hoà
+	 * rồi người quản lý chọn). Chốt tay tên duy nhất (không có vote) thì không thưởng. Gọi trong transaction.
+	 */
 	private decide(row: SessionRow, name: string, systemActorId: string): RetroVoteOutcome
 	{
 		const key = sprintNameKey(name);
 		const proposers = this.entryRows(row.id).filter(entry => entry.sprint_name !== null && sprintNameKey(entry.sprint_name) === key);
-		const xpEach = this.getConfig(row.guild_id).proposerBonusXp;
+		const poll = row.poll_id === null ? null : this.polls.get(row.guild_id, row.poll_id);
+		const realVote = poll !== null && poll.options.length >= MIN_BONUS_VOTE_OPTIONS && poll.participants >= MIN_BONUS_VOTERS;
+		const xpEach = realVote ? this.getConfig(row.guild_id).proposerBonusXp : 0;
 		if (xpEach > 0)
 		{
 			for (const entry of proposers)

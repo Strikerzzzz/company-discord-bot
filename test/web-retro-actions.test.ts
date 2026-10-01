@@ -361,6 +361,8 @@ describe("web: Retro — vote tên sprint và chọn tên", () =>
 		const pollId = harness.services.retro.get(GUILD, id)?.pollId ?? 0;
 		harness.services.polls.vote({ guildId: GUILD, pollId, userId: PLAIN_USER, optionIndex: 0, roleIds: [] });
 		harness.services.polls.vote({ guildId: GUILD, pollId, userId: ROLE_ADMIN_USER, optionIndex: 1, roleIds: [] });
+		harness.services.polls.vote({ guildId: GUILD, pollId, userId: "310000000000000771", optionIndex: 0, roleIds: [] });
+		harness.services.polls.vote({ guildId: GUILD, pollId, userId: "310000000000000772", optionIndex: 1, roleIds: [] });
 		harness.services.polls.close({ guildId: GUILD, pollId, actorId: ADMIN_USER, actorIsAdmin: true });
 		assert.equal(harness.services.retro.finalizeVote(GUILD, id, BOT_ID).kind, "tie");
 

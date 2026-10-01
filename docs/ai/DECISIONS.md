@@ -584,6 +584,16 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
     - cài đặt XP retro và role quản lý retro.
   - Phase 19, branch `phase-19/retro`. Schema là migration 9 (`retro_*`); bảng `xp_events` không đổi.
 
+### DEC-050 — Chống cày XP retro; merge Phase 19 vào main
+
+- **Ngày:** 2026-10-01 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("có thưởng tên chiến thắng và có điền retro sẽ được exp, giới hạn như bạn đề ra thôi"; trước đó hỏi "đủ điều kiện để lên code mới chưa")
+- **Nội dung:**
+  - **Chống cày XP retro** (quy tắc tính điểm, review bảo mật và đúng đắn Phase 19 chỉ ra role quản lý retro tự cày được khoảng 120 XP mỗi vòng):
+    - a. Người đề xuất tên thắng chỉ được thưởng khi tên đó thắng một **vote thật**: ít nhất 2 lựa chọn (`MIN_BONUS_VOTE_OPTIONS`) và ít nhất 3 người bỏ phiếu (`MIN_BONUS_VOTERS`). Vote thật bị hoà rồi người quản lý chọn thì vẫn thưởng; chốt tay tên duy nhất (không có vote) thì không thưởng.
+    - b. XP điền retro: mỗi người **tối đa một lần mỗi ngày** giờ Việt Nam, tính chung mọi phiên của server. Phiếu thứ hai trong ngày vẫn được lưu nhưng không cộng XP; người điền được báo lý do.
+  - Merge `phase-19/retro` vào `main` và cài lên server (migration 9: sao lưu trước).
+  - Confluence: server chưa vào được `docs.ezcloud.vn` (thiếu route 10.19.193.0/24 qua VPN). Người phụ trách xin IT; trong lúc chờ, dùng phần xuất chữ trên web.
+
 ---
 
 ## Đang chờ quyết định

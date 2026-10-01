@@ -203,10 +203,11 @@ export function retroModal(session: RetroSession, answers: RetroAnswers | null):
 }
 
 /** Trả lời riêng sau khi lưu phiếu. */
-export function retroSavedText(firstSubmit: boolean, xpAwarded: number): string
+export function retroSavedText(firstSubmit: boolean, xpAwarded: number, dailyLimitReached = false): string
 {
 	const head = firstSubmit ? "✅ Đã lưu câu trả lời retro (ẩn danh)." : "✅ Đã cập nhật câu trả lời retro (ẩn danh).";
-	const xp = xpAwarded > 0 ? ` +${formatNumber(xpAwarded)} XP.` : "";
+	let xp = xpAwarded > 0 ? ` +${formatNumber(xpAwarded)} XP.` : "";
+	if (dailyLimitReached) xp = " Hôm nay bạn đã nhận XP điền retro ở phiên khác (mỗi ngày một lần), nên lần này không cộng thêm.";
 	return `${head}${xp} Bạn có thể bấm lại nút để sửa tới khi phiên đóng.`;
 }
 

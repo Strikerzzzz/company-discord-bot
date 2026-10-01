@@ -243,7 +243,7 @@ export default class RetroCmd extends Command
 			answers,
 			systemActorId: botActorId(this.client),
 		});
-		const text = retroSavedText(result.firstSubmit, result.xpAwarded);
+		const text = retroSavedText(result.firstSubmit, result.xpAwarded, result.dailyLimitReached);
 
 		if (interaction.isFromMessage() && interaction.message.id === result.session.messageId)
 		{

@@ -200,8 +200,10 @@ export interface RetroSubmitResult
 	answers: RetroAnswers;
 	/** true nếu đây là lần gửi đầu tiên của người này trong phiên. */
 	firstSubmit: boolean;
-	/** XP vừa cộng (0 nếu không phải lần đầu hoặc XP điền retro là 0). */
+	/** XP vừa cộng (0 nếu không phải lần đầu, XP điền retro là 0, hoặc hôm nay người này đã nhận XP điền retro). */
 	xpAwarded: number;
+	/** true nếu là lần gửi đầu nhưng không cộng XP vì hôm nay (giờ Việt Nam) người này đã nhận XP điền retro ở phiên khác (DEC-050). */
+	dailyLimitReached: boolean;
 }
 
 /** Kết quả chốt vote tên sprint. */

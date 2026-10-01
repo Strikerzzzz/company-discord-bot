@@ -656,6 +656,8 @@ describe("retro: vote tên sprint", () =>
 		const { poll } = s.retro.startVote({ guildId: GUILD, sessionId: session.id, actorId: ADMIN });
 		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: USER_A, optionIndex: 0, roleIds: [] });
 		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: USER_B, optionIndex: 1, roleIds: [] });
+		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: "310000000000000771", optionIndex: 0, roleIds: [] });
+		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: "310000000000000772", optionIndex: 1, roleIds: [] });
 		assertUserError(() => s.retro.pickName({ guildId: GUILD, sessionId: session.id, name: "Alpha Team", actorId: ADMIN, systemActorId: BOT }), /Chỉ chọn tên được khi/);
 		s.polls.close({ guildId: GUILD, pollId: poll.id, actorId: ADMIN, actorIsAdmin: true });
 
@@ -695,7 +697,8 @@ describe("retro: vote tên sprint", () =>
 		const picked = t.retro.pickName({ guildId: GUILD, sessionId: single.id, name: "độc nhất", actorId: ADMIN, systemActorId: BOT });
 		assert.equal(picked.kind, "winner");
 		assert.equal(picked.session.status, "done");
-		assert.equal(t.deps.xpLedger.total(GUILD, USER_A), DEFAULT_RETRO_CONFIG.fillXp + DEFAULT_RETRO_CONFIG.proposerBonusXp);
+		assert.equal(picked.kind === "winner" ? picked.xpEach : -1, 0, "chốt tay tên duy nhất (không có vote) thì không thưởng người đề xuất (DEC-050)");
+		assert.equal(t.deps.xpLedger.total(GUILD, USER_A), DEFAULT_RETRO_CONFIG.fillXp);
 
 		const u = setup();
 		const two = closedWithNames(u, ["Một", "Hai"]);
@@ -893,5 +896,54 @@ describe("retro: sửa sau review Phase 19", () =>
 			db.close();
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("retro: chống cày XP (DEC-050)", () =>
+{
+	test("XP điền retro tối đa một lần mỗi ngày giờ Việt Nam cho mỗi người, tính chung mọi phiên", () =>
+	{
+		const s = setup();
+		const first = createSession(s);
+		const second = createSession(s, { channelId: CHANNEL_BOT });
+		const a = submit(s, first.id, USER_A, { learned: "phiên một" });
+		assert.equal(a.xpAwarded, DEFAULT_RETRO_CONFIG.fillXp);
+		assert.equal(a.dailyLimitReached, false);
+		const b = submit(s, second.id, USER_A, { learned: "phiên hai cùng ngày" });
+		assert.equal(b.firstSubmit, true);
+		assert.equal(b.xpAwarded, 0);
+		assert.equal(b.dailyLimitReached, true);
+		assert.equal(submit(s, second.id, USER_B, { learned: "người khác" }).xpAwarded, DEFAULT_RETRO_CONFIG.fillXp, "giới hạn tính theo từng người");
+		assert.equal(s.deps.xpLedger.total(GUILD, USER_A), DEFAULT_RETRO_CONFIG.fillXp);
+
+		s.retro.close(GUILD, first.id, ADMIN);
+		s.clock.advance(24 * HOUR);
+		const third = createSession(s);
+		assert.equal(submit(s, third.id, USER_A, { learned: "hôm sau" }).xpAwarded, DEFAULT_RETRO_CONFIG.fillXp, "sang ngày mới thì được cộng lại");
+	});
+
+	test("người đề xuất tên thắng chỉ được thưởng khi vote có ít nhất 2 tên và 3 người bỏ phiếu", () =>
+	{
+		const s = setup();
+		const session = closedWithNames(s, ["Alpha", "Beta"]);
+		const { poll } = s.retro.startVote({ guildId: GUILD, sessionId: session.id, actorId: ADMIN });
+		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: USER_C, optionIndex: 0, roleIds: [] });
+		s.polls.vote({ guildId: GUILD, pollId: poll.id, userId: USER_D, optionIndex: 0, roleIds: [] });
+		s.polls.close({ guildId: GUILD, pollId: poll.id, actorId: ADMIN, actorIsAdmin: true });
+		const xpA = s.deps.xpLedger.total(GUILD, USER_A);
+		const few = s.retro.finalizeVote(GUILD, session.id, BOT);
+		assert.equal(few.kind, "winner");
+		assert.equal(few.kind === "winner" ? few.xpEach : -1, 0, "chỉ 2 người bỏ phiếu: không thưởng");
+		assert.equal(s.deps.xpLedger.total(GUILD, USER_A), xpA);
+
+		const t = setup();
+		const enough = closedWithNames(t, ["Alpha", "Beta"]);
+		const vote = t.retro.startVote({ guildId: GUILD, sessionId: enough.id, actorId: ADMIN });
+		for (const userId of [USER_B, USER_C, USER_D]) t.polls.vote({ guildId: GUILD, pollId: vote.poll.id, userId, optionIndex: 0, roleIds: [] });
+		t.polls.close({ guildId: GUILD, pollId: vote.poll.id, actorId: ADMIN, actorIsAdmin: true });
+		const before = t.deps.xpLedger.total(GUILD, USER_A);
+		const won = t.retro.finalizeVote(GUILD, enough.id, BOT);
+		assert.equal(won.kind === "winner" ? won.xpEach : -1, DEFAULT_RETRO_CONFIG.proposerBonusXp);
+		assert.equal(t.deps.xpLedger.total(GUILD, USER_A), before + DEFAULT_RETRO_CONFIG.proposerBonusXp);
 	});
 });

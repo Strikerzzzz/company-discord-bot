@@ -792,6 +792,7 @@ describe("/retro vote và chốt tên sprint", () =>
 
 		w.services.polls.vote({ guildId: GUILD, pollId, userId: USER_A, optionIndex: 1, roleIds: [] });
 		w.services.polls.vote({ guildId: GUILD, pollId, userId: USER_B, optionIndex: 1, roleIds: [] });
+		w.services.polls.vote({ guildId: GUILD, pollId, userId: "310000000000000771", optionIndex: 1, roleIds: [] });
 		const xpA = w.xp.total(GUILD, USER_A);
 		const xpC = w.xp.total(GUILD, USER_C);
 		const closedPoll = w.services.polls.close({ guildId: GUILD, pollId, actorId: ADMIN, actorIsAdmin: true });
@@ -852,6 +853,8 @@ describe("/retro vote và chốt tên sprint", () =>
 		const pollId = w.services.retro.get(GUILD, session.id)?.pollId ?? 0;
 		w.services.polls.vote({ guildId: GUILD, pollId, userId: USER_A, optionIndex: 0, roleIds: [] });
 		w.services.polls.vote({ guildId: GUILD, pollId, userId: USER_B, optionIndex: 1, roleIds: [] });
+		w.services.polls.vote({ guildId: GUILD, pollId, userId: "310000000000000771", optionIndex: 0, roleIds: [] });
+		w.services.polls.vote({ guildId: GUILD, pollId, userId: "310000000000000772", optionIndex: 1, roleIds: [] });
 		w.clock.advance(24 * HOUR);
 		assert.equal(await runPollSweep(w.client), 1);
 
