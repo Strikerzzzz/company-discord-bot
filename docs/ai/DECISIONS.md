@@ -637,6 +637,15 @@ Trạng thái hợp lệ: `CHỐT`, `THAY THẾ BỞI DEC-YYY`, `HUỶ`.
   - **Hệ quả đã biết** (review Phase 20): tổng điểm luôn đúng, nhưng bảng tuần/tháng có thể lệch khi một lượt của kỳ trước bị rút hoặc đổi (event của kỳ trước bị huỷ, như rút ghi nhận trước Phase 20). Trường hợp hiếm: bài đang 0 điểm, đổi lượt 👍 của kỳ trước sang 👎 có thể làm điểm kỳ này của tác giả nhích lên tối đa bằng điểm của lượt 👍 đó. Chấp nhận; sửa triệt để cần ghi event đảo thay cho huỷ, ảnh hưởng toàn bộ ledger contribution.
   - Schema: migration 10 (cột duyệt của `contributions`, bảng `contribution_downvotes`, bảng `contribution_interaction_xp` có `revoked_at`, ba cột cấu hình mới, thêm loại `contribution_reviewer` cho `guild_role_grants`). Triển khai ở Phase 20, branch `phase-20/contribution-review`.
 
+### DEC-052 — Merge Phase 20 vào main và cài lên server
+
+- **Ngày:** 2026-10-02 · **Trạng thái:** CHỐT · **Nguồn:** người phụ trách ("duyệt nhét và kết nối tới máy chủ rồi", trả lời bản tổng kết Phase 20 có 4 điểm AI tự quyết)
+- **Nội dung:**
+  - Merge `phase-20/contribution-review` vào `main` và cài lên server (migration 10: bấm sao lưu trên web hoặc `/admin backup` trước khi cài).
+  - Đồng ý 4 điểm AI tự quyết sau review (đã ghi trong DEC-051): lượt 👍 trước Phase 20 không được XP người bấm; rút 👍 bị khoá thì người bấm giữ XP; lý do từ chối không ghi vào nhật ký quản trị; chấp nhận độ lệch hiếm của bảng tuần/tháng khi lượt kỳ trước bị đổi.
+  - PROP-041 (giới hạn số contribution mỗi ngày) vẫn PROPOSED.
+  - Confluence: lần chạy `enable-confluence.sh` ngày 2026-10-01 không ghi gì (script cần địa chỉ Confluence làm tham số, hướng dẫn trước đó thiếu tham số); chạy lại `sudo bash ~/deploy/enable-confluence.sh https://docs.ezcloud.vn` cùng lần cài này.
+
 ---
 
 ## Đang chờ quyết định

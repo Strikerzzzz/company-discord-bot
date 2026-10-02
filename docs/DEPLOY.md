@@ -645,8 +645,8 @@ Token của bot không bị ảnh hưởng. Nếu nghi lộ cả token thì rese
 1. Server phải truy cập được Confluence. Kiểm tra trên server: `curl -s -o /dev/null -w "%{http_code}\n" https://docs.ezcloud.vn/rest/api/space?limit=1`; ra `401` hay `200` là được, `000` là chưa có đường mạng (cần IT).
    - Ngày 2026-10-01: lúc đầu server chưa vào được (thiếu route tới 10.19.193.111 trên VPN `tun0`); IT đã thêm route, kiểm lại ra `401` (cả `curl` lẫn Node).
 2. Tạo Personal Access Token trên Confluence, nên dùng **tài khoản dành riêng cho bot**, chỉ có quyền sửa các trang retro. Không gửi token qua chat.
-3. Trên server: `sudo bash ~/deploy/enable-confluence.sh`. Script:
-   - hỏi địa chỉ Confluence (ví dụ `https://docs.ezcloud.vn`), token (màn hình không hiện token khi dán), và **các space bot được ghi** (`CONFLUENCE_SPACE_KEYS`, ví dụ `P2`; khoá space nằm trong link trang, đoạn `/spaces/<khoá>/`);
+3. Trên server: `sudo bash ~/deploy/enable-confluence.sh https://docs.ezcloud.vn` (địa chỉ Confluence là **tham số bắt buộc**; thiếu thì script chỉ in hướng dẫn rồi thoát, không ghi gì). Script:
+   - hỏi token (màn hình không hiện token khi dán) và **các space bot được ghi** (`CONFLUENCE_SPACE_KEYS`, ví dụ `P2`; khoá space nằm trong link trang, đoạn `/spaces/<khoá>/`);
    - thử token, rồi ghi `CONFLUENCE_BASE_URL`, `CONFLUENCE_TOKEN`, `CONFLUENCE_SPACE_KEYS` vào `.env`;
    - Confluence dùng chứng chỉ của CA nội bộ thì đặt thêm `NODE_EXTRA_CA_CERTS=<file .pem>`. Không bao giờ tắt kiểm chứng TLS.
 4. `sudo bash ~/deploy/start.sh`. Log phải có "Ghi retro vào Confluence: bật (...)".
